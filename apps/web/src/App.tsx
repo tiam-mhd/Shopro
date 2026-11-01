@@ -30,7 +30,18 @@ function AppContent() {
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
   }, []);
   useEffect(() => { setMenuOpen(false); }, [location.pathname]);
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("shopro_theme", theme); }, [theme]);
+  useEffect(() => {
+    const root = document.documentElement;
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      root.dataset.theme = theme === "auto" ? (systemTheme.matches ? "dark" : "light") : theme;
+      localStorage.setItem("shopro_theme", theme);
+    };
+    applyTheme();
+    if (theme !== "auto") return;
+    systemTheme.addEventListener("change", applyTheme);
+    return () => systemTheme.removeEventListener("change", applyTheme);
+  }, [theme]);
   if (session.isPending) return <LoadingScreen />;
   if (session.isError) {
     if (session.error instanceof ApiError && session.error.status !== 401) return <ErrorScreen message={session.error.message} onRetry={() => void session.refetch()} />;
