@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from "class-validator";
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from "class-validator";
 
 export class CreateProductDto {
   @IsString() @Length(1, 160)
@@ -13,8 +13,8 @@ export class CreateProductDto {
   @IsIn(["STOCK", "SERVICE"])
   kind!: "STOCK" | "SERVICE";
 
-  @IsString() @Length(1, 100)
-  unitId!: string;
+  @IsOptional() @IsString() @Length(1, 100)
+  unitId?: string;
 
   @IsOptional() @IsString() @Length(1, 100)
   categoryId?: string;
@@ -58,4 +58,9 @@ export class UpdateProductDto {
 export class CreateProductCategoryDto {
   @IsString() @Length(2, 100)
   name!: string;
+}
+
+export class UpdateUnitsVisibilityDto {
+  @IsArray() @ArrayMaxSize(100) @ArrayUnique() @IsUUID("4", { each: true })
+  visibleUnitIds!: string[];
 }

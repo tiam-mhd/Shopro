@@ -2,7 +2,8 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { normalizePersianSearch } from "@shopro/contracts";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
-import type { CreateProductCategoryDto, CreateProductDto, UpdateProductDto } from "./products.dto.js";
+import type { CreateProductCategoryDto, CreateProductDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
+import { UNIT_GROUPS, unitGroupLabel } from "./unit-catalog.js";
 
 const parseMoney = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); return BigInt(value); };
 
@@ -32,11 +33,17 @@ export class ProductsService {
   async create(user: AuthenticatedUser, dto: CreateProductDto, request: AppRequest) {
     const businessId = this.business(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
-    const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId } });
-    if (!unit) throw new BadRequestException("واحد انتخاب‌شده متعلق به این کسب‌وکار نیست.");
+    let unit = dto.unitId ? await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId, isVisible: true } }) : null;
+    if (!dto.unitId) {
+      const visibleUnits = await this.prisma.unit.findMany({ where: { businessId, isVisible: true }, select: { id: true }, take: 2 });
+      if (visibleUnits.length === 1) unit = await this.prisma.unit.findUnique({ where: { id_businessId: { id: visibleUnits[0].id, businessId } } });
+      else if (visibleUnits.length === 0) throw new BadRequestException("ابتدا دست‌کم یک واحد را برای نمایش فعال کنید.");
+      else throw new BadRequestException("واحد کالا را انتخاب کنید.");
+    }
+    if (!unit) throw new BadRequestException("واحد انتخاب‌شده معتبر یا برای نمایش فعال نیست.");
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده معتبر نیست.");
     const name = dto.name.trim();
-    const product = await this.prisma.product.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, kind: dto.kind, unitId: dto.unitId, categoryId: dto.categoryId || null, salePriceRial: parseMoney(dto.salePriceRial), defaultCostRial: dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint ?? null, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, trackInventory: dto.kind === "STOCK" } });
+    const product = await this.prisma.product.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, kind: dto.kind, unitId: unit.id, categoryId: dto.categoryId || null, salePriceRial: parseMoney(dto.salePriceRial), defaultCostRial: dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint ?? null, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, trackInventory: dto.kind === "STOCK" } });
     await this.audit(user, request, "product.created", product.id, null, { name: product.name, sku: product.sku, salePriceRial: product.salePriceRial.toString() });
     return this.serialize(product);
   }
@@ -48,7 +55,7 @@ export class ProductsService {
     if (!before) throw new NotFoundException("کالا پیدا نشد.");
     if (user.role === "CASHIER" && dto.salePriceRial !== undefined && parseMoney(dto.salePriceRial) !== before.salePriceRial) throw new ForbiddenException("تغییر قیمت برای نقش شما مجاز نیست.");
     if (dto.unitId && dto.unitId !== before.unitId) {
-      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId }, select: { id: true } });
+      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId, isVisible: true }, select: { id: true } });
       if (!unit) throw new BadRequestException("واحد انتخاب‌شده متعلق به این کسب‌وکار نیست.");
       const hasMovements = await this.prisma.inventoryMovement.count({ where: { businessId, productId: id } });
       const hasCounts = await this.prisma.stockCountLine.count({ where: { businessId, productId: id } });
@@ -62,7 +69,35 @@ export class ProductsService {
 
   async units(user: AuthenticatedUser) {
     const businessId = this.business(user);
-    return this.prisma.unit.findMany({ where: { businessId }, select: { id: true, code: true, labelFa: true, precision: true }, orderBy: { labelFa: "asc" } });
+    return this.prisma.unit.findMany({ where: { businessId, isVisible: true }, select: { id: true, code: true, labelFa: true, precision: true, groupKey: true }, orderBy: [{ groupKey: "asc" }, { labelFa: "asc" }] });
+  }
+
+  async unitSettings(user: AuthenticatedUser) {
+    const businessId = this.business(user);
+    const units = await this.prisma.unit.findMany({ where: { businessId }, select: { id: true, code: true, labelFa: true, precision: true, groupKey: true, isVisible: true }, orderBy: [{ groupKey: "asc" }, { labelFa: "asc" }] });
+    return {
+      units: units.map((unit) => ({ ...unit, groupLabel: unitGroupLabel(unit.groupKey) })),
+      groups: UNIT_GROUPS.map((group) => ({ ...group, units: units.filter((unit) => unit.groupKey === group.key).map(({ id, code, labelFa, precision, isVisible }) => ({ id, code, labelFa, precision, isVisible })) })),
+      visibleCount: units.filter((unit) => unit.isVisible).length,
+    };
+  }
+
+  async updateUnitSettings(user: AuthenticatedUser, dto: UpdateUnitsVisibilityDto, request: AppRequest) {
+    const businessId = this.business(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    const visibleIds = [...new Set(dto.visibleUnitIds)];
+    if (!visibleIds.length) throw new BadRequestException("برای ثبت کالا، دست‌کم یک واحد باید در فهرست نمایش بماند.");
+    await this.prisma.$transaction(async (tx) => {
+      const units = await tx.unit.findMany({ where: { businessId }, select: { id: true, isVisible: true } });
+      if (visibleIds.some((id) => !units.some((unit) => unit.id === id))) throw new BadRequestException("فهرست واحدها معتبر نیست.");
+      const previousVisible = units.filter((unit) => unit.isVisible).length;
+      const unchanged = units.length === visibleIds.length && units.every((unit) => visibleIds.includes(unit.id) === unit.isVisible);
+      if (unchanged) return;
+      await tx.unit.updateMany({ where: { businessId }, data: { isVisible: false } });
+      await tx.unit.updateMany({ where: { businessId, id: { in: visibleIds } }, data: { isVisible: true } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "unit.visibility.updated", entityType: "business_unit_settings", entityId: businessId, requestId: request.requestId ?? "unknown", beforeJson: { visibleCount: previousVisible }, afterJson: { visibleCount: visibleIds.length, visibleUnitIds: visibleIds } } });
+    });
+    return this.unitSettings(user);
   }
 
   async categories(user: AuthenticatedUser) {

@@ -1,6 +1,8 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../apps/api/src/generated/prisma/client.js";
+import { UNIT_CATALOG } from "../apps/api/src/products/unit-catalog.js";
 
 if (process.env.NODE_ENV !== "development") {
   throw new Error("Seed فقط در NODE_ENV=development اجرا می‌شود.");
@@ -39,7 +41,9 @@ async function main() {
       const account = await tx.ledgerAccount.upsert({ where: { businessId_code: { businessId: business.id, code } }, update: {}, create: { businessId: business.id, code, name, type, systemKey } });
       ledgerIds.set(systemKey, account.id);
     }
-    const unit = await tx.unit.upsert({ where: { businessId_code: { businessId: business.id, code: "pcs" } }, update: {}, create: { id: ids.unit, businessId: business.id, code: "pcs", labelFa: "عدد", precision: 0 } });
+    const defaultUnit = UNIT_CATALOG.find(({ code }) => code === "pcs")!;
+    const unit = await tx.unit.upsert({ where: { businessId_code: { businessId: business.id, code: defaultUnit.code } }, update: {}, create: { id: ids.unit, businessId: business.id, code: defaultUnit.code, labelFa: defaultUnit.labelFa, precision: defaultUnit.precision, groupKey: defaultUnit.groupKey, isVisible: defaultUnit.defaultVisible } });
+    await tx.unit.createMany({ data: UNIT_CATALOG.filter(({ code }) => code !== defaultUnit.code).map(({ defaultVisible, ...item }) => ({ id: randomUUID(), businessId: business.id, ...item, isVisible: defaultVisible })), skipDuplicates: true });
     await tx.financeAccount.upsert({ where: { id: ids.financeAccount }, update: {}, create: { id: ids.financeAccount, businessId: business.id, branchId: branch.id, name: "صندوق اصلی", kind: "CASH", ledgerAccountId: ledgerIds.get("cash")! } });
     await tx.expenseCategory.upsert({ where: { businessId_name: { businessId: business.id, name: "هزینه عمومی" } }, update: {}, create: { businessId: business.id, name: "هزینه عمومی", expenseLedgerAccountId: ledgerIds.get("general_expense")! } });
 

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { get, post } from "../lib/api.js";
 import { Modal } from "./Modal.js";
@@ -44,14 +44,22 @@ export function QuickExpenseCategoryModal({ open, onClose, onCreated }: { open: 
 }
 
 export function QuickProductModal({ open, currency, onClose, onCreated }: { open: boolean; currency: "IRR" | "IRT"; onClose: () => void; onCreated: (product: CreatedOption) => void }) {
-  const units = useQuery({ queryKey: ["units"], queryFn: () => get<Array<{ id: string; labelFa: string }>>("/products/units"), enabled: open });
+  const unitBusinessId = sessionStorage.getItem("shopro_business_id");
+  const units = useQuery({ queryKey: ["units", unitBusinessId], queryFn: () => get<Array<{ id: string; labelFa: string }>>("/products/units"), enabled: open });
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [unitId, setUnitId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => { setUnitId(""); }, [unitBusinessId]);
+  useEffect(() => {
+    if (!open) { setUnitId(""); return; }
+    if (units.data?.length === 1) setUnitId((current) => current || units.data![0].id);
+  }, [open, units.data]);
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setError("");
+    if (!unitId) { setError("یک واحد برای کالا انتخاب کنید."); return; }
+    setBusy(true);
     try {
       const normalized = price.replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).replace(/[٬,\s]/g, "");
       let salePriceRial: string;
@@ -63,7 +71,7 @@ export function QuickProductModal({ open, currency, onClose, onCreated }: { open
         if (!/^\d+$/.test(normalized)) throw new Error("قیمت ریالی باید عدد صحیح باشد.");
         salePriceRial = BigInt(normalized).toString();
       }
-      const product = await post<CreatedOption>("/products", { name, unitId, kind: "STOCK", salePriceRial });
+      const product = await post<CreatedOption>("/products", { name, unitId: unitId || undefined, kind: "STOCK", salePriceRial });
       onCreated(product); setName(""); setPrice(""); setUnitId(""); onClose();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }

@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
 import { CreateBranchDto, CreateBusinessDto, UpdateBusinessDto, AddMemberDto } from "./businesses.dto.js";
+import { UNIT_CATALOG } from "../products/unit-catalog.js";
 
 const chart = [
   ["1000", "دارایی‌ها", "ASSET", null],
@@ -54,7 +56,7 @@ export class BusinessesService {
         const account = await tx.ledgerAccount.create({ data: { businessId: business.id, code, name, type, systemKey } });
         if (systemKey) createdAccounts.set(systemKey, account.id);
       }
-      await tx.unit.create({ data: { businessId: business.id, code: "unit", labelFa: "عدد", precision: 0 } });
+      await tx.unit.createMany({ data: UNIT_CATALOG.map(({ defaultVisible, ...unit }) => ({ id: randomUUID(), businessId: business.id, ...unit, isVisible: defaultVisible })) });
       await tx.financeAccount.create({ data: { businessId: business.id, branchId: branch.id, name: "صندوق", kind: "CASH", ledgerAccountId: createdAccounts.get("cash")! } });
       await tx.expenseCategory.create({ data: { businessId: business.id, name: "هزینه عمومی", expenseLedgerAccountId: createdAccounts.get("general_expense")! } });
       await tx.auditEvent.create({ data: { businessId: business.id, actorId: user.id, action: "business.created", entityType: "business", entityId: business.id, requestId: request.requestId ?? "unknown", afterJson: { displayName: business.displayName, branchId: branch.id } } });

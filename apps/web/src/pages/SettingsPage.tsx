@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BriefcaseBusiness,
   Building2,
@@ -11,6 +11,8 @@ import {
   Moon,
   Monitor,
   Palette,
+  Ruler,
+  Save,
   Settings,
   Store,
   Sun,
@@ -23,21 +25,25 @@ import { faNumber } from "../lib/format.js";
 import { Field, InlineError, PageHeader, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
 
-type SettingsSectionId = "business" | "branches" | "members" | "appearance" | "new-business";
+type SettingsSectionId = "business" | "branches" | "members" | "units" | "appearance" | "new-business";
 type Branch = { id: string; name: string; code: string };
 type Member = { id: string; role: string; status: string; user: { phone: string; displayName: string | null }; branchIds: string[] };
+type UnitSetting = { id: string; code: string; labelFa: string; precision: number; isVisible: boolean };
+type UnitSettings = { units: Array<UnitSetting & { groupKey: string; groupLabel: string }>; groups: Array<{ key: string; labelFa: string; units: UnitSetting[] }>; visibleCount: number };
 
 const sectionItems: Array<{ id: SettingsSectionId; label: string; icon: LucideIcon }> = [
   { id: "business", label: "مشخصات کسب‌وکار", icon: Building2 },
   { id: "branches", label: "شعبه‌ها", icon: Store },
   { id: "members", label: "اعضای تیم", icon: UsersRound },
+  { id: "units", label: "واحدهای اندازه‌گیری", icon: Ruler },
   { id: "appearance", label: "ظاهر و نمایش", icon: Palette },
   { id: "new-business", label: "کسب‌وکار تازه", icon: BriefcaseBusiness },
 ];
 
 export function SettingsPage({ business, theme, setTheme }: { business: BusinessSummary; theme: string; setTheme: (value: string) => void }) {
   const invalidate = useInvalidate();
-  const [openSections, setOpenSections] = useState<Record<SettingsSectionId, boolean>>({ business: true, branches: false, members: false, appearance: false, "new-business": false });
+  const queryClient = useQueryClient();
+  const [openSections, setOpenSections] = useState<Record<SettingsSectionId, boolean>>({ business: true, branches: false, members: false, units: false, appearance: false, "new-business": false });
   const [profileOpen, setProfileOpen] = useState(false);
   const [businessModalOpen, setBusinessModalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
@@ -55,13 +61,23 @@ export function SettingsPage({ business, theme, setTheme }: { business: Business
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [unitVisibility, setUnitVisibility] = useState<Record<string, boolean>>({});
+  const [unitVisibilityDirty, setUnitVisibilityDirty] = useState(false);
 
   const branches = useQuery({ queryKey: ["business-current"], queryFn: () => get<{ branches: Branch[] }>("/businesses/current") });
   const members = useQuery({ queryKey: ["business-members"], queryFn: () => get<Member[]>("/businesses/current/members") });
+  const unitSettings = useQuery({ queryKey: ["unit-settings", business.id], queryFn: () => get<UnitSettings>("/products/units/settings") });
   const branchRows = branches.data?.branches ?? [];
   const memberRows = members.data ?? [];
+  const canManageUnits = ["OWNER", "MANAGER", "ACCOUNTANT"].includes(business.role);
+  const visibleUnitCount = unitSettings.data?.units.filter((unit) => unitVisibility[unit.id] ?? unit.isVisible).length ?? 0;
   const allOpen = sectionItems.every((section) => openSections[section.id]);
   const currentBranchId = sessionStorage.getItem("shopro_branch_id");
+
+  useEffect(() => { setUnitVisibility({}); setUnitVisibilityDirty(false); }, [business.id]);
+  useEffect(() => {
+    if (unitSettings.data && !unitVisibilityDirty) setUnitVisibility(Object.fromEntries(unitSettings.data.units.map((unit) => [unit.id, unit.isVisible])));
+  }, [unitSettings.data, unitVisibilityDirty]);
 
   const toggleSection = (id: SettingsSectionId) => setOpenSections((previous) => ({ ...previous, [id]: !previous[id] }));
   const toggleAll = () => setOpenSections(Object.fromEntries(sectionItems.map(({ id }) => [id, !allOpen])) as Record<SettingsSectionId, boolean>);
@@ -108,6 +124,33 @@ export function SettingsPage({ business, theme, setTheme }: { business: Business
     finally { setBusy(""); }
   };
 
+  const saveUnitVisibility = async () => {
+    const visibleUnitIds = (unitSettings.data?.units ?? []).filter((unit) => unitVisibility[unit.id] ?? unit.isVisible).map((unit) => unit.id);
+    if (!visibleUnitIds.length) { setError("برای ثبت کالا، دست‌کم یک واحد باید در فهرست نمایش بماند."); return; }
+    setError(""); setSuccess(""); setBusy("units");
+    try {
+      const saved = await patch<UnitSettings>("/products/units/settings", { visibleUnitIds });
+      setUnitVisibility(Object.fromEntries(saved.units.map((unit) => [unit.id, unit.isVisible])));
+      queryClient.setQueryData(["unit-settings", business.id], saved);
+      queryClient.setQueryData(["units", business.id], saved.units.filter((unit) => unit.isVisible).map(({ id, code, labelFa, precision, groupKey }) => ({ id, code, labelFa, precision, groupKey })));
+      setUnitVisibilityDirty(false); invalidate(); setSuccess("فهرست واحدهای قابل‌نمایش ذخیره شد.");
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(""); }
+  };
+
+  const setAllUnitsVisible = (visible: boolean) => {
+    if (!unitSettings.data) return;
+    setUnitVisibility(Object.fromEntries(unitSettings.data.units.map((unit) => [unit.id, visible])));
+    setUnitVisibilityDirty(true);
+  };
+
+  const setOnlyDefaultUnit = () => {
+    if (!unitSettings.data) return;
+    const defaultUnit = unitSettings.data.units.find((unit) => unit.code === "pcs") ?? unitSettings.data.units[0];
+    setUnitVisibility(Object.fromEntries(unitSettings.data.units.map((unit) => [unit.id, unit.id === defaultUnit?.id])));
+    setUnitVisibilityDirty(true);
+  };
+
   return <PageHeader title="تنظیمات کسب‌وکار" subtitle="مدیریت مشخصات، شعبه‌ها، اعضا و تجربهٔ کاربری" actions={<button className="button button-secondary" type="button" onClick={() => jumpToSection("new-business")}><CirclePlus size={17} />کسب‌وکار تازه</button>}>
     <section className="settings-overview card" aria-label="خلاصهٔ کسب‌وکار فعال">
       <div className="settings-overview-main">
@@ -149,6 +192,15 @@ export function SettingsPage({ business, theme, setTheme }: { business: Business
         <div className="settings-panel-heading"><div><h3>اعضا و دسترسی‌ها</h3><p>اعضا با شمارهٔ موبایل‌شان به کسب‌وکار دعوت می‌شوند.</p></div><button className="button button-primary" type="button" disabled={!branchRows.length} onClick={() => { setError(""); setPhone(""); setRole("CASHIER"); setMemberOpen(true); }}><CirclePlus size={16} />افزودن عضو</button></div>
         {!branchRows.length && !branches.isPending && <div className="settings-inline-hint">برای افزودن عضو، ابتدا دست‌کم یک شعبه بسازید.</div>}
         {members.isError ? <InlineError error={members.error} retry={() => void members.refetch()} /> : members.isPending ? <SettingsLoading label="در حال بارگذاری اعضا…" /> : memberRows.length ? <div className="settings-member-list">{memberRows.map((member) => <article className="settings-member-row" key={member.id}><span className="settings-member-avatar">{(member.user.displayName ?? member.user.phone).slice(0, 1)}</span><div className="settings-member-copy"><strong>{member.user.displayName ?? member.user.phone}</strong><span dir="ltr">{member.user.displayName ? member.user.phone : roleLabel(member.role)}</span></div><span className="settings-role-badge">{roleLabel(member.role)}</span><span className={`settings-member-status ${member.status === "ACTIVE" ? "active" : "inactive"}`}><i />{member.status === "ACTIVE" ? "فعال" : "غیرفعال"}</span></article>)}</div> : <SettingsEmpty icon={UsersRound} title="اعضایی به تیم اضافه نشده‌اند" text="با افزودن عضو می‌توانید دسترسی همکاران را در شعبه‌های کسب‌وکار مدیریت کنید." action={<button className="button button-primary" type="button" disabled={!branchRows.length} onClick={() => setMemberOpen(true)}><CirclePlus size={16} />افزودن عضو</button>} />}
+      </SettingsAccordion>
+
+      <SettingsAccordion id="units" title="واحدهای اندازه‌گیری" summary="انتخاب واحدهایی که در فرم تعریف کالا نمایش داده می‌شوند" icon={Ruler} open={openSections.units} onToggle={() => toggleSection("units")} meta={`${unitSettings.isPending ? "…" : faNumber(visibleUnitCount)} واحد فعال`}>
+        <div className="settings-panel-heading"><div><h3>واحدهای قابل‌استفاده</h3><p>فقط واحدهای روشن در فهرست انتخاب کالا نمایش داده می‌شوند.</p></div><div className="settings-unit-bulk-actions"><button className="button button-secondary" type="button" disabled={!canManageUnits || unitSettings.isPending || !unitSettings.data?.units.length} onClick={() => setOnlyDefaultUnit()}>فقط عدد</button><button className="button button-text" type="button" disabled={!canManageUnits || unitSettings.isPending || !unitSettings.data?.units.length} onClick={() => setAllUnitsVisible(true)}>نمایش همه</button></div></div>
+        {!canManageUnits && <div className="settings-inline-hint">نقش شما اجازهٔ تغییر فهرست واحدهای کسب‌وکار را ندارد.</div>}
+        {unitSettings.isError ? <InlineError error={unitSettings.error} retry={() => void unitSettings.refetch()} /> : unitSettings.isPending ? <SettingsLoading label="در حال بارگذاری فهرست واحدها…" /> : <>
+          <div className="settings-unit-groups">{unitSettings.data.groups.map((group) => <section className="settings-unit-group" key={group.key}><header><strong>{group.labelFa}</strong><span>{faNumber(group.units.filter((unit) => unitVisibility[unit.id] ?? unit.isVisible).length)} از {faNumber(group.units.length)}</span></header><div className="settings-unit-options">{group.units.map((unit) => { const checked = unitVisibility[unit.id] ?? unit.isVisible; return <label className={`settings-unit-option ${checked ? "selected" : ""}`} key={unit.id}><input type="checkbox" disabled={!canManageUnits} checked={checked} onChange={() => { setUnitVisibility((current) => ({ ...current, [unit.id]: !checked })); setUnitVisibilityDirty(true); }} /><span className="settings-unit-checkbox" aria-hidden="true">{checked && <Check size={13} />}</span><span className="settings-unit-copy"><strong>{unit.labelFa}</strong>{unit.code === "pcs" && <small>واحد پیش‌فرض</small>}</span></label>; })}</div></section>)}</div>
+          <div className="settings-unit-footer"><p>{visibleUnitCount === 0 ? "برای ثبت کالا، دست‌کم یک واحد را روشن نگه دارید." : visibleUnitCount === 1 ? "تنها واحد روشن، هنگام تعریف کالا به‌طور خودکار انتخاب می‌شود." : "پنهان‌کردن یک واحد، واحد کالاهای ثبت‌شدهٔ قبلی را تغییر نمی‌دهد."}</p><button className="button button-primary" type="button" disabled={!canManageUnits || !unitVisibilityDirty || !visibleUnitCount || busy === "units"} onClick={() => void saveUnitVisibility()}><Save size={16} />{busy === "units" ? "در حال ذخیره…" : "ذخیرهٔ فهرست واحدها"}</button></div>
+        </>}
       </SettingsAccordion>
 
       <SettingsAccordion id="appearance" title="ظاهر و نمایش" summary="انتخاب حالت نمایش برنامه متناسب با محیط کارتان" icon={Palette} open={openSections.appearance} onToggle={() => toggleSection("appearance")} meta={themeLabel(theme)}>

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Archive, Boxes, PackagePlus, Pencil, UsersRound } from "lucide-react";
@@ -86,21 +86,33 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const products = useQuery({ queryKey: ["products", query], queryFn: () => get<Product[]>("/products?q=" + encodeURIComponent(query)) });
-  const units = useQuery({ queryKey: ["units"], queryFn: () => get<Array<{ id: string; labelFa: string }>>("/products/units") });
+  const unitBusinessId = sessionStorage.getItem("shopro_business_id");
+  const units = useQuery({ queryKey: ["units", unitBusinessId], queryFn: () => get<Array<{ id: string; labelFa: string }>>("/products/units") });
   const categories = useQuery({ queryKey: ["product-categories"], queryFn: () => get<Array<{ id: string; name: string }>>("/products/categories") });
+  const unitOptions = (units.data ?? []).map((unit) => ({ value: unit.id, label: unit.labelFa }));
+  if (editing && !unitOptions.some((unit) => unit.value === editing.unit.id)) unitOptions.push({ value: editing.unit.id, label: `${editing.unit.labelFa} · واحد فعلی کالا` });
+
+  useEffect(() => {
+    setUnitId("");
+  }, [unitBusinessId]);
+
+  useEffect(() => {
+    if (!editing && !unitId && units.data?.length === 1) setUnitId(units.data[0].id);
+  }, [editing, unitId, units.data]);
 
   const clearForm = () => { setName(""); setSku(""); setBarcode(""); setPrice(""); setCost(""); setReorder(""); setTaxPercent("0"); setUnitId(""); setCategoryId(""); setCategoryName(""); setKind("STOCK"); setShowCategory(false); setError(""); };
-  const openCreate = () => { setEditing(null); clearForm(); setFormOpen(true); };
+  const openCreate = () => { setEditing(null); clearForm(); if (units.data?.length === 1) setUnitId(units.data[0].id); setFormOpen(true); };
   const openEdit = (product: Product) => { setEditing(product); setName(product.name); setSku(product.sku ?? ""); setBarcode(product.barcode ?? ""); setPrice(fromRial(product.salePriceRial, currency)); setCost(product.defaultCostRial ? fromRial(product.defaultCostRial, currency) : ""); setReorder(product.reorderPoint ?? ""); setTaxPercent(String((product.taxRateBasisPoints ?? 0) / 100)); setCategoryId(product.category?.id ?? ""); setUnitId(product.unit.id); setKind(product.kind); setShowCategory(false); setError(""); setFormOpen(true); };
   const save = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
+      if (!unitId) throw new Error("واحد کالا را انتخاب کنید.");
       const rate = Number(taxPercent);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) throw new Error("نرخ مالیات باید بین صفر تا ۱۰۰ درصد باشد.");
       const salePriceRial = toRial(price, currency);
       const defaultCostRial = cost ? toRial(cost, currency) : null;
       if (editing) await patch("/products/" + editing.id, { name, sku: sku || null, barcode: barcode || null, unitId, categoryId: categoryId || null, salePriceRial, defaultCostRial, reorderPoint: reorder || null, taxRateBasisPoints: Math.round(rate * 100) });
-      else await post("/products", { name, sku: sku || undefined, barcode: barcode || undefined, categoryId: categoryId || undefined, defaultCostRial: defaultCostRial || undefined, reorderPoint: reorder || undefined, taxRateBasisPoints: Math.round(rate * 100), kind, unitId, salePriceRial });
+      else await post("/products", { name, sku: sku || undefined, barcode: barcode || undefined, categoryId: categoryId || undefined, defaultCostRial: defaultCostRial || undefined, reorderPoint: reorder || undefined, taxRateBasisPoints: Math.round(rate * 100), kind, unitId: unitId || undefined, salePriceRial });
       setFormOpen(false); await invalidate();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
@@ -126,7 +138,7 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
     </div>)}{!products.data?.length && <div className="empty-state"><Boxes size={22} /><strong>کالایی ثبت نشده</strong><p>کالاها و خدمات خود را اضافه کنید.</p><button type="button" className="button button-secondary" onClick={openCreate}>افزودن کالا یا خدمت</button></div>}</div>}
     <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? "ویرایش کالا یا خدمت" : "تعریف کالا یا خدمت"} description="اطلاعات قیمت و مشخصات کالا را ثبت کنید." size="wide">
       <form onSubmit={(event) => void save(event)}><div className="form-grid"><Field label="نام" value={name} onChange={setName} required /><Field label="کد کالا" value={sku} onChange={setSku} placeholder="اختیاری" /><Field label="بارکد" value={barcode} onChange={setBarcode} placeholder="اختیاری" dir="ltr" /><Field label={`قیمت فروش (${currency === "IRT" ? "تومان" : "ریال"})`} value={price} onChange={setPrice} inputMode="decimal" required /><Field label={`بهای خرید پیش‌فرض (${currency === "IRT" ? "تومان" : "ریال"})`} value={cost} onChange={setCost} inputMode="decimal" placeholder="اختیاری" /><Field label="حد هشدار موجودی" value={reorder} onChange={setReorder} inputMode="decimal" placeholder="اختیاری" />
-        <SelectField label="دسته‌بندی" value={categoryId} onChange={setCategoryId} options={(categories.data ?? []).map((category) => ({ value: category.id, label: category.name }))} placeholder="بدون دسته" onAdd={() => setShowCategory(true)} /><SelectField label="واحد" value={unitId} onChange={setUnitId} options={(units.data ?? []).map((unit) => ({ value: unit.id, label: unit.labelFa }))} />{!editing && <SelectField label="نوع" value={kind} onChange={setKind} options={[{ value: "STOCK", label: "کالای انبارشونده" }, { value: "SERVICE", label: "خدمت" }]} />}
+        <SelectField label="دسته‌بندی" value={categoryId} onChange={setCategoryId} options={(categories.data ?? []).map((category) => ({ value: category.id, label: category.name }))} placeholder="بدون دسته" onAdd={() => setShowCategory(true)} /><SelectField label="واحد" value={unitId} onChange={setUnitId} options={unitOptions} />{!editing && <SelectField label="نوع" value={kind} onChange={setKind} options={[{ value: "STOCK", label: "کالای انبارشونده" }, { value: "SERVICE", label: "خدمت" }]} />}
         <Field label="نرخ مالیات (درصد)" value={taxPercent} onChange={setTaxPercent} inputMode="decimal" placeholder="۰" /></div>
         {editing && <div className="detail-grid"><div className="detail-field"><small>نوع</small><strong>{editing.kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"}</strong></div></div>}
         {showCategory && <div className="category-quick-form"><Field label="نام دستهٔ تازه" value={categoryName} onChange={setCategoryName} required /><button className="button button-secondary" type="button" disabled={!categoryName.trim()} onClick={() => void createCategory()}>افزودن و انتخاب دسته</button></div>}

@@ -705,6 +705,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .settings-loading { display: flex; align-items: center; gap: 9px; padding: 13px; color: var(--muted); font-size: 10px; }
 .settings-loading > span { width: 17px; height: 17px; border: 2px solid var(--line-green); border-top-color: var(--green); border-radius: 50%; animation: settings-spin .7s linear infinite; }
 .settings-modal-hint { margin: 0; }
+.settings-unit-bulk-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.settings-unit-bulk-actions .button { min-height: 34px; padding-inline: 10px; font-size: 9px; }
+.settings-unit-groups { display: grid; gap: 10px; }
+.settings-unit-group { padding: 13px; border: 1px solid var(--line-soft); border-radius: 13px; background: var(--surface-soft); }
+.settings-unit-group > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.settings-unit-group > header strong { font-size: 10px; }
+.settings-unit-group > header span { color: var(--muted); font-size: 9px; }
+.settings-unit-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.settings-unit-option { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 47px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: var(--surface); cursor: pointer; transition: border-color .16s, background .16s; }
+.settings-unit-option:hover, .settings-unit-option.selected { border-color: var(--line-selected); background: var(--surface-selected); }
+.settings-unit-option input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; clip: rect(0, 0, 0, 0); }
+.settings-unit-option input:focus-visible + .settings-unit-checkbox { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.settings-unit-checkbox { display: grid; flex: 0 0 auto; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line-input); border-radius: 6px; color: var(--on-accent); background: var(--field-bg); }
+.settings-unit-option.selected .settings-unit-checkbox { border-color: var(--green); background: var(--green); }
+.settings-unit-copy { display: grid; min-width: 0; gap: 2px; }
+.settings-unit-copy strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-unit-copy small { color: var(--green-dark); font-size: 8px; }
+.settings-unit-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.settings-unit-footer p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.8; }
+.settings-unit-footer .button { flex: 0 0 auto; }
 @keyframes settings-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes settings-spin { to { transform: rotate(360deg); } }
 
@@ -738,6 +758,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .settings-member-status { min-width: 48px; font-size: 8px; }
   .settings-theme-options { grid-template-columns: 1fr; }
   .settings-theme-choice { min-height: 58px; }
+  .settings-unit-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-unit-group { padding: 10px; }
+  .settings-unit-footer { align-items: stretch; flex-direction: column; }
+  .settings-unit-footer .button { width: 100%; }
   .settings-empty { align-items: flex-start; flex-wrap: wrap; }
   .settings-empty > div { flex-basis: calc(100% - 55px); }
   .settings-empty > .button { width: 100%; }
