@@ -15,7 +15,7 @@ Dockerfile در ریشه مخزن است و پورت `3000` را ارائه می
 2. در همان پروژه یک سرویس PostgreSQL بسازید و یک نام کاربری، رمز و دیتابیس انتخاب کنید.
 3. یک سرویس Docker بسازید. مخزن GitHub عمومی `https://github.com/tiam-mhd/Shopro` و شاخهٔ `main` را به آن متصل کنید؛ Dockerfile در ریشه است. برای مخزن عمومی، اتصال OAuth برنامهٔ Runflare ساده‌ترین روش است. دریافت خودکار را فقط پس از اولین استقرار فعال کنید.
 4. متغیرهای فایل [`../infra/runflare.env.example`](../infra/runflare.env.example) را در تنظیمات محیطی سرویس Docker، بخش Bulk Edit، وارد کنید. `DATABASE_URL` را از جزئیات اتصال داخلی سرویس PostgreSQL بگیرید. Host باید آدرس داخلی سرویس Postgres در Runflare باشد؛ آدرس remote را فعال نکنید. متغیرهای secret را در Runflare به حالت Secret تنظیم کنید.
-5. پورت سرویس Docker را در صورت درخواست Runflare روی `3000` بگذارید. دامنه را به همین سرویس Docker وصل کنید و `WEB_ORIGIN` را با origin نهایی همان دامنه مقداردهی کنید.
+5. پورت سرویس Docker را در صورت درخواست Runflare روی `3000` بگذارید. دامنه را به همین سرویس Docker وصل کنید، گواهی رایگان SSL رانفلر را برای دامنه فعال کنید، سپس `WEB_ORIGIN` را با origin نهایی `https://...` مقداردهی کنید. `COOKIE_SECURE=true` فقط وقتی درست است که HTTPS برای آن دامنه فعال باشد.
 6. پس از بالا آمدن سرویس Docker و دیتابیس، در ترمینال سرویس Docker دستور `npm run db:deploy` را اجرا کنید. این فرمان migrationهای نسخه‌بندی‌شده را اعمال می‌کند؛ برای هر migration جدید نیز آن را پس از استقرار نسخهٔ تازه اجرا کنید.
 7. مدیر سامانه را جدا از کاربران کسب‌وکار بسازید:
 
@@ -35,6 +35,7 @@ Dockerfile در ریشه مخزن است و پورت `3000` را ارائه می
 - [اتصال Docker به GitHub و دریافت خودکار](https://docs.runflare.com/docker/deploy-github/)
 - [تنظیم متغیرهای محیطی Docker و Bulk Edit](https://docs.runflare.com/docker/docker-environment-variable/)
 - [اتصال داخلی PostgreSQL در Runflare](https://runflare.com/docs/postgres/)
+- [فعال‌سازی SSL رایگان](https://runflare.com/docs/how-to-work-with-ssl/)
 - [دستورهای Runflare CLI](https://runflare.com/docs/work-with-cli/cli-commands/)
 - [دامنه موقت Runflare](https://docs.runflare.com/general/temporary-domain/)
 
