@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req, Res } from "@nestjs/common";
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import { Public } from "../common/public.decorator.js";
+import type { AppRequest } from "../common/request-context.js";
 import { AuthService } from "./auth.service.js";
 import { RequestOtpDto, VerifyOtpDto } from "./otp.dto.js";
 
@@ -11,8 +12,8 @@ export class SystemAdminAuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public() @Post("otp/request") @HttpCode(HttpStatus.OK)
-  async requestOtp(@Body() body: RequestOtpDto, @Req() request: Request) {
-    await this.auth.requestOtp(body.phone, "ADMIN_LOGIN", request.ip);
+  async requestOtp(@Body() body: RequestOtpDto, @Req() request: AppRequest) {
+    await this.auth.requestOtp(body.phone, "ADMIN_LOGIN", request.ip, request.requestId);
     return { ok: true, message: "اگر شمارهٔ مدیر سامانه فعال باشد، کد ورود ارسال می‌شود." };
   }
 

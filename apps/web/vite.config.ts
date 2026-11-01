@@ -11,7 +11,7 @@ export default defineConfig({
       filename: "sw.ts",
       injectManifest: { globPatterns: ["**/*.{js,css,html,svg,woff2}"] },
       registerType: "prompt",
-      includeAssets: ["icons/Logo.png"],
+      includeAssets: ["icons/Logo.webp"],
       manifest: {
         name: "شاپرو | مدیریت کسب‌وکار",
         short_name: "شاپرو",
@@ -24,7 +24,7 @@ export default defineConfig({
         background_color: "#f7f6f1",
         theme_color: "#f7f6f1",
         icons: [
-          { src: "/icons/Logo.png", sizes: "1254x1254", type: "image/png", purpose: "any" },
+          { src: "/icons/Logo.webp", sizes: "1254x1254", type: "image/webp", purpose: "any" },
         ],
       },
     }),

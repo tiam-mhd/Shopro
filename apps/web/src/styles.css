@@ -148,8 +148,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .pending-error { position: fixed; z-index: 26; inset-inline-end: 22px; bottom: 72px; max-width: min(440px, calc(100vw - 28px)); padding: 10px 13px; border: 1px solid #f2d5d0; border-radius: 11px; color: #9c3d37; background: var(--red-soft); box-shadow: var(--shadow); font-size: 10px; }
 
 .auth-page, .onboarding-page { display: grid; min-height: 100dvh; place-items: center; padding: 30px 18px; background: radial-gradient(ellipse at 50% 10%, #ebf4ed 0, transparent 54%), var(--page); }
-.auth-brand { position: absolute; top: 30px; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; }
-.auth-brand .brand-logo { width: 39px; height: 39px; }
+.auth-page { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px 18px 64px; background: var(--page); }
+.onboarding-page { background: radial-gradient(ellipse at 50% 10%, #ebf4ed 0, transparent 54%), var(--page); }
+.auth-brand { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 16px; font-weight: 700; }
+.auth-brand .brand-logo { width: 88px; height: 88px; }
 .auth-card, .onboarding-card { width: min(100%, 430px); padding: 28px; border: 1px solid #ecebe4; border-radius: 24px; background: white; box-shadow: 0 18px 55px #3544380d; }
 .auth-card h1, .onboarding-card h1 { margin: 5px 0; font-size: 24px; letter-spacing: -.5px; }
 .auth-card > p, .onboarding-card > p { font-size: 12px; line-height: 1.8; }
@@ -412,7 +414,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-grid { grid-template-columns: 1fr; }
   .account-grid .section-title { grid-column: auto; }
-  .auth-brand { top: 25px; }
   .auth-card, .onboarding-card { padding: 23px 19px; border-radius: 20px; }
   .auth-footer { bottom: 14px; font-size: 9px; }
   .date-modal { padding: 17px; }

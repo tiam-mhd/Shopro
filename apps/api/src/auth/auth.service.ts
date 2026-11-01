@@ -21,7 +21,7 @@ const normalizePhone = (value: string) => {
 export class AuthService {
   constructor(private readonly prisma: PrismaService, private readonly parsgreen: ParsgreenService) {}
 
-  async requestOtp(input: string, audience: OtpAudience, ipAddress?: string): Promise<void> {
+  async requestOtp(input: string, audience: OtpAudience, ipAddress?: string, requestId?: string): Promise<void> {
     const phone = normalizePhone(input);
     if (audience === "ADMIN_LOGIN") {
       const admin = await this.prisma.systemAdmin.findUnique({ where: { phone }, select: { isActive: true } });
@@ -43,16 +43,10 @@ export class AuthService {
 
     const code = randomInt(100000, 1000000).toString();
     const ttl = Number(process.env.OTP_TTL_SECONDS ?? 180);
-    const challenge = await this.prisma.otpChallenge.create({
+    await this.prisma.otpChallenge.create({
       data: { phone, purpose, codeHash: this.digest(`otp:${purpose}:${phone}:${code}`), expiresAt: new Date(now.getTime() + ttl * 1000), requestIpHash: ipHash },
-      select: { id: true },
     });
-    try {
-      await this.parsgreen.sendOtp(phone, code);
-    } catch (error) {
-      await this.prisma.otpChallenge.updateMany({ where: { id: challenge.id, consumedAt: null }, data: { consumedAt: new Date() } });
-      throw error;
-    }
+    await this.parsgreen.sendOtp(phone, code, requestId);
   }
 
   async verifyUserOtp(inputPhone: string, inputCode: string): Promise<{ user: SafeUser; sessionId: string; rawSession: string; rawCsrf: string; expiresAt: Date }> {

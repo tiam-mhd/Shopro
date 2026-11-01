@@ -1,8 +1,8 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UnauthorizedException } from "@nestjs/common";
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import { Public } from "../common/public.decorator.js";
 import { CurrentUser } from "../common/current-user.decorator.js";
-import type { AuthenticatedUser } from "../common/request-context.js";
+import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import { AuthService } from "./auth.service.js";
 import { RequestOtpDto, VerifyOtpDto } from "./otp.dto.js";
 
@@ -14,8 +14,8 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public() @Post("otp/request") @HttpCode(HttpStatus.OK)
-  async requestOtp(@Body() body: RequestOtpDto, @Req() request: Request) {
-    await this.auth.requestOtp(body.phone, "USER_LOGIN", request.ip);
+  async requestOtp(@Body() body: RequestOtpDto, @Req() request: AppRequest) {
+    await this.auth.requestOtp(body.phone, "USER_LOGIN", request.ip, request.requestId);
     return { ok: true, message: "اگر شماره معتبر باشد، کد ورود ارسال می‌شود." };
   }
 
