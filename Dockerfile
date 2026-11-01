@@ -10,7 +10,8 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
-RUN npm ci
+# Runflare can set NODE_ENV=production during image builds; TypeScript/Vite still need devDependencies here.
+RUN npm ci --include=dev
 
 COPY . .
 
