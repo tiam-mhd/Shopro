@@ -26,10 +26,18 @@ export class AccountingService {
       update: { nextValue: { increment: 1n } }, select: { nextValue: true },
     });
     const entryNo = `D-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+    const journalLines: Prisma.JournalLineUncheckedCreateWithoutJournalEntryInput[] = input.lines.map((line) => ({
+      ledgerAccountId: line.ledgerAccountId,
+      partyId: line.partyId ?? null,
+      branchId: input.branchId,
+      debitRial: line.debitRial ?? 0n,
+      creditRial: line.creditRial ?? 0n,
+      description: line.description,
+    }));
     return tx.journalEntry.create({ data: {
       businessId: input.businessId, branchId: input.branchId, entryNo, txnDate: input.date, sourceType: input.sourceType, sourceId: input.sourceId,
       memo: input.memo, postedBy: input.actorId, reversalOfId: input.reversalOfId,
-      lines: { create: input.lines.map((line) => ({ businessId: input.businessId, branchId: input.branchId, ledgerAccountId: line.ledgerAccountId, debitRial: line.debitRial ?? 0n, creditRial: line.creditRial ?? 0n, partyId: line.partyId ?? null, description: line.description })) },
+      lines: { create: journalLines },
     } });
   }
 
