@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+.env
+.env.*
+!.env.example
+*.log
+apps/api/src/generated/prisma/
+apps/web/dist/
+uploads/
+.DS_Store
+Thumbs.db

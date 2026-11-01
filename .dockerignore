@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+.idea
+node_modules
+**/node_modules
+**/dist
+apps/api/src/generated/prisma
+.env
+.env.*
+!.env.example
+.tmp
+coverage
+uploads
+*.log
+0-DOCS
+docs

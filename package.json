@@ -1,0 +1,29 @@
+{
+  "name": "shopro-business-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22.15.0" },
+  "workspaces": ["apps/api", "apps/web", "packages/contracts"],
+  "scripts": {
+    "dev": "npm run build -w @shopro/contracts && concurrently -k -n api,web -c green,blue \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run start:dev -w @shopro/api",
+    "dev:web": "npm run dev -w @shopro/web",
+    "build": "npm run build -w @shopro/contracts && npm run build -w @shopro/api && npm run build -w @shopro/web",
+    "typecheck": "npm run typecheck -w @shopro/contracts && npm run typecheck -w @shopro/api && npm run typecheck -w @shopro/web",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "admin:create": "tsx apps/api/src/cli/create-system-admin.ts",
+    "admin:create:prod": "node apps/api/dist/cli/create-system-admin.js"
+  },
+  "dependencies": {
+    "prisma": "^7.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

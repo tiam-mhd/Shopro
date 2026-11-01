@@ -1,0 +1,54 @@
+import { useMemo, useState } from "react";
+import { format as formatJalali, getDaysInMonth, parse } from "date-fns-jalali";
+import { CalendarDays, ChevronDown, ChevronUp, X } from "lucide-react";
+
+const months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
+const digits = (value: string) => value.replace(/[0-9]/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
+const jalaliParts = (date: Date) => formatJalali(date, "yyyy-M-d").split("-").map(Number) as [number, number, number];
+const parseJalali = (year: number, month: number, day: number) => parse(`${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`, "yyyy/MM/dd", new Date(2000, 0, 1));
+const toIso = (date: Date) => new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())).toISOString().slice(0, 10);
+
+export function JalaliDatePicker({ value, onChange, label = "تاریخ" }: { value: string; onChange: (iso: string) => void; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const current = useMemo(() => {
+    const date = value ? new Date(`${value}T12:00:00`) : new Date();
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  }, [value]);
+  const [year, setYear] = useState(() => jalaliParts(current)[0]);
+  const [month, setMonth] = useState(() => jalaliParts(current)[1]);
+  const [day, setDay] = useState(() => jalaliParts(current)[2]);
+  const today = jalaliParts(new Date());
+  const monthDate = useMemo(() => parseJalali(year, month, 1), [year, month]);
+  const dayCount = getDaysInMonth(monthDate);
+  const clampDay = (nextMonth: number, nextYear: number, selected: number) => Math.min(selected, getDaysInMonth(parseJalali(nextYear, nextMonth, 1)));
+  const openPicker = () => { const [y, m, d] = jalaliParts(current); setYear(y); setMonth(m); setDay(d); setOpen(true); };
+  return <>
+    <button type="button" className="date-field" onClick={openPicker} aria-label={`انتخاب ${label}`}><CalendarDays size={18} /><span>{label}</span><strong dir="ltr">{digits(formatJalali(current, "yyyy/MM/dd"))}</strong><ChevronDown size={16} /></button>
+    {open && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+      <section className="date-modal" role="dialog" aria-modal="true" aria-labelledby="date-title" dir="rtl">
+        <header className="modal-heading"><div><span className="eyebrow">تقویم خورشیدی</span><h2 id="date-title">انتخاب {label}</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="بستن"><X size={20} /></button></header>
+        <div className="date-wheels">
+          <Wheel title="روز" value={day} options={Array.from({ length: dayCount }, (_, i) => i + 1)} onChange={setDay} />
+          <Wheel title="ماه" value={month} options={months.map((_, i) => i + 1)} labels={months} onChange={(next) => { setMonth(next); setDay((old) => clampDay(next, year, old)); }} />
+          <Wheel title="سال" value={year} options={Array.from({ length: 121 }, (_, i) => today[0] - 80 + i)} onChange={(next) => { setYear(next); setDay((old) => clampDay(month, next, old)); }} />
+        </div>
+        <button className="today-button" type="button" onClick={() => { setYear(today[0]); setMonth(today[1]); setDay(today[2]); }}>رفتن به امروز <span>{digits(formatJalali(new Date(), "yyyy/MM/dd"))}</span></button>
+        <p className="date-hint">تاریخ انتخاب‌شده در فاکتور و گزارش شما ثبت می‌شود.</p>
+        <button className="button button-primary confirm-date" type="button" onClick={() => { const date = parseJalali(year, month, day); onChange(toIso(date)); setOpen(false); }}>تأیید تاریخ</button>
+      </section>
+    </div>}
+  </>;
+}
+
+function Wheel({ title, value, options, labels, onChange }: { title: string; value: number; options: number[]; labels?: string[]; onChange: (value: number) => void }) {
+  const index = options.indexOf(value);
+  const rotate = (delta: number) => onChange(options[(index + delta + options.length) % options.length]);
+  const labelFor = (item: number) => labels?.[item - 1] ?? digits(String(item));
+  return <div className="wheel" aria-label={title}>
+    <button className="wheel-arrow" type="button" onClick={() => rotate(-1)} aria-label={`${title} قبلی`}><ChevronUp size={19} /></button>
+    <span className="wheel-faint">{labelFor(options[(index - 1 + options.length) % options.length])}</span>
+    <button type="button" className="wheel-selected" onClick={() => rotate(1)} aria-label={`${title} بعدی`}>{labelFor(value)}</button>
+    <span className="wheel-faint">{labelFor(options[(index + 1) % options.length])}</span>
+    <button className="wheel-arrow" type="button" onClick={() => rotate(1)} aria-label={`${title} بعدی`}><ChevronDown size={19} /></button>
+  </div>;
+}

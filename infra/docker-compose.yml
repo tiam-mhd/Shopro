@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shopro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shopro_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-shopro}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - shopro-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shopro} -d ${POSTGRES_DB:-shopro}"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+volumes:
+  shopro-postgres:
