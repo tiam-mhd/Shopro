@@ -15,7 +15,17 @@ export class CreateExpenseDto {
   taxRateBasisPoints?: number;
 }
 
+export class CreateExpenseCategoryDto {
+  @IsString() @Length(2, 100)
+  name!: string;
+}
+
 export class PostExpenseDto {
   @IsOptional() @IsString() @Length(1, 100)
   financeAccountId?: string;
+}
+
+export class VoidExpenseDto {
+  @IsString() @Length(3, 500)
+  reason!: string;
 }

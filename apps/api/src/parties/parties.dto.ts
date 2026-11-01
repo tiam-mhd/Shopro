@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, Length, MaxLength } from "class-validator";
+import { IsBoolean, IsEnum, IsOptional, IsString, Length, MaxLength } from "class-validator";
 
 export class CreatePartyDto {
   @IsEnum(["CUSTOMER", "SUPPLIER", "BOTH"])
@@ -18,6 +18,12 @@ export class CreatePartyDto {
 }
 
 export class UpdatePartyDto {
+  @IsOptional() @IsEnum(["CUSTOMER", "SUPPLIER", "BOTH"])
+  type?: "CUSTOMER" | "SUPPLIER" | "BOTH";
+
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
+
   @IsOptional() @IsString() @Length(2, 160)
   name?: string;
 

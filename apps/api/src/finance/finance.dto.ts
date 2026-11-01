@@ -1,10 +1,22 @@
-import { IsIn, IsOptional, IsString, IsUUID, Length } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Length } from "class-validator";
 
 export class CreateFinanceAccountDto {
   @IsString() @Length(2, 100)
   name!: string;
   @IsIn(["CASH", "BANK", "POS", "OTHER"])
   kind!: "CASH" | "BANK" | "POS" | "OTHER";
+}
+
+export class UpdateFinanceAccountDto {
+  @IsOptional() @IsString() @Length(2, 100)
+  name?: string;
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
+}
+
+export class VoidFinanceTransactionDto {
+  @IsString() @Length(3, 500)
+  reason!: string;
 }
 
 export class CashTransactionDto {

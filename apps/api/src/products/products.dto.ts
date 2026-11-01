@@ -39,6 +39,10 @@ export class UpdateProductDto {
   sku?: string | null;
   @IsOptional() @IsString() @Length(4, 64)
   barcode?: string | null;
+  @IsOptional() @IsString() @Length(1, 100)
+  unitId?: string;
+  @IsOptional() @IsString() @Length(1, 100)
+  categoryId?: string | null;
   @IsOptional() @IsString() @Length(1, 24)
   salePriceRial?: string;
   @IsOptional() @IsString() @Length(1, 24)

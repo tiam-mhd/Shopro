@@ -28,4 +28,5 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 export const get = <T,>(path: string, signal?: AbortSignal) => api<T>(path, { signal });
 export const post = <T,>(path: string, body?: unknown, headers?: Record<string, string>) => api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });
 export const patch = <T,>(path: string, body: unknown) => api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+export const del = <T,>(path: string) => api<T>(path, { method: "DELETE" });
 export const newOperationId = () => crypto.randomUUID();

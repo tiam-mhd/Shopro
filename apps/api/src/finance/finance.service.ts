@@ -3,7 +3,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AccountingService } from "./accounting.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
-import type { CashCloseDto, CashTransactionDto, ClosePeriodDto, CreateFinanceAccountDto, ReopenPeriodDto, TransferDto } from "./finance.dto.js";
+import type { CashCloseDto, CashTransactionDto, ClosePeriodDto, CreateFinanceAccountDto, ReopenPeriodDto, TransferDto, UpdateFinanceAccountDto } from "./finance.dto.js";
 
 const parseMoney = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); const amount = BigInt(value); if (amount <= 0n) throw new BadRequestException("مبلغ باید بزرگ‌تر از صفر باشد."); return amount; };
 
@@ -17,6 +17,34 @@ export class FinanceService {
     const balances = await this.prisma.journalLine.groupBy({ by: ["ledgerAccountId"], where: { businessId, branchId, ledgerAccountId: { in: accounts.map((account) => account.ledgerAccountId) }, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
     const sums = new Map(balances.map((row) => [row.ledgerAccountId, (row._sum.debitRial ?? 0n) - (row._sum.creditRial ?? 0n)]));
     return accounts.map((account) => ({ id: account.id, name: account.name, kind: account.kind, branchId, balanceRial: (sums.get(account.ledgerAccountId) ?? 0n).toString() }));
+  }
+
+  async getAccount(user: AuthenticatedUser, id: string) {
+    const { businessId, branchId } = this.scope(user);
+    const account = await this.prisma.financeAccount.findFirst({ where: { id, businessId, branchId }, select: { id: true, name: true, kind: true, isActive: true, ledgerAccountId: true } });
+    if (!account) throw new NotFoundException("حساب مالی پیدا نشد.");
+    const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: account.ledgerAccountId, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
+    const balance = (totals._sum.debitRial ?? 0n) - (totals._sum.creditRial ?? 0n);
+    return { id: account.id, name: account.name, kind: account.kind, isActive: account.isActive, balanceRial: balance.toString() };
+  }
+
+  async updateAccount(user: AuthenticatedUser, id: string, dto: UpdateFinanceAccountDto, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException();
+    const before = await this.prisma.financeAccount.findFirst({ where: { id, businessId, branchId } });
+    if (!before) throw new NotFoundException("حساب مالی پیدا نشد.");
+    if (dto.isActive === false) {
+      const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: before.ledgerAccountId, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
+      if ((totals._sum.debitRial ?? 0n) !== (totals._sum.creditRial ?? 0n)) throw new ConflictException("ابتدا ماندهٔ حساب را به حساب دیگری منتقل کنید؛ حساب دارای مانده بایگانی نمی‌شود.");
+    }
+    const nextName = dto.name?.trim();
+    const after = await this.prisma.$transaction(async (tx) => {
+      const account = await tx.financeAccount.update({ where: { id }, data: { name: nextName, isActive: dto.isActive } });
+      if (nextName) await tx.ledgerAccount.update({ where: { id: before.ledgerAccountId }, data: { name: nextName } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.isActive === false ? "finance_account.archived" : "finance_account.updated", entityType: "finance_account", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, kind: before.kind, isActive: before.isActive }, afterJson: { name: account.name, kind: account.kind, isActive: account.isActive } } });
+      return account;
+    });
+    return { id: after.id, name: after.name, kind: after.kind, isActive: after.isActive };
   }
 
   async createAccount(user: AuthenticatedUser, dto: CreateFinanceAccountDto, request: AppRequest) {
@@ -35,8 +63,39 @@ export class FinanceService {
 
   async transactions(user: AuthenticatedUser, limit = 100) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.cashTransaction.findMany({ where: { businessId, branchId, status: "POSTED" }, include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } }, party: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: Math.min(Math.max(limit, 1), 200) });
-    return rows.map((row) => ({ id: row.id, kind: row.kind, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), fromAccount: row.fromAccount?.name ?? null, toAccount: row.toAccount?.name ?? null, party: row.party?.name ?? null, method: row.method, reference: row.reference }));
+    const rows = await this.prisma.cashTransaction.findMany({ where: { businessId, branchId }, include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } }, party: { select: { name: true } }, journalEntry: { select: { sourceType: true, status: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: Math.min(Math.max(limit, 1), 200) });
+    return rows.map((row) => ({ id: row.id, kind: row.kind, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), fromAccount: row.fromAccount?.name ?? null, toAccount: row.toAccount?.name ?? null, party: row.party?.name ?? null, method: row.method, reference: row.reference, status: row.journalEntry?.status ?? row.status, canVoid: row.status === "POSTED" && row.journalEntry?.status === "POSTED" && row.journalEntry.sourceType === "CASH_TX" && ["RECEIPT", "PAYMENT", "TRANSFER"].includes(row.kind) }));
+  }
+
+  async voidTransaction(user: AuthenticatedUser, id: string, dto: import("./finance.dto.js").VoidFinanceTransactionDto, key: string | undefined, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireFinanceRole(user);
+    const idempotencyKey = this.requireKey(key);
+    const reason = dto.reason.trim();
+    if (reason.length < 3) throw new BadRequestException("دلیل ابطال را وارد کنید.");
+    const requestHash = this.accounting.idempotencyHash({ id, reason, action: "void-cash-transaction" });
+    const prior = await this.accounting.existingIdempotent(user.id, businessId, idempotencyKey, requestHash);
+    if (prior) return prior;
+    return this.prisma.$transaction(async (tx) => {
+      const cash = await tx.cashTransaction.findFirst({ where: { id, businessId, branchId, status: "POSTED" }, include: { journalEntry: { include: { lines: true } } } });
+      if (!cash) throw new NotFoundException("تراکنش پیدا نشد.");
+      if (!cash.journalEntry || cash.journalEntry.status !== "POSTED" || cash.journalEntry.sourceType !== "CASH_TX" || !["RECEIPT", "PAYMENT", "TRANSFER"].includes(cash.kind)) throw new ConflictException("این دریافت یا پرداخت بخشی از سند دیگری است و از این مسیر قابل ابطال نیست.");
+      await this.accounting.assertOpen(tx, businessId, cash.txnDate);
+      const reversal = await this.accounting.createJournal(tx, { businessId, branchId, date: cash.txnDate, sourceType: "CASH_TX_VOID", sourceId: id, reversalOfId: cash.journalEntry.id, memo: `ابطال تراکنش ${cash.reference ?? ""}: ${reason}`, actorId: user.id, lines: cash.journalEntry.lines.map((line) => ({ ledgerAccountId: line.ledgerAccountId, debitRial: line.creditRial, creditRial: line.debitRial, partyId: line.partyId, description: `برگشت ابطال: ${line.description ?? ""}` })) });
+      let kind: "RECEIPT" | "PAYMENT" | "TRANSFER";
+      let fromAccountId: string | null = null;
+      let toAccountId: string | null = null;
+      if (cash.kind === "RECEIPT") { kind = "PAYMENT"; fromAccountId = cash.toAccountId; }
+      else if (cash.kind === "PAYMENT") { kind = "RECEIPT"; toAccountId = cash.fromAccountId; }
+      else { kind = "TRANSFER"; fromAccountId = cash.toAccountId; toAccountId = cash.fromAccountId; }
+      if ((kind === "RECEIPT" && !toAccountId) || (kind === "PAYMENT" && !fromAccountId) || (kind === "TRANSFER" && (!fromAccountId || !toAccountId))) throw new ConflictException("حساب‌های این تراکنش برای ابطال کامل نیستند.");
+      const reversedCash = await tx.cashTransaction.create({ data: { businessId, branchId, kind, txnDate: cash.txnDate, amountRial: cash.amountRial, fromAccountId, toAccountId, partyId: cash.partyId, method: cash.method, reference: `VOID-${cash.reference ?? id}`, status: "POSTED", journalEntryId: reversal.id, idempotencyKey: `cash-void:${id}`, createdBy: user.id } });
+      await tx.journalEntry.update({ where: { id: cash.journalEntry.id }, data: { status: "REVERSED" } });
+      const result = { id: cash.id, reversalTransactionId: reversedCash.id, status: "VOIDED", reason };
+      await this.accounting.remember(tx, { userId: user.id, businessId, key: idempotencyKey, requestHash, response: result });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "cash.transaction.voided", entityType: "cash_transaction", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { kind: cash.kind, amountRial: cash.amountRial.toString(), status: cash.status }, afterJson: { ...result, amountRial: cash.amountRial.toString() } } });
+      return result;
+    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
   }
 
   async cashCloses(user: AuthenticatedUser, limit = 50) {

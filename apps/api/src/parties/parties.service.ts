@@ -41,14 +41,15 @@ export class PartiesService {
     if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException();
     const before = await this.prisma.party.findFirst({ where: { id, businessId, archivedAt: null } });
     if (!before) throw new NotFoundException("طرف‌حساب پیدا نشد.");
-    const after = await this.prisma.party.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, phone: dto.phone === undefined ? undefined : dto.phone ? this.phone(dto.phone) : null, email: dto.email === undefined ? undefined : dto.email?.trim() || null, address: dto.address === undefined ? undefined : dto.address?.trim() || null } });
-    await this.audit(user, request, "party.updated", id, { name: before.name, phone: before.phone, email: before.email, address: before.address }, { name: after.name, phone: after.phone, email: after.email, address: after.address });
+    const after = await this.prisma.party.update({ where: { id }, data: { type: dto.type, name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, phone: dto.phone === undefined ? undefined : dto.phone ? this.phone(dto.phone) : null, email: dto.email === undefined ? undefined : dto.email?.trim() || null, address: dto.address === undefined ? undefined : dto.address?.trim() || null, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
+    const action = dto.isActive === false ? "party.archived" : dto.isActive === true ? "party.restored" : "party.updated";
+    await this.audit(user, request, action, id, { name: before.name, phone: before.phone, email: before.email, address: before.address }, { name: after.name, phone: after.phone, email: after.email, address: after.address, isActive: after.archivedAt === null });
     return after;
   }
 
   async statement(user: AuthenticatedUser, id: string, through?: string) {
     const businessId = this.business(user);
-    const party = await this.prisma.party.findFirst({ where: { id, businessId, archivedAt: null }, select: { id: true, name: true, type: true, phone: true } });
+    const party = await this.prisma.party.findFirst({ where: { id, businessId, archivedAt: null }, select: { id: true, name: true, type: true, phone: true, email: true, address: true } });
     if (!party) throw new NotFoundException("طرف‌حساب پیدا نشد.");
     const throughDate = through ? this.date(through) : undefined;
     const lines = await this.prisma.journalLine.findMany({ where: { businessId, partyId: id, journalEntry: { status: "POSTED", ...(throughDate ? { txnDate: { lte: throughDate } } : {}) } }, include: { journalEntry: { select: { id: true, entryNo: true, txnDate: true, memo: true, sourceType: true } } }, orderBy: [{ journalEntry: { txnDate: "asc" } }, { id: "asc" }], take: 500 });

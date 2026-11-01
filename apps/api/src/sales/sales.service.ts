@@ -52,7 +52,7 @@ export class SalesService {
       const prior = returned.get(line.returnOfLineId) ?? { quantity: 0n, discount: 0n, tax: 0n };
       returned.set(line.returnOfLineId, { quantity: prior.quantity + signedQuantityMilli(line.quantity.toString()), discount: prior.discount - line.discountRial, tax: prior.tax - line.taxRial });
     }
-    return { id: invoice.id, invoiceNo: invoice.invoiceNo, date: invoice.txnDate.toISOString().slice(0, 10), customer: invoice.customer, status: invoice.status, documentType: invoice.returnOfId ? "RETURN" : "SALE", returnOf: invoice.returnOf, returnReason: invoice.returnReason, subtotalRial: invoice.subtotalRial.toString(), discountRial: invoice.discountRial.toString(), taxRial: invoice.taxRial.toString(), totalRial: invoice.totalRial.toString(), note: invoice.note, lines: invoice.lines.map((line) => { const prior = returned.get(line.id); return { id: line.id, productId: line.productId, description: line.descriptionSnapshot, sku: line.skuSnapshot, quantity: line.quantity.toString(), returnedQuantity: (prior?.quantity ?? 0n).toString(), returnedDiscountRial: (prior?.discount ?? 0n).toString(), returnedTaxRial: (prior?.tax ?? 0n).toString(), restockAllowed: line.product?.kind === "STOCK" && line.product.trackInventory, unitCode: line.unitCodeSnapshot, unitPriceRial: line.unitPriceRial.toString(), discountRial: line.discountRial.toString(), taxRateBasisPoints: line.taxRateBasisPoints, taxRial: line.taxRial.toString(), totalRial: line.lineTotalRial.toString(), cogsRial: line.cogsRial?.toString() ?? null }; }), payments: invoice.allocations.map((allocation) => ({ amountRial: allocation.amountRial.toString(), method: allocation.cashTransaction.method })), returns: invoice.returnOfId ? [] : invoice.returns.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), reason: row.returnReason, totalRial: row.totalRial.toString(), lines: row.lines.length })) };
+    return { id: invoice.id, invoiceNo: invoice.invoiceNo, date: invoice.txnDate.toISOString().slice(0, 10), customerId: invoice.customerId, customer: invoice.customer, status: invoice.status, documentType: invoice.returnOfId ? "RETURN" : "SALE", returnOf: invoice.returnOf, returnReason: invoice.returnReason, subtotalRial: invoice.subtotalRial.toString(), discountRial: invoice.discountRial.toString(), taxRial: invoice.taxRial.toString(), totalRial: invoice.totalRial.toString(), note: invoice.note, lines: invoice.lines.map((line) => { const prior = returned.get(line.id); return { id: line.id, productId: line.productId, description: line.descriptionSnapshot, sku: line.skuSnapshot, quantity: line.quantity.toString(), returnedQuantity: (prior?.quantity ?? 0n).toString(), returnedDiscountRial: (prior?.discount ?? 0n).toString(), returnedTaxRial: (prior?.tax ?? 0n).toString(), restockAllowed: line.product?.kind === "STOCK" && line.product.trackInventory, unitCode: line.unitCodeSnapshot, unitPriceRial: line.unitPriceRial.toString(), discountRial: line.discountRial.toString(), taxRateBasisPoints: line.taxRateBasisPoints, taxRial: line.taxRial.toString(), totalRial: line.lineTotalRial.toString(), cogsRial: line.cogsRial?.toString() ?? null }; }), payments: invoice.allocations.map((allocation) => ({ amountRial: allocation.amountRial.toString(), method: allocation.cashTransaction.method })), returns: invoice.returnOfId ? [] : invoice.returns.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), reason: row.returnReason, totalRial: row.totalRial.toString(), lines: row.lines.length })) };
   }
 
   async returnSale(user: AuthenticatedUser, id: string, dto: CreateSalesReturnDto, key: string | undefined, request: AppRequest) {
@@ -213,6 +213,35 @@ export class SalesService {
       }
       throw error;
     }
+  }
+
+  async updateDraft(user: AuthenticatedUser, id: string, dto: CreateSalesDto, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    if (!["OWNER", "MANAGER", "ACCOUNTANT", "CASHIER"].includes(user.role ?? "")) throw new ForbiddenException();
+    const before = await this.prisma.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, include: { lines: true } });
+    if (!before) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
+    const date = this.date(dto.txnDate);
+    if (dto.customerId && !(await this.prisma.party.findFirst({ where: { id: dto.customerId, businessId, archivedAt: null, type: { in: ["CUSTOMER", "BOTH"] } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
+    const products = await this.prisma.product.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true } });
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    if (productMap.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا/خدمت پیدا نشد.");
+    const lines = dto.lines.map((line) => this.calculateDraftLine(user, line, productMap.get(line.productId)!));
+    const subtotal = lines.reduce((sum, line) => sum + line.base, 0n);
+    const discounts = lines.reduce((sum, line) => sum + line.discount, 0n);
+    const tax = lines.reduce((sum, line) => sum + line.tax, 0n);
+    const total = subtotal - discounts + tax;
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, select: { id: true } });
+      if (!current) throw new ConflictException("وضعیت فاکتور تغییر کرده است؛ فهرست را تازه کنید.");
+      await tx.salesInvoiceLine.deleteMany({ where: { businessId, invoiceId: id } });
+      const updated = await tx.salesInvoice.update({ where: { id }, data: {
+        customerId: dto.customerId ?? null, txnDate: date, note: dto.note?.trim() || null,
+        subtotalRial: subtotal, discountRial: discounts, taxRial: tax, totalRial: total, version: { increment: 1 },
+        lines: { create: lines.map((line) => ({ businessId, productId: line.productId, descriptionSnapshot: line.product.name, skuSnapshot: line.product.sku, quantity: new Prisma.Decimal(quantityText(line.qtyMilli)), unitCodeSnapshot: line.product.unit.code, unitPriceRial: line.price, discountRial: line.discount, taxRateBasisPoints: line.product.taxRateBasisPoints, taxRial: line.tax, lineTotalRial: line.base - line.discount + line.tax })) },
+      } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.draft.updated", entityType: "sales_invoice", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { totalRial: before.totalRial.toString(), lineCount: before.lines.length }, afterJson: { totalRial: total.toString(), lineCount: lines.length, customerId: dto.customerId ?? null } } });
+      return { id: updated.id, status: updated.status, subtotalRial: subtotal.toString(), discountRial: discounts.toString(), taxRial: tax.toString(), totalRial: total.toString() };
+    }, { isolationLevel: "Serializable" });
   }
 
   async post(user: AuthenticatedUser, id: string, dto: PostSalesDto, key?: string, request?: AppRequest) {

@@ -22,6 +22,13 @@ export class ProductsService {
     return onlyLow === "true" ? mapped.filter((row) => row.reorderPoint !== null && Number(row.quantityOnHand) <= Number(row.reorderPoint)) : mapped;
   }
 
+  async get(user: AuthenticatedUser, id: string) {
+    const businessId = this.business(user);
+    const row = await this.prisma.product.findFirst({ where: { id, businessId }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true, averageCostRial: true, inventoryValueRial: true } } } });
+    if (!row) throw new NotFoundException("کالا پیدا نشد.");
+    return { id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, isActive: row.isActive, reorderPoint: row.reorderPoint?.toString() ?? null, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", averageCostRial: row.balances[0]?.averageCostRial.toString() ?? null, inventoryValueRial: row.balances[0]?.inventoryValueRial.toString() ?? null };
+  }
+
   async create(user: AuthenticatedUser, dto: CreateProductDto, request: AppRequest) {
     const businessId = this.business(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
@@ -36,11 +43,19 @@ export class ProductsService {
 
   async update(user: AuthenticatedUser, id: string, dto: UpdateProductDto, request: AppRequest) {
     const businessId = this.business(user);
-    if (user.role === "CASHIER" && dto.salePriceRial !== undefined) throw new ForbiddenException("تغییر قیمت برای نقش شما مجاز نیست.");
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT", "CASHIER"]);
     const before = await this.prisma.product.findFirst({ where: { id, businessId, archivedAt: null } });
     if (!before) throw new NotFoundException("کالا پیدا نشد.");
-    const product = await this.prisma.product.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
+    if (user.role === "CASHIER" && dto.salePriceRial !== undefined && parseMoney(dto.salePriceRial) !== before.salePriceRial) throw new ForbiddenException("تغییر قیمت برای نقش شما مجاز نیست.");
+    if (dto.unitId && dto.unitId !== before.unitId) {
+      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId }, select: { id: true } });
+      if (!unit) throw new BadRequestException("واحد انتخاب‌شده متعلق به این کسب‌وکار نیست.");
+      const hasMovements = await this.prisma.inventoryMovement.count({ where: { businessId, productId: id } });
+      const hasCounts = await this.prisma.stockCountLine.count({ where: { businessId, productId: id } });
+      if (hasMovements > 0 || hasCounts > 0) throw new BadRequestException("واحد کالایی که گردش یا شمارش موجودی دارد قابل تغییر نیست.");
+    }
+    if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده متعلق به این کسب‌وکار نیست.");
+    const product = await this.prisma.product.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, unitId: dto.unitId, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
     await this.audit(user, request, dto.salePriceRial !== undefined ? "product.price.updated" : "product.updated", id, { name: before.name, salePriceRial: before.salePriceRial.toString(), isActive: before.isActive }, { name: product.name, salePriceRial: product.salePriceRial.toString(), isActive: product.isActive });
     return this.serialize(product);
   }

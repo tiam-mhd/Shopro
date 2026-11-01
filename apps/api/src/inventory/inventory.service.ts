@@ -61,6 +61,43 @@ export class InventoryService {
     return { id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, lineCount: row.lines.length };
   }
 
+  async updateCountDraft(user: AuthenticatedUser, id: string, dto: CreateStockCountDto, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    const before = await this.prisma.stockCount.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, include: { lines: true } });
+    if (!before) throw new NotFoundException("پیش‌نویس شمارش موجودی پیدا نشد.");
+    const date = this.date(dto.txnDate);
+    if (new Set(dto.lines.map((line) => line.productId)).size !== dto.lines.length) throw new BadRequestException("یک کالا را در یک شمارش فقط یک‌بار وارد کنید.");
+    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, isActive: true, kind: "STOCK", trackInventory: true }, select: { id: true, name: true } });
+    if (products.length !== dto.lines.length) throw new BadRequestException("یک یا چند کالا در این کسب‌وکار قابل شمارش نیست.");
+    const quantities = dto.lines.map((line) => ({ productId: line.productId, counted: milli(line.countedQuantity) }));
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.stockCount.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, select: { id: true } });
+      if (!current) throw new ConflictException("وضعیت شمارش تغییر کرده است؛ فهرست را تازه کنید.");
+      const balances = await tx.inventoryBalance.findMany({ where: { businessId, branchId, productId: { in: quantities.map((line) => line.productId) } }, select: { productId: true, quantityOnHand: true } });
+      const currentByProduct = new Map(balances.map((balance) => [balance.productId, milli(balance.quantityOnHand.toString())]));
+      await tx.stockCountLine.deleteMany({ where: { businessId, stockCountId: id } });
+      const updated = await tx.stockCount.update({ where: { id }, data: {
+        txnDate: date, reason: dto.reason.trim(),
+        lines: { create: quantities.map((line) => { const system = currentByProduct.get(line.productId) ?? 0n; return { businessId, productId: line.productId, countedQuantity: new Prisma.Decimal(quantityText(line.counted)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(system)), deltaQuantity: new Prisma.Decimal(quantityText(line.counted - system)) }; }) },
+      }, include: { lines: true } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "inventory.count.draft.updated", entityType: "stock_count", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { txnDate: before.txnDate.toISOString().slice(0, 10), reason: before.reason, lineCount: before.lines.length }, afterJson: { txnDate: dto.txnDate, reason: dto.reason.trim(), lineCount: updated.lines.length } } });
+      return { id: updated.id, txnDate: updated.txnDate.toISOString().slice(0, 10), status: updated.status, lineCount: updated.lines.length };
+    });
+  }
+
+  async deleteCountDraft(user: AuthenticatedUser, id: string, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    return this.prisma.$transaction(async (tx) => {
+      const count = await tx.stockCount.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, include: { lines: { select: { id: true } } } });
+      if (!count) throw new ConflictException("فقط پیش‌نویس شمارش را می‌توان حذف کرد؛ شمارش ثبت‌شده سابقهٔ مالی دارد.");
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "inventory.count.draft.deleted", entityType: "stock_count", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { txnDate: count.txnDate.toISOString().slice(0, 10), reason: count.reason, lineCount: count.lines.length } } });
+      await tx.stockCount.delete({ where: { id } });
+      return { id, status: "DELETED" };
+    });
+  }
+
   async postCount(user: AuthenticatedUser, id: string, key: string | undefined, request: AppRequest) {
     const { businessId, branchId } = this.scope(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);

@@ -36,3 +36,8 @@ export class PostPurchaseDto {
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => PurchasePaymentDto)
   payments?: PurchasePaymentDto[];
 }
+
+export class VoidPurchaseDto {
+  @IsString() @Length(3, 500)
+  reason!: string;
+}
