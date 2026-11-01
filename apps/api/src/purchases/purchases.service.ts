@@ -51,8 +51,18 @@ export class PurchasesService {
     const discount = lines.reduce((sum, line) => sum + line.discount, 0n);
     const taxTotal = lines.reduce((sum, line) => sum + line.tax, 0n);
     const total = subtotal - discount + taxTotal;
+    const purchaseLines: Prisma.PurchaseLineUncheckedCreateWithoutPurchaseInput[] = lines.map((line) => ({
+      productId: line.product.id,
+      descriptionSnapshot: line.product.name,
+      quantity: new Prisma.Decimal(qtyText(line.qty)),
+      unitCostRial: line.cost,
+      discountRial: line.discount,
+      taxRateBasisPoints: line.product.taxRateBasisPoints,
+      taxRial: line.tax,
+      lineTotalRial: line.base - line.discount + line.tax,
+    }));
     const row = await this.prisma.$transaction(async (tx) => {
-      const purchase = await tx.purchase.create({ data: { businessId, branchId, supplierId: dto.supplierId ?? null, txnDate: date, note: dto.note?.trim() || null, subtotalRial: subtotal, discountRial: discount, taxRial: taxTotal, totalRial: total, lines: { create: lines.map((line) => ({ businessId, productId: line.product.id, descriptionSnapshot: line.product.name, quantity: new Prisma.Decimal(qtyText(line.qty)), unitCostRial: line.cost, discountRial: line.discount, taxRateBasisPoints: line.product.taxRateBasisPoints, taxRial: line.tax, lineTotalRial: line.base - line.discount + line.tax })) } } });
+      const purchase = await tx.purchase.create({ data: { businessId, branchId, supplierId: dto.supplierId ?? null, txnDate: date, note: dto.note?.trim() || null, subtotalRial: subtotal, discountRial: discount, taxRial: taxTotal, totalRial: total, lines: { create: purchaseLines } } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "purchase.draft.created", entityType: "purchase", entityId: purchase.id, requestId: request.requestId ?? "unknown", afterJson: { supplierId: dto.supplierId ?? null, totalRial: total.toString() } } });
       return purchase;
     });
@@ -83,6 +93,16 @@ export class PurchasesService {
     const discount = lines.reduce((sum, line) => sum + line.discount, 0n);
     const taxTotal = lines.reduce((sum, line) => sum + line.tax, 0n);
     const total = subtotal - discount + taxTotal;
+    const purchaseLines: Prisma.PurchaseLineUncheckedCreateWithoutPurchaseInput[] = lines.map((line) => ({
+      productId: line.product.id,
+      descriptionSnapshot: line.product.name,
+      quantity: new Prisma.Decimal(qtyText(line.qty)),
+      unitCostRial: line.cost,
+      discountRial: line.discount,
+      taxRateBasisPoints: line.product.taxRateBasisPoints,
+      taxRial: line.tax,
+      lineTotalRial: line.base - line.discount + line.tax,
+    }));
     const saved = await this.prisma.$transaction(async (tx) => {
       const current = await tx.purchase.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, select: { id: true, totalRial: true } });
       if (!current) throw new ConflictException("وضعیت خرید تغییر کرده است؛ فهرست را تازه کنید.");
@@ -91,7 +111,7 @@ export class PurchasesService {
         supplierId: dto.supplierId ?? null, txnDate: date, note: dto.note?.trim() || null,
         subtotalRial: subtotal, discountRial: discount, taxRial: taxTotal, totalRial: total,
         version: { increment: 1 },
-        lines: { create: lines.map((line) => ({ businessId, productId: line.product.id, descriptionSnapshot: line.product.name, quantity: new Prisma.Decimal(qtyText(line.qty)), unitCostRial: line.cost, discountRial: line.discount, taxRateBasisPoints: line.product.taxRateBasisPoints, taxRial: line.tax, lineTotalRial: line.base - line.discount + line.tax })) },
+        lines: { create: purchaseLines },
       } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "purchase.draft.updated", entityType: "purchase", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { totalRial: current.totalRial.toString() }, afterJson: { totalRial: total.toString(), supplierId: dto.supplierId ?? null } } });
       return updated;

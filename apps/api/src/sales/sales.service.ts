@@ -187,18 +187,25 @@ export class SalesService {
     const discounts = lines.reduce((sum, line) => sum + line.discount, 0n);
     const tax = lines.reduce((sum, line) => sum + line.tax, 0n);
     const total = subtotal - discounts + tax;
+    const invoiceLines: Prisma.SalesInvoiceLineUncheckedCreateWithoutInvoiceInput[] = lines.map((line) => ({
+      productId: line.productId,
+      descriptionSnapshot: line.product.name,
+      skuSnapshot: line.product.sku,
+      quantity: new Prisma.Decimal(quantityText(line.qtyMilli)),
+      unitCodeSnapshot: line.product.unit.code,
+      unitPriceRial: line.price,
+      discountRial: line.discount,
+      taxRateBasisPoints: line.product.taxRateBasisPoints,
+      taxRial: line.tax,
+      lineTotalRial: line.base - line.discount + line.tax,
+    }));
     try {
     return await this.prisma.$transaction(async (tx) => {
       const row = await tx.salesInvoice.create({
         data: {
           businessId, branchId, customerId: dto.customerId ?? null, txnDate: date, note: dto.note?.trim() || null,
           subtotalRial: subtotal, discountRial: discounts, taxRial: tax, totalRial: total,
-          lines: { create: lines.map((line) => ({
-            businessId, productId: line.productId, descriptionSnapshot: line.product.name, skuSnapshot: line.product.sku,
-            quantity: new Prisma.Decimal(quantityText(line.qtyMilli)), unitCodeSnapshot: line.product.unit.code,
-            unitPriceRial: line.price, discountRial: line.discount, taxRateBasisPoints: line.product.taxRateBasisPoints,
-            taxRial: line.tax, lineTotalRial: line.base - line.discount + line.tax,
-          })) },
+          lines: { create: invoiceLines },
         },
       });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.draft.created", entityType: "sales_invoice", entityId: row.id, requestId: request.requestId ?? "unknown", afterJson: { customerId: dto.customerId ?? null, totalRial: total.toString(), lineCount: lines.length } } });
@@ -230,6 +237,18 @@ export class SalesService {
     const discounts = lines.reduce((sum, line) => sum + line.discount, 0n);
     const tax = lines.reduce((sum, line) => sum + line.tax, 0n);
     const total = subtotal - discounts + tax;
+    const invoiceLines: Prisma.SalesInvoiceLineUncheckedCreateWithoutInvoiceInput[] = lines.map((line) => ({
+      productId: line.productId,
+      descriptionSnapshot: line.product.name,
+      skuSnapshot: line.product.sku,
+      quantity: new Prisma.Decimal(quantityText(line.qtyMilli)),
+      unitCodeSnapshot: line.product.unit.code,
+      unitPriceRial: line.price,
+      discountRial: line.discount,
+      taxRateBasisPoints: line.product.taxRateBasisPoints,
+      taxRial: line.tax,
+      lineTotalRial: line.base - line.discount + line.tax,
+    }));
     return this.prisma.$transaction(async (tx) => {
       const current = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, select: { id: true } });
       if (!current) throw new ConflictException("وضعیت فاکتور تغییر کرده است؛ فهرست را تازه کنید.");
@@ -237,7 +256,7 @@ export class SalesService {
       const updated = await tx.salesInvoice.update({ where: { id }, data: {
         customerId: dto.customerId ?? null, txnDate: date, note: dto.note?.trim() || null,
         subtotalRial: subtotal, discountRial: discounts, taxRial: tax, totalRial: total, version: { increment: 1 },
-        lines: { create: lines.map((line) => ({ businessId, productId: line.productId, descriptionSnapshot: line.product.name, skuSnapshot: line.product.sku, quantity: new Prisma.Decimal(quantityText(line.qtyMilli)), unitCodeSnapshot: line.product.unit.code, unitPriceRial: line.price, discountRial: line.discount, taxRateBasisPoints: line.product.taxRateBasisPoints, taxRial: line.tax, lineTotalRial: line.base - line.discount + line.tax })) },
+        lines: { create: invoiceLines },
       } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.draft.updated", entityType: "sales_invoice", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { totalRial: before.totalRial.toString(), lineCount: before.lines.length }, afterJson: { totalRial: total.toString(), lineCount: lines.length, customerId: dto.customerId ?? null } } });
       return { id: updated.id, status: updated.status, subtotalRial: subtotal.toString(), discountRial: discounts.toString(), taxRial: tax.toString(), totalRial: total.toString() };
