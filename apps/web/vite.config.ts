@@ -11,10 +11,10 @@ export default defineConfig({
       filename: "sw.ts",
       injectManifest: { globPatterns: ["**/*.{js,css,html,svg,woff2}"] },
       registerType: "prompt",
-      includeAssets: ["icons/app-icon.svg"],
+      includeAssets: ["icons/Logo.png"],
       manifest: {
-        name: "مدیریت کسب‌وکار",
-        short_name: "مدیریت کسب‌وکار",
+        name: "شاپرو | مدیریت کسب‌وکار",
+        short_name: "شاپرو",
         description: "مدیریت فروش، موجودی و امور مالی کسب‌وکار",
         lang: "fa",
         dir: "rtl",
@@ -24,8 +24,7 @@ export default defineConfig({
         background_color: "#f7f6f1",
         theme_color: "#f7f6f1",
         icons: [
-          { src: "/icons/app-icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-          { src: "/icons/app-icon-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+          { src: "/icons/Logo.png", sizes: "1254x1254", type: "image/png", purpose: "any" },
         ],
       },
     }),
