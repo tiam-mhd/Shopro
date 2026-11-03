@@ -11,7 +11,7 @@ export default defineConfig({
       filename: "sw.ts",
       injectManifest: { globPatterns: ["**/*.{js,css,html,svg,woff2}"] },
       registerType: "prompt",
-      includeAssets: ["icons/Logo.webp", "icons/icon-192.webp", "icons/icon-512.webp", "icons/icon-maskable-512.webp"],
+      includeAssets: ["icons/Logo.webp", "icons/Logo-dark.webp", "icons/icon-192.webp", "icons/icon-512.webp", "icons/icon-maskable-512.webp"],
       manifest: {
         name: "شاپرو | مدیریت کسب‌وکار",
         short_name: "شاپرو",
