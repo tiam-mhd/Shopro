@@ -832,6 +832,161 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .ledger-row p { margin: 0; color: var(--muted-strong); font-size: 10px; line-height: 1.7; }
 .ledger-row-amounts { justify-content: flex-start; flex-wrap: wrap; gap: 7px 18px; color: var(--muted); font-size: 9px; }
 .ledger-row-amounts strong { color: var(--ink); font-size: 10px; }
+.subscription-page { display: grid; gap: 15px; }
+.subscription-scope { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--green-dark); background: var(--surface); font-size: 11px; font-weight: 700; }
+.subscription-topbar-pill { display: inline-flex; align-items: center; gap: 5px; max-width: 190px; padding: 7px 9px; overflow: hidden; border: 1px solid var(--line-warning); border-radius: 99px; color: var(--warning-ink); background: var(--warning-surface); font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.subscription-status-card { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(150px, auto); align-items: center; gap: 13px; padding: 17px; border-color: var(--line-green); }
+.subscription-status-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 15px; color: var(--green-dark); background: var(--green-soft); }
+.subscription-status-icon svg { width: 22px; height: 22px; }
+.subscription-status-copy, .subscription-status-period { display: grid; gap: 4px; }
+.subscription-status-copy > strong { color: var(--ink); font-size: 15px; }
+.subscription-status-copy > span:last-child, .subscription-status-period > span, .subscription-status-period > small { color: var(--muted-strong); font-size: 10px; }
+.subscription-status-period { padding-inline-start: 14px; border-inline-start: 1px solid var(--line); }
+.subscription-status-period > strong { color: var(--ink); font-size: 12px; }
+.subscription-status-note { grid-column: 1 / -1; margin: 0; font-size: 10px; }
+.subscription-status-card.expired, .subscription-status-card.required, .subscription-status-card.suspended { border-color: var(--line-warning); }
+.subscription-status-card.expired .subscription-status-icon, .subscription-status-card.required .subscription-status-icon, .subscription-status-card.suspended .subscription-status-icon { color: var(--warning-ink); background: var(--warning-surface); }
+.subscription-section { display: grid; gap: 14px; padding: 18px; }
+.subscription-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.subscription-heading h2 { margin: 3px 0 0; color: var(--ink); font-size: 16px; }
+.subscription-heading p { margin: 5px 0 0; color: var(--muted-strong); font-size: 10px; line-height: 1.7; }
+.subscription-plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.subscription-plan-card { display: grid; align-content: start; gap: 9px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); text-align: start; cursor: pointer; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.subscription-plan-card:hover { transform: translateY(-2px); border-color: var(--line-green); }
+.subscription-plan-card.selected { border-color: var(--green); background: var(--surface-selected); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 12%, transparent); }
+.subscription-plan-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted-strong); font-size: 10px; font-weight: 700; }
+.subscription-plan-top small { color: var(--green-dark); font-size: 9px; }
+.subscription-plan-price { color: var(--ink); font-size: 15px; }
+.subscription-plan-monthly { color: var(--muted-strong); font-size: 9px; }
+.subscription-plan-savings { color: var(--green-dark); font-size: 9px; }
+.subscription-plan-select { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--line-soft); color: var(--green-dark); font-size: 10px; font-weight: 700; }
+.subscription-features { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.subscription-features > strong { flex: 0 0 100%; color: var(--ink); font-size: 10px; }
+.subscription-features > span { display: inline-flex; align-items: center; gap: 5px; color: var(--muted-strong); font-size: 9px; }
+.subscription-features svg { color: var(--green); }
+.subscription-owner-note { margin: 0; font-size: 10px; }
+.subscription-order-list { display: grid; }
+.subscription-order-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.subscription-order-row > div { display: grid; gap: 4px; }
+.subscription-order-row > div strong { color: var(--ink); font-size: 11px; }
+.subscription-order-row small { color: var(--muted); font-size: 9px; }
+.subscription-order-row > strong { color: var(--ink); font-size: 10px; }
+.subscription-order-status, .admin-status-tag { display: inline-flex; justify-content: center; align-items: center; width: max-content; padding: 5px 8px; border-radius: 99px; color: var(--neutral-ink); background: var(--neutral-surface); font-size: 9px; white-space: nowrap; }
+.subscription-order-status.paid, .admin-status-tag.active { color: var(--success-ink); background: var(--success-surface); }
+.subscription-order-status.failed, .subscription-order-status.refunded, .subscription-order-status.cancelled, .subscription-status-card.expired .subscription-order-status { color: var(--danger-ink); background: var(--red-soft); }
+.subscription-order-status.pending { color: var(--warning-ink); background: var(--warning-surface); }
+.subscription-receipt { grid-column: 1 / -1; }
+.subscription-empty { margin: 0; padding: 14px 0; color: var(--muted); text-align: center; font-size: 10px; }
+.subscription-confirm-form, .subscription-result { display: grid; gap: 12px; }
+.subscription-confirm-form > div, .subscription-result > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); color: var(--muted-strong); font-size: 10px; }
+.subscription-confirm-form > div strong, .subscription-result > div b { color: var(--ink); font-size: 11px; }
+.subscription-confirm-form > p { margin: 0; font-size: 10px; }
+.subscription-result { justify-items: center; text-align: center; }
+.subscription-result > strong { color: var(--ink); font-size: 15px; }
+.subscription-result > p { margin: 0; color: var(--muted-strong); font-size: 10px; line-height: 1.8; }
+.subscription-result > div { width: 100%; }
+.subscription-result-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 17px; color: var(--green-dark); background: var(--green-soft); }
+.subscription-result-icon.pending { color: var(--warning-ink); background: var(--warning-surface); }
+.subscription-result .notice { display: flex; align-items: center; gap: 8px; width: 100%; }
+
+.system-admin-page { min-height: 100vh; color: var(--ink); background: var(--page); }
+.system-admin-header { position: sticky; z-index: 20; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px max(18px, calc((100vw - 1120px) / 2)); border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(18px); }
+.system-admin-brand, .system-admin-identity, .system-admin-identity > span { display: flex; align-items: center; gap: 10px; }
+.system-admin-brand img { width: 36px; height: 36px; object-fit: contain; }
+.system-admin-brand div { display: grid; gap: 2px; }
+.system-admin-brand span { color: var(--green-dark); font-size: 10px; font-weight: 700; }
+.system-admin-brand strong { color: var(--ink); font-size: 13px; }
+.system-admin-identity > span { color: var(--muted-strong); font-size: 10px; }
+.system-admin-main { width: min(1120px, 100%); margin: 0 auto; padding: 24px 18px 60px; }
+.system-admin-title, .system-admin-tabs, .admin-panel-heading, .admin-plan-heading, .admin-order-heading, .admin-order-meta, .admin-filter-row, .admin-row-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.system-admin-title { margin-bottom: 17px; }
+.system-admin-title h1 { margin: 4px 0; color: var(--ink); font-size: 22px; }
+.system-admin-title p, .admin-panel-heading p { margin: 0; color: var(--muted-strong); font-size: 10px; }
+.system-admin-tabs { justify-content: flex-start; gap: 5px; overflow-x: auto; padding: 5px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface-soft); }
+.system-admin-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 7px 11px; border: 0; border-radius: 10px; color: var(--muted-strong); background: transparent; font: inherit; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.system-admin-tabs button.active { color: var(--green-dark); background: var(--surface-active); font-weight: 700; }
+.system-admin-content { margin-top: 12px; }
+.admin-panel { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 8px 28px #17271d08; }
+.admin-panel-heading { align-items: flex-start; }
+.admin-panel-heading h2 { margin: 0 0 4px; color: var(--ink); font-size: 15px; }
+.admin-filter-row { justify-content: flex-start; flex-wrap: wrap; }
+.admin-search { display: flex; align-items: center; gap: 7px; width: min(400px, 100%); min-height: 40px; padding: 0 10px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--icon-muted); background: var(--field-bg); }
+.admin-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font: inherit; font-size: 10px; }
+.admin-filter-row select, .admin-modal-form select, .admin-rollout-form select { min-height: 40px; padding: 7px 10px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; font-size: 10px; }
+.admin-branch-list, .admin-order-list, .admin-plan-list { display: grid; }
+.admin-branch-row, .admin-order-row, .admin-plan-row { display: grid; gap: 10px; padding: 13px 0; border-top: 1px solid var(--line-soft); }
+.admin-branch-row { grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
+.admin-branch-main { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+.admin-branch-main > div { display: grid; gap: 4px; min-width: 0; }
+.admin-branch-main strong, .admin-order-heading strong, .admin-plan-heading strong { color: var(--ink); font-size: 11px; }
+.admin-branch-main span:not(.admin-state-dot), .admin-plan-heading span, .admin-order-heading span { color: var(--muted-strong); font-size: 9px; }
+.admin-branch-main small, .admin-order-row > small { color: var(--muted); font-size: 9px; }
+.admin-state-dot { flex: 0 0 auto; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: var(--amber); }
+.admin-state-dot.active { background: var(--green); }
+.admin-state-dot.suspended, .admin-state-dot.expired { background: var(--red); }
+.admin-row-actions { justify-content: flex-start; flex-wrap: wrap; }
+.admin-row-actions .button { min-height: 32px; padding-inline: 9px; font-size: 9px; }
+.admin-row-actions .danger-text { color: var(--danger-ink); }
+.admin-empty { margin: 0; padding: 18px; color: var(--muted); text-align: center; font-size: 10px; }
+.admin-order-heading { align-items: flex-start; }
+.admin-order-heading > div { display: grid; gap: 4px; }
+.admin-order-heading > b { color: var(--ink); font-size: 11px; white-space: nowrap; }
+.admin-order-meta { justify-content: flex-start; flex-wrap: wrap; color: var(--muted); font-size: 9px; }
+.admin-plan-heading { align-items: flex-start; }
+.admin-plan-heading > div { display: grid; gap: 4px; }
+.admin-plan-prices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.admin-plan-prices > div { display: grid; gap: 4px; padding: 9px; border: 1px solid var(--line-soft); border-radius: 11px; background: var(--surface-soft); }
+.admin-plan-prices span, .admin-plan-prices small { color: var(--muted); font-size: 9px; }
+.admin-plan-prices strong { color: var(--ink); font-size: 10px; }
+.admin-modal-form, .admin-rollout-form { display: grid; gap: 12px; }
+.admin-modal-form .field, .admin-rollout-form .field { display: grid; gap: 5px; color: var(--muted-strong); font-size: 10px; }
+.admin-modal-form input, .admin-modal-form textarea, .admin-rollout-form input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; font-size: 11px; }
+.admin-modal-form textarea { resize: vertical; }
+.admin-modal-form .notice, .admin-rollout-form .notice { margin: 0; }
+.admin-metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.admin-metric-grid > div { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.admin-metric-grid span { color: var(--muted); font-size: 9px; }
+.admin-metric-grid strong { color: var(--ink); font-size: 17px; }
+.admin-rollout-warning { margin: 0; font-size: 10px; line-height: 1.8; }
+.admin-rollout-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.admin-rollout-form > .button, .admin-rollout-form > .notice { grid-column: 1 / -1; }
+.admin-economics-list { display: grid; }
+.admin-economics-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); font-size: 10px; }
+.admin-economics-list span { color: var(--muted-strong); }
+.admin-economics-list strong { color: var(--ink); }
+.admin-login-page { display: grid; place-items: center; min-height: 100vh; padding: 20px; background: var(--page); }
+.admin-login-card { display: grid; width: min(420px, 100%); gap: 13px; padding: 25px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: 0 18px 55px #17271d12; }
+.admin-login-card > img { justify-self: center; width: 68px; height: 68px; object-fit: contain; }
+.admin-login-card > .eyebrow, .admin-login-card > h1, .admin-login-card > p { margin: 0; text-align: center; }
+.admin-login-card h1 { color: var(--ink); font-size: 18px; }
+.admin-login-card > p { color: var(--muted-strong); font-size: 10px; }
+.admin-login-card > form { display: grid; gap: 10px; }
+.admin-login-card .field { display: grid; gap: 5px; }
+.admin-login-card .field input { width: 100%; min-height: 43px; padding: 8px 11px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; }
+.admin-login-card > small { display: flex; justify-content: center; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
+@media (max-width: 760px) {
+  .subscription-plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .subscription-status-card { grid-template-columns: auto minmax(0, 1fr); }
+  .subscription-status-period { grid-column: 1 / -1; padding: 10px 0 0; border-inline-start: 0; border-top: 1px solid var(--line); }
+  .system-admin-main { padding: 17px 12px 40px; }
+  .system-admin-header { padding: 10px 13px; }
+  .subscription-topbar-pill { max-width: 128px; padding-inline: 6px; font-size: 8px; }
+  .system-admin-identity > span { display: none; }
+  .system-admin-tabs button { padding-inline: 9px; font-size: 9px; }
+  .admin-branch-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .admin-branch-row > .admin-row-actions { grid-column: 1 / -1; }
+  .admin-plan-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .subscription-section, .admin-panel { padding: 13px; }
+  .subscription-order-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .subscription-order-status { grid-column: 1 / -1; }
+  .system-admin-title h1 { font-size: 18px; }
+  .system-admin-title p { max-width: 80vw; line-height: 1.7; }
+  .admin-metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .admin-rollout-form { grid-template-columns: 1fr; }
+  .admin-rollout-form > .button, .admin-rollout-form > .notice { grid-column: auto; }
+}
 @media (max-width: 600px) {
   .attachment-file-row { align-items: stretch; flex-direction: column; }
   .attachment-file-actions { flex-wrap: wrap; }

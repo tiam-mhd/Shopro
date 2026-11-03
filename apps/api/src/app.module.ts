@@ -15,13 +15,16 @@ import { FinanceModule } from "./finance/finance.module.js";
 import { ReportsModule } from "./reports/reports.module.js";
 import { InventoryModule } from "./inventory/inventory.module.js";
 import { SystemAdminModule } from "./system-admin/system-admin.module.js";
+import { SubscriptionsModule } from "./subscriptions/subscriptions.module.js";
+import { SubscriptionEntitlementGuard } from "./subscriptions/subscription-entitlement.guard.js";
 
 @Module({
-  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule],
+  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule, SubscriptionsModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: SessionGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
+    { provide: APP_GUARD, useClass: SubscriptionEntitlementGuard },
   ],
 })
 export class AppModule {}

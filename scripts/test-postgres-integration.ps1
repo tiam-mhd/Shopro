@@ -1,7 +1,7 @@
-param([switch]$HttpOnly, [switch]$Perf, [switch]$OtpOnly)
+param([switch]$HttpOnly, [switch]$Perf, [switch]$OtpOnly, [switch]$SubscriptionsOnly, [switch]$SubscriptionPerf)
 
 $ErrorActionPreference = "Stop"
-if (@($HttpOnly, $Perf, $OtpOnly).Where({ $_ }).Count -gt 1) { throw "Choose only one integration profile." }
+if (@($HttpOnly, $Perf, $OtpOnly, $SubscriptionsOnly, $SubscriptionPerf).Where({ $_ }).Count -gt 1) { throw "Choose only one integration profile." }
 
 function Invoke-NativeChecked {
   param([string]$Name, [scriptblock]$Command)
@@ -51,6 +51,13 @@ try {
   $env:NODE_ENV = "development"
   $env:SHOPRO_TEST_CLUSTER_DISPOSABLE = "1"
   Invoke-NativeChecked "apply all current migrations" { & npm.cmd run db:deploy }
+  Invoke-NativeChecked "reapply all migrations without changing the schema" { & npm.cmd run db:deploy }
+  if (-not $HttpOnly -and -not $OtpOnly -and -not $Perf -and -not $SubscriptionsOnly -and -not $SubscriptionPerf) {
+    Invoke-NativeChecked "run first idempotent development seed" { & npm.cmd run db:seed }
+    Invoke-NativeChecked "rerun development seed" { & npm.cmd run db:seed }
+    Invoke-NativeChecked "run first idempotent subscription catalog seed" { & npm.cmd run db:seed:subscriptions }
+    Invoke-NativeChecked "rerun subscription catalog seed" { & npm.cmd run db:seed:subscriptions }
+  }
   if ($HttpOnly) {
     Invoke-NativeChecked "build contracts for HTTP integration" { & npm.cmd run build -w @shopro/contracts }
     Invoke-NativeChecked "build API for HTTP integration" { & npm.cmd run build -w @shopro/api }
@@ -59,11 +66,20 @@ try {
     Invoke-NativeChecked "build contracts for OTP integration" { & npm.cmd run build -w @shopro/contracts }
     Invoke-NativeChecked "build API for OTP integration" { & npm.cmd run build -w @shopro/api }
     Invoke-NativeChecked "run OTP integration" { & node scripts/test-otp-postgres.mjs }
+  } elseif ($SubscriptionsOnly) {
+    Invoke-NativeChecked "build contracts for subscription integration" { & npm.cmd run build -w @shopro/contracts }
+    Invoke-NativeChecked "build API for subscription integration" { & npm.cmd run build -w @shopro/api }
+    Invoke-NativeChecked "run subscription PostgreSQL integration" { & node scripts/test-subscriptions-postgres.mjs }
+  } elseif ($SubscriptionPerf) {
+    Invoke-NativeChecked "build contracts for subscription capacity profile" { & npm.cmd run build -w @shopro/contracts }
+    Invoke-NativeChecked "build API for subscription capacity profile" { & npm.cmd run build -w @shopro/api }
+    Invoke-NativeChecked "run 20-VU five-minute subscription HTTP capacity profile" { & node scripts/test-subscription-capacity-postgres.mjs }
   } elseif ($Perf) {
     Invoke-NativeChecked "build contracts for HTTP capacity profile" { & npm.cmd run build -w @shopro/contracts }
     Invoke-NativeChecked "build API for HTTP capacity profile" { & npm.cmd run build -w @shopro/api }
     $env:SHOPRO_RUN_HTTP_CAPACITY = "1"
     Invoke-NativeChecked "run configurable 20-VU HTTP capacity profile" { & node scripts/test-receivable-pagination-postgres.mjs }
+    Invoke-NativeChecked "run 20-VU five-minute subscription HTTP capacity profile" { & node scripts/test-subscription-capacity-postgres.mjs }
   } else {
     Invoke-NativeChecked "run PostgreSQL integration suite" { & npm.cmd run test:integration }
   }

@@ -18,8 +18,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const status = exception instanceof HttpException ? exception.getStatus() : multerError && multerCode === "LIMIT_FILE_SIZE" ? HttpStatus.PAYLOAD_TOO_LARGE : multerError && typeof multerCode === "string" && multerCode.startsWith("LIMIT_") ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
     const body = exception instanceof HttpException ? exception.getResponse() : null;
     const detail = typeof body === "object" && body && "message" in body ? (body as { message: unknown }).message : undefined;
+    const declaredCode = typeof body === "object" && body && "code" in body ? (body as { code: unknown }).code : undefined;
     const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.join("؛ ") : status === HttpStatus.PAYLOAD_TOO_LARGE ? "حجم فایل پیوست نباید بیشتر از ۱۰ مگابایت باشد." : multerError && status === HttpStatus.BAD_REQUEST ? "ساختار فایل پیوست معتبر نیست." : messages[status] ?? "خطایی در پردازش درخواست رخ داد.";
-    response.status(status).json({ code: status === 500 ? "INTERNAL_ERROR" : `HTTP_${status}`, message, requestId: request.requestId ?? null });
+    const stableCode = typeof declaredCode === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(declaredCode) ? declaredCode : undefined;
+    response.status(status).json({ code: status === 500 ? "INTERNAL_ERROR" : stableCode ?? `HTTP_${status}`, message, requestId: request.requestId ?? null });
     if (status >= 500) process.stderr.write(JSON.stringify({ level: "error", requestId: request.requestId, path: request.path, method: request.method, status, error: safeErrorChain(exception) }) + "\n");
   }
 }

@@ -10,8 +10,8 @@ export class SystemAdminController {
   constructor(private readonly service: SystemAdminService) {}
 
   @Get("session")
-  session(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin) {
-    return { admin: { id: admin.id, phone: admin.phone, displayName: admin.displayName } };
+  session(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest) {
+    return { admin: { id: admin.id, phone: admin.phone, displayName: admin.displayName }, csrfToken: request.cookies?.shopro_admin_csrf ?? null };
   }
 
   @Get("overview")
