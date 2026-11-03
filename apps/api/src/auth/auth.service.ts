@@ -29,22 +29,27 @@ export class AuthService {
     }
     const purpose = audience;
     const now = new Date();
-    const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const recent = await this.prisma.otpChallenge.findFirst({
-      where: { phone, purpose, createdAt: { gte: new Date(now.getTime() - Number(process.env.OTP_RESEND_SECONDS ?? 60) * 1000) } },
-      select: { id: true },
-    });
-    if (recent) throw new HttpException("برای دریافت کد تازه کمی صبر کنید.", HttpStatus.TOO_MANY_REQUESTS);
-    const limit = Number(process.env.OTP_MAX_PER_PHONE_HOUR ?? 5);
-    const phoneCount = await this.prisma.otpChallenge.count({ where: { phone, purpose, createdAt: { gte: hourAgo } } });
     const ipHash = ipAddress ? this.digest(`ip:${ipAddress}`) : null;
-    const ipCount = ipHash ? await this.prisma.otpChallenge.count({ where: { purpose, requestIpHash: ipHash, createdAt: { gte: new Date(now.getTime() - 60 * 1000) } } }) : 0;
-    if (phoneCount >= limit || ipCount >= 10) throw new HttpException("تعداد درخواست کد بیش از حد مجاز است.", HttpStatus.TOO_MANY_REQUESTS);
-
     const code = randomInt(100000, 1000000).toString();
     const ttl = Number(process.env.OTP_TTL_SECONDS ?? 180);
-    await this.prisma.otpChallenge.create({
-      data: { phone, purpose, codeHash: this.digest(`otp:${purpose}:${phone}:${code}`), expiresAt: new Date(now.getTime() + ttl * 1000), requestIpHash: ipHash },
+    await this.prisma.$transaction(async (tx) => {
+      const lockKeys = [`otp:phone:${purpose}:${phone}`, ...(ipHash ? [`otp:ip:${purpose}:${ipHash}`] : [])].sort();
+      for (const lockKey of lockKeys) await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      const expiredBefore = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      await tx.otpChallenge.deleteMany({ where: { OR: [{ expiresAt: { lt: expiredBefore } }, { consumedAt: { lt: expiredBefore } }] } });
+      const recent = await tx.otpChallenge.findFirst({
+        where: { phone, purpose, createdAt: { gte: new Date(now.getTime() - Number(process.env.OTP_RESEND_SECONDS ?? 60) * 1000) } },
+        select: { id: true },
+      });
+      if (recent) throw new HttpException("برای دریافت کد تازه کمی صبر کنید.", HttpStatus.TOO_MANY_REQUESTS);
+      const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      const limit = Number(process.env.OTP_MAX_PER_PHONE_HOUR ?? 5);
+      const phoneCount = await tx.otpChallenge.count({ where: { phone, purpose, createdAt: { gte: hourAgo } } });
+      const ipCount = ipHash ? await tx.otpChallenge.count({ where: { purpose, requestIpHash: ipHash, createdAt: { gte: new Date(now.getTime() - 60 * 1000) } } }) : 0;
+      if (phoneCount >= limit || ipCount >= 10) throw new HttpException("تعداد درخواست کد بیش از حد مجاز است.", HttpStatus.TOO_MANY_REQUESTS);
+      await tx.otpChallenge.create({
+        data: { phone, purpose, codeHash: this.digest(`otp:${purpose}:${phone}:${code}`), expiresAt: new Date(now.getTime() + ttl * 1000), requestIpHash: ipHash },
+      });
     });
     await this.parsgreen.sendOtp(phone, code, requestId);
   }

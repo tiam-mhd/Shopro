@@ -1,6 +1,12 @@
 export type DisplayCurrency = "IRR" | "IRT";
 export type MemberRole = "OWNER" | "MANAGER" | "ACCOUNTANT" | "CASHIER" | "VIEWER";
 
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface SessionUser {
   id: string;
   phone: string;

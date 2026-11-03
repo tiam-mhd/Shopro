@@ -76,11 +76,11 @@ async function main() {
         inventoryLines.push({ ledgerAccountId: ledgerIds.get("equity")!, branchId: branch.id, debitRial: 0n, creditRial: value, description: "سرمایهٔ افتتاحیهٔ نمونه" });
       }
       if (inventoryLines.length) {
-        const sequence = await tx.documentSequence.upsert({ where: { businessId_branchId_type: { businessId: business.id, branchId: branch.id, type: "JOURNAL" } }, create: { businessId: business.id, branchId: branch.id, type: "JOURNAL", nextValue: 2n }, update: { nextValue: { increment: 1n } }, select: { nextValue: true } });
+        const sequence = await tx.documentSequence.upsert({ where: { businessId_type: { businessId: business.id, type: "JOURNAL" } }, create: { businessId: business.id, type: "JOURNAL", nextValue: 2n }, update: { nextValue: { increment: 1n } }, select: { nextValue: true } });
         await tx.journalEntry.create({ data: {
           businessId: business.id, branchId: branch.id, entryNo: `D-${String(sequence.nextValue - 1n).padStart(6, "0")}`, txnDate: new Date("2026-01-01T00:00:00.000Z"),
           sourceType: "SEED_OPENING", sourceId: business.id, memo: "دادهٔ نمونهٔ محیط توسعه", postedBy: user.id,
-          lines: { create: inventoryLines.map(({ branchId: lineBranchId, ...line }) => ({ ...line, businessId: business.id, branchId: lineBranchId })) },
+          lines: { create: inventoryLines.map(({ branchId: lineBranchId, ...line }) => ({ ...line, branchId: lineBranchId })) },
         } });
       }
     }

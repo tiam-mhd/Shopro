@@ -14,9 +14,10 @@ import { ExpensesModule } from "./expenses/expenses.module.js";
 import { FinanceModule } from "./finance/finance.module.js";
 import { ReportsModule } from "./reports/reports.module.js";
 import { InventoryModule } from "./inventory/inventory.module.js";
+import { SystemAdminModule } from "./system-admin/system-admin.module.js";
 
 @Module({
-  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule],
+  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: SessionGuard },

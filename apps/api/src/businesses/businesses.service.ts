@@ -3,7 +3,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
-import { CreateBranchDto, CreateBusinessDto, UpdateBusinessDto, AddMemberDto } from "./businesses.dto.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
+import { CreateBranchDto, CreateBusinessDto, UpdateBusinessDto, AddMemberDto, UpdateMemberDto } from "./businesses.dto.js";
 import { UNIT_CATALOG } from "../products/unit-catalog.js";
 
 const chart = [
@@ -21,6 +22,7 @@ const chart = [
   ["5000", "بهای تمام‌شده", "EXPENSE", "cost_of_goods"],
   ["6000", "هزینه‌های عمومی", "EXPENSE", "general_expense"],
 ] as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class BusinessesService {
@@ -76,8 +78,11 @@ export class BusinessesService {
     if (!(["OWNER", "MANAGER"].includes(user.role ?? ""))) throw new ForbiddenException("اجازهٔ تغییر تنظیمات کسب‌وکار را ندارید.");
     const before = await this.prisma.business.findUnique({ where: { id: user.businessId! }, select: { displayName: true, displayCurrency: true } });
     if (!before) throw new NotFoundException("کسب‌وکار پیدا نشد.");
-    const updated = await this.prisma.business.update({ where: { id: user.businessId! }, data: { displayName: dto.displayName?.trim(), displayCurrency: dto.displayCurrency, settingsVersion: { increment: 1 } } });
-    await this.prisma.auditEvent.create({ data: { businessId: user.businessId!, actorId: user.id, action: "business.updated", entityType: "business", entityId: user.businessId!, requestId: request.requestId ?? "unknown", beforeJson: before, afterJson: { displayName: updated.displayName, displayCurrency: updated.displayCurrency } } });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.business.update({ where: { id: user.businessId! }, data: { displayName: dto.displayName?.trim(), displayCurrency: dto.displayCurrency, settingsVersion: { increment: 1 } } });
+      await tx.auditEvent.create({ data: { businessId: user.businessId!, actorId: user.id, action: "business.updated", entityType: "business", entityId: user.businessId!, requestId: request.requestId ?? "unknown", beforeJson: before, afterJson: { displayName: row.displayName, displayCurrency: row.displayCurrency } } });
+      return row;
+    });
     return { id: updated.id, displayName: updated.displayName, displayCurrency: updated.displayCurrency };
   }
 
@@ -108,26 +113,124 @@ export class BusinessesService {
     const phone = this.normalizePhone(dto.phone);
     const memberUser = await this.prisma.user.findUnique({ where: { phone } });
     if (!memberUser) throw new BadRequestException("این شماره هنوز در سامانه ثبت نشده است. ابتدا کاربر باید با کد یک‌بارمصرف وارد شود.");
-    const branches = await this.prisma.branch.findMany({ where: { id: { in: dto.branchIds }, businessId, isActive: true }, select: { id: true } });
-    if (!dto.branchIds.length || branches.length !== new Set(dto.branchIds).size) throw new BadRequestException("یک یا چند شعبه معتبر نیست.");
-    const saved = await this.prisma.$transaction(async (tx) => {
-      const membership = await tx.businessMember.upsert({
-        where: { businessId_userId: { businessId, userId: memberUser.id } },
-        create: { businessId, userId: memberUser.id, role: dto.role },
-        update: { role: dto.role, status: "ACTIVE" },
+    let saved: { membership: { id: string; role: string; status: string }; branchIds: string[] };
+    try {
+      saved = await this.prisma.$transaction(async (tx) => {
+        const branches = await tx.branch.findMany({ where: { id: { in: dto.branchIds }, businessId, isActive: true }, select: { id: true } });
+        if (!dto.branchIds.length || branches.length !== new Set(dto.branchIds).size) throw new BadRequestException("یک یا چند شعبه معتبر نیست.");
+        const existing = await tx.businessMember.findUnique({ where: { businessId_userId: { businessId, userId: memberUser.id } }, select: { id: true } });
+        if (existing) throw new ConflictException("این کاربر قبلاً عضو کسب‌وکار است؛ دسترسی او را از فهرست اعضا ویرایش کنید.");
+        const membership = await tx.businessMember.create({ data: { businessId, userId: memberUser.id, role: dto.role } });
+        await tx.memberBranch.createMany({ data: branches.map(({ id }) => ({ businessId, memberId: membership.id, branchId: id })) });
+        await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "member.assigned", entityType: "business_member", entityId: membership.id, requestId: request.requestId ?? "unknown", afterJson: { phone, role: dto.role, branchIds: branches.map(({ id }) => id) } } });
+        return { membership, branchIds: branches.map(({ id }) => id) };
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (this.isUnique(error)) throw new ConflictException("این کاربر هم‌زمان به کسب‌وکار اضافه شده است؛ فهرست اعضا را تازه‌سازی کنید.");
+      throw error;
+    }
+    return { id: saved.membership.id, userId: memberUser.id, phone, role: saved.membership.role, status: saved.membership.status, branchIds: saved.branchIds };
+  }
+
+  async updateMember(user: AuthenticatedUser, id: string, dto: UpdateMemberDto, request: AppRequest) {
+    const businessId = this.requireBusiness(user);
+    if (user.role !== "OWNER") throw new ForbiddenException("فقط مالک کسب‌وکار می‌تواند کاربران را مدیریت کند.");
+    if (dto.role === undefined && dto.status === undefined && dto.branchIds === undefined) throw new BadRequestException("حداقل یک مورد برای تغییر انتخاب کنید.");
+    const result = await this.prisma.$transaction(async (tx) => {
+      const member = await tx.businessMember.findFirst({
+        where: { id, businessId },
+        include: { user: { select: { id: true, phone: true } }, branches: { select: { branchId: true } } },
       });
-      await tx.memberBranch.deleteMany({ where: { businessId, memberId: membership.id } });
-      await tx.memberBranch.createMany({ data: branches.map(({ id }) => ({ businessId, memberId: membership.id, branchId: id })) });
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "member.assigned", entityType: "business_member", entityId: membership.id, requestId: request.requestId ?? "unknown", afterJson: { phone, role: dto.role, branchIds: branches.map(({ id }) => id) } } });
-      return membership;
+      if (!member) throw new NotFoundException("عضو کسب‌وکار پیدا نشد.");
+      if (member.userId === user.id) throw new BadRequestException("برای جلوگیری از قطع دسترسی مالک، دسترسی حساب خودتان را از این صفحه تغییر ندهید.");
+      if (member.role === "OWNER") throw new ConflictException("تغییر یا تعلیق مالک نیازمند فرایند انتقال مالکیت است.");
+
+      let branchIds = member.branches.map(({ branchId }) => branchId);
+      if (dto.branchIds !== undefined) {
+        const branches = await tx.branch.findMany({ where: { id: { in: dto.branchIds }, businessId, isActive: true }, select: { id: true } });
+        if (!dto.branchIds.length || branches.length !== new Set(dto.branchIds).size) throw new BadRequestException("حداقل یک شعبهٔ فعال و متعلق به همین کسب‌وکار انتخاب کنید.");
+        branchIds = branches.map(({ id: branchId }) => branchId);
+      }
+
+      const nextRole = dto.role ?? member.role;
+      const nextStatus = dto.status ?? member.status;
+      if (nextStatus === "ACTIVE" && branchIds.length === 0) throw new BadRequestException("برای فعال‌بودن عضو، دست‌کم یک شعبه باید به او اختصاص داده شود.");
+      const updated = await tx.businessMember.update({ where: { id: member.id }, data: { role: nextRole, status: nextStatus } });
+      if (dto.branchIds !== undefined) {
+        await tx.memberBranch.deleteMany({ where: { businessId, memberId: member.id } });
+        await tx.memberBranch.createMany({ data: branchIds.map((branchId) => ({ businessId, memberId: member.id, branchId })) });
+      }
+      const action = nextStatus !== member.status ? (nextStatus === "SUSPENDED" ? "member.suspended" : "member.reactivated") : "member.access.updated";
+      await tx.auditEvent.create({ data: {
+        businessId, actorId: user.id, action, entityType: "business_member", entityId: member.id, requestId: request.requestId ?? "unknown",
+        beforeJson: { role: member.role, status: member.status, branchIds: member.branches.map(({ branchId }) => branchId) },
+        afterJson: { role: updated.role, status: updated.status, branchIds },
+      } });
+      return { id: updated.id, userId: member.user.id, phone: member.user.phone, role: updated.role, status: updated.status, branchIds };
     }, { isolationLevel: "Serializable" });
-    return { id: saved.id, userId: memberUser.id, phone, role: saved.role, branchIds: branches.map(({ id }) => id) };
+    return result;
+  }
+
+  async memberHistory(user: AuthenticatedUser, id: string) {
+    const businessId = this.requireBusiness(user);
+    if (user.role !== "OWNER") throw new ForbiddenException("تاریخچهٔ دسترسی اعضا فقط برای مالک کسب‌وکار قابل مشاهده است.");
+    const member = await this.prisma.businessMember.findFirst({ where: { id, businessId }, select: { id: true } });
+    if (!member) throw new NotFoundException("عضو کسب‌وکار پیدا نشد.");
+    const rows = await this.prisma.auditEvent.findMany({
+      where: { businessId, entityType: "business_member", entityId: id, action: { startsWith: "member." } },
+      select: { action: true, occurredAt: true, beforeJson: true, afterJson: true, actor: { select: { displayName: true } } },
+      orderBy: { occurredAt: "desc" }, take: 100,
+    });
+    return rows.map((row) => ({ action: row.action, occurredAt: row.occurredAt.toISOString(), actorName: row.actor?.displayName ?? null, before: row.beforeJson, after: row.afterJson }));
+  }
+
+  async auditEvents(user: AuthenticatedUser, filters: { actorId?: string; action?: string; entityType?: string; from?: string; to?: string; cursor?: string; limit?: string }) {
+    const businessId = this.requireBusiness(user);
+    if (user.role !== "OWNER") throw new ForbiddenException("گزارش رویدادهای کسب‌وکار فقط برای مالک قابل مشاهده است.");
+    const action = filters.action?.trim();
+    const entityType = filters.entityType?.trim();
+    if (filters.actorId && !UUID_PATTERN.test(filters.actorId)) throw new BadRequestException("شناسهٔ کاربر برای فیلتر معتبر نیست.");
+    if (filters.cursor && !UUID_PATTERN.test(filters.cursor)) throw new BadRequestException("نشانگر صفحه برای تاریخچهٔ رویدادها معتبر نیست.");
+    if (action && action.length > 80) throw new BadRequestException("فیلتر عملیات بیش از حد طولانی است.");
+    if (entityType && entityType.length > 80) throw new BadRequestException("فیلتر نوع مورد بیش از حد طولانی است.");
+    const from = this.auditDate(filters.from);
+    const toExclusive = this.auditDate(filters.to, true);
+    if (from && toExclusive && from >= toExclusive) throw new BadRequestException("بازهٔ تاریخ رویداد معتبر نیست.");
+    const where = {
+      businessId,
+      ...(filters.actorId ? { actorId: filters.actorId } : {}),
+      ...(action ? { action: { contains: action, mode: "insensitive" as const } } : {}),
+      ...(entityType ? { entityType: { contains: entityType, mode: "insensitive" as const } } : {}),
+      ...(from || toExclusive ? { occurredAt: { ...(from ? { gte: from } : {}), ...(toExclusive ? { lt: toExclusive } : {}) } } : {}),
+    };
+    const limit = pageLimit(filters.limit, 50, 100);
+    if (filters.cursor && !(await this.prisma.auditEvent.findFirst({ where: { ...where, id: filters.cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای تاریخچهٔ رویدادها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.auditEvent.findMany({
+      where,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
+      select: { id: true, action: true, entityType: true, entityId: true, occurredAt: true, actor: { select: { id: true, displayName: true } } },
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+    });
+    const mapped = rows.map((row) => ({ id: row.id, action: row.action, entityType: row.entityType, entityId: row.entityId, occurredAt: row.occurredAt.toISOString(), actorId: row.actor?.id ?? null, actorName: row.actor?.displayName ?? null }));
+    return cursorPage(mapped, limit, (row) => row.id);
   }
 
   async members(user: AuthenticatedUser) {
     const businessId = this.requireBusiness(user);
     const rows = await this.prisma.businessMember.findMany({ where: { businessId }, include: { user: { select: { id: true, phone: true, displayName: true } }, branches: { select: { branchId: true } } }, orderBy: { createdAt: "asc" } });
-    return rows.map((row) => ({ id: row.id, role: row.role, status: row.status, user: row.user, branchIds: row.branches.map(({ branchId }) => branchId) }));
+    return rows.map((row) => ({ id: row.id, role: row.role, status: row.status, user: { id: row.user.id, displayName: row.user.displayName, phone: user.role === "OWNER" || row.user.id === user.id ? row.user.phone : this.maskPhone(row.user.phone) }, branchIds: row.branches.map(({ branchId }) => branchId) }));
+  }
+
+  private maskPhone(phone: string) { return `${phone.slice(0, 3)}•••••${phone.slice(-3)}`; }
+
+  private auditDate(value: string | undefined, exclusiveEnd = false) {
+    if (value === undefined) return undefined;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException("تاریخ باید به قالب سال-ماه-روز باشد.");
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new BadRequestException("تاریخ رویداد معتبر نیست.");
+    if (exclusiveEnd) date.setUTCDate(date.getUTCDate() + 1);
+    return date;
   }
 
   private requireBusiness(user: AuthenticatedUser) {

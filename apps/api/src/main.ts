@@ -9,15 +9,20 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module.js";
 import { ApiExceptionFilter } from "./common/api-exception.filter.js";
+import { validateProductionEnv, webOrigins } from "./common/production-env.js";
 import type { AppRequest } from "./common/request-context.js";
 import type { NextFunction, Response } from "express";
 
 async function bootstrap() {
+  validateProductionEnv();
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.setGlobalPrefix("api/v1");
+  const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
+  if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 10) throw new Error("TRUST_PROXY_HOPS باید عددی بین صفر تا ده باشد.");
+  app.getHttpAdapter().getInstance().set("trust proxy", trustProxyHops);
   app.use(helmet({ crossOriginResourcePolicy: { policy: "same-site" } }));
   app.use(cookieParser());
-  app.enableCors({ origin: (process.env.WEB_ORIGIN ?? "http://localhost:5173").split(","), credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Business-Id", "X-Branch-Id", "Idempotency-Key"] });
+  app.enableCors({ origin: webOrigins(), credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Business-Id", "X-Branch-Id", "X-Attachment-Download-Token", "Idempotency-Key"] });
   app.use((request: AppRequest, response: Response, next: NextFunction) => {
     const supplied = request.header("x-request-id");
     request.requestId = supplied && /^[\w.-]{1,80}$/.test(supplied) ? supplied : randomUUID();

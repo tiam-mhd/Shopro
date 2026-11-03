@@ -14,18 +14,23 @@ export class AccountingService {
     if (closed) throw new ConflictException("این تاریخ در دورهٔ مالی بسته قرار دارد.");
   }
 
+  async nextDocumentNumber(tx: Prisma.TransactionClient, input: { businessId: string; type: string; prefix: string }) {
+    const sequence = await tx.documentSequence.upsert({
+      where: { businessId_type: { businessId: input.businessId, type: input.type } },
+      create: { businessId: input.businessId, type: input.type, nextValue: 2n },
+      update: { nextValue: { increment: 1n } },
+      select: { nextValue: true },
+    });
+    return `${input.prefix}-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+  }
+
   async createJournal(tx: Prisma.TransactionClient, input: { businessId: string; branchId: string; date: Date; sourceType: string; sourceId: string; memo?: string; actorId: string; reversalOfId?: string; lines: JournalLineInput[] }) {
     const debit = input.lines.reduce((sum, line) => sum + (line.debitRial ?? 0n), 0n);
     const credit = input.lines.reduce((sum, line) => sum + (line.creditRial ?? 0n), 0n);
     if (input.lines.length < 2 || debit <= 0n || debit !== credit || input.lines.some((line) => (line.debitRial ?? 0n) < 0n || (line.creditRial ?? 0n) < 0n || ((line.debitRial ?? 0n) > 0n && (line.creditRial ?? 0n) > 0n))) {
       throw new BadRequestException("ثبت حسابداری متوازن نیست و ذخیره نشد.");
     }
-    const sequence = await tx.documentSequence.upsert({
-      where: { businessId_branchId_type: { businessId: input.businessId, branchId: input.branchId, type: "JOURNAL" } },
-      create: { businessId: input.businessId, branchId: input.branchId, type: "JOURNAL", nextValue: 2n },
-      update: { nextValue: { increment: 1n } }, select: { nextValue: true },
-    });
-    const entryNo = `D-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+    const entryNo = await this.nextDocumentNumber(tx, { businessId: input.businessId, type: "JOURNAL", prefix: "D" });
     const journalLines: Prisma.JournalLineUncheckedCreateWithoutJournalEntryInput[] = input.lines.map((line) => ({
       ledgerAccountId: line.ledgerAccountId,
       partyId: line.partyId ?? null,
@@ -49,6 +54,15 @@ export class AccountingService {
     if (record.expiresAt <= new Date()) { await this.prisma.idempotencyRecord.delete({ where: { id: record.id } }); return null; }
     if (record.requestHash !== requestHash) throw new ConflictException("کلید این درخواست پیش‌تر برای اطلاعات دیگری استفاده شده است.");
     return record.responseJson;
+  }
+
+  async existingIdempotentAfterConflict(userId: string, businessId: string, key: string, requestHash: string, attempts = 6) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const response = await this.existingIdempotent(userId, businessId, key, requestHash);
+      if (response !== null) return response;
+      if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+    return null;
   }
 
   async remember(tx: Prisma.TransactionClient, input: { userId: string; businessId: string; key: string; requestHash: string; response: unknown }) {

@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import { AccountingService } from "./accounting.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
+import { assertUuid } from "../common/uuid-param.pipe.js";
 import type { CashCloseDto, CashTransactionDto, ClosePeriodDto, CreateFinanceAccountDto, ReopenPeriodDto, TransferDto, UpdateFinanceAccountDto } from "./finance.dto.js";
 
 const parseMoney = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); const amount = BigInt(value); if (amount <= 0n) throw new BadRequestException("مبلغ باید بزرگ‌تر از صفر باشد."); return amount; };
@@ -11,10 +13,44 @@ const parseMoney = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new
 export class FinanceService {
   constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService) {}
 
+  async ledgerAccounts(user: AuthenticatedUser) {
+    const { businessId } = this.scope(user);
+    return this.prisma.ledgerAccount.findMany({ where: { businessId, isActive: true }, select: { id: true, code: true, name: true, type: true }, orderBy: { code: "asc" } });
+  }
+
+  async ledger(user: AuthenticatedUser, filters: { from?: string; to?: string; accountId?: string; partyId?: string; cursor?: string; limit?: string }) {
+    const { businessId, branchId } = this.scope(user);
+    assertUuid(filters.cursor, "نشانگر صفحهٔ دفتر کل معتبر نیست.");
+    const from = filters.from ? this.validDate(filters.from, "تاریخ شروع") : undefined;
+    const to = filters.to ? this.validDate(filters.to, "تاریخ پایان") : undefined;
+    if (from && to && from > to) throw new BadRequestException("تاریخ شروع نباید پس از تاریخ پایان باشد.");
+    for (const value of [filters.accountId, filters.partyId]) if (value && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new BadRequestException("فیلتر دفتر کل معتبر نیست.");
+    const limit = pageLimit(filters.limit, 50, 100);
+    const where: Prisma.JournalLineWhereInput = {
+      businessId,
+      branchId,
+      ...(filters.accountId ? { ledgerAccountId: filters.accountId } : {}),
+      ...(filters.partyId ? { partyId: filters.partyId } : {}),
+      journalEntry: {
+        businessId,
+        branchId,
+        status: { in: ["POSTED", "REVERSED"] },
+        ...(from || to ? { txnDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+      },
+    };
+    if (filters.cursor && !(await this.prisma.journalLine.findFirst({ where: { ...where, id: filters.cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحهٔ دفتر کل معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const [rows, totals] = await Promise.all([
+      this.prisma.journalLine.findMany({ where, ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}), include: { ledgerAccount: { select: { code: true, name: true, type: true } }, party: { select: { name: true } }, journalEntry: { select: { entryNo: true, txnDate: true, memo: true, sourceType: true, status: true } } }, orderBy: [{ journalEntry: { txnDate: "desc" } }, { journalEntry: { entryNo: "desc" } }, { id: "desc" }], take: limit + 1 }),
+      this.prisma.journalLine.aggregate({ where, _sum: { debitRial: true, creditRial: true } }),
+    ]);
+    const page = cursorPage(rows.map((row) => ({ id: row.id, date: row.journalEntry.txnDate.toISOString().slice(0, 10), entryNo: row.journalEntry.entryNo, memo: row.journalEntry.memo, sourceType: row.journalEntry.sourceType, status: row.journalEntry.status, accountCode: row.ledgerAccount.code, account: row.ledgerAccount.name, accountType: row.ledgerAccount.type, party: row.party?.name ?? null, description: row.description, debitRial: row.debitRial.toString(), creditRial: row.creditRial.toString() })), limit, (row) => row.id);
+    return { ...page, totalDebitRial: (totals._sum.debitRial ?? 0n).toString(), totalCreditRial: (totals._sum.creditRial ?? 0n).toString() };
+  }
+
   async accounts(user: AuthenticatedUser) {
     const { businessId, branchId } = this.scope(user);
     const accounts = await this.prisma.financeAccount.findMany({ where: { businessId, branchId, isActive: true }, include: { ledgerAccount: { select: { id: true } } }, orderBy: { createdAt: "asc" } });
-    const balances = await this.prisma.journalLine.groupBy({ by: ["ledgerAccountId"], where: { businessId, branchId, ledgerAccountId: { in: accounts.map((account) => account.ledgerAccountId) }, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
+    const balances = await this.prisma.journalLine.groupBy({ by: ["ledgerAccountId"], where: { businessId, branchId, ledgerAccountId: { in: accounts.map((account) => account.ledgerAccountId) }, journalEntry: { status: { in: ["POSTED", "REVERSED"] } } }, _sum: { debitRial: true, creditRial: true } });
     const sums = new Map(balances.map((row) => [row.ledgerAccountId, (row._sum.debitRial ?? 0n) - (row._sum.creditRial ?? 0n)]));
     return accounts.map((account) => ({ id: account.id, name: account.name, kind: account.kind, branchId, balanceRial: (sums.get(account.ledgerAccountId) ?? 0n).toString() }));
   }
@@ -23,7 +59,7 @@ export class FinanceService {
     const { businessId, branchId } = this.scope(user);
     const account = await this.prisma.financeAccount.findFirst({ where: { id, businessId, branchId }, select: { id: true, name: true, kind: true, isActive: true, ledgerAccountId: true } });
     if (!account) throw new NotFoundException("حساب مالی پیدا نشد.");
-    const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: account.ledgerAccountId, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
+    const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: account.ledgerAccountId, journalEntry: { status: { in: ["POSTED", "REVERSED"] } } }, _sum: { debitRial: true, creditRial: true } });
     const balance = (totals._sum.debitRial ?? 0n) - (totals._sum.creditRial ?? 0n);
     return { id: account.id, name: account.name, kind: account.kind, isActive: account.isActive, balanceRial: balance.toString() };
   }
@@ -34,7 +70,7 @@ export class FinanceService {
     const before = await this.prisma.financeAccount.findFirst({ where: { id, businessId, branchId } });
     if (!before) throw new NotFoundException("حساب مالی پیدا نشد.");
     if (dto.isActive === false) {
-      const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: before.ledgerAccountId, journalEntry: { status: "POSTED" } }, _sum: { debitRial: true, creditRial: true } });
+      const totals = await this.prisma.journalLine.aggregate({ where: { businessId, branchId, ledgerAccountId: before.ledgerAccountId, journalEntry: { status: { in: ["POSTED", "REVERSED"] } } }, _sum: { debitRial: true, creditRial: true } });
       if ((totals._sum.debitRial ?? 0n) !== (totals._sum.creditRial ?? 0n)) throw new ConflictException("ابتدا ماندهٔ حساب را به حساب دیگری منتقل کنید؛ حساب دارای مانده بایگانی نمی‌شود.");
     }
     const nextName = dto.name?.trim();
@@ -61,10 +97,23 @@ export class FinanceService {
     return { id: account.id, name: account.name, kind: account.kind, balanceRial: "0" };
   }
 
-  async transactions(user: AuthenticatedUser, limit = 100) {
+  async transactions(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.cashTransaction.findMany({ where: { businessId, branchId }, include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } }, party: { select: { name: true } }, journalEntry: { select: { sourceType: true, status: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: Math.min(Math.max(limit, 1), 200) });
-    return rows.map((row) => ({ id: row.id, kind: row.kind, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), fromAccount: row.fromAccount?.name ?? null, toAccount: row.toAccount?.name ?? null, party: row.party?.name ?? null, method: row.method, reference: row.reference, status: row.journalEntry?.status ?? row.status, canVoid: row.status === "POSTED" && row.journalEntry?.status === "POSTED" && row.journalEntry.sourceType === "CASH_TX" && ["RECEIPT", "PAYMENT", "TRANSFER"].includes(row.kind) }));
+    assertUuid(cursor, "نشانگر صفحه برای فهرست تراکنش‌ها معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit, 50, 100) : 200;
+    const where = { businessId, branchId };
+    if (cursor && !(await this.prisma.cashTransaction.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست تراکنش‌ها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.cashTransaction.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } }, party: { select: { name: true } }, journalEntry: { select: { sourceType: true, status: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, kind: row.kind, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), fromAccount: row.fromAccount?.name ?? null, toAccount: row.toAccount?.name ?? null, party: row.party?.name ?? null, method: row.method, reference: row.reference, status: row.journalEntry?.status ?? row.status, canVoid: row.status === "POSTED" && row.journalEntry?.status === "POSTED" && row.journalEntry.sourceType === "CASH_TX" && ["RECEIPT", "PAYMENT", "TRANSFER"].includes(row.kind) }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
+  }
+
+  async transaction(user: AuthenticatedUser, id: string) {
+    const { businessId, branchId } = this.scope(user);
+    const row = await this.prisma.cashTransaction.findFirst({ where: { id, businessId, branchId }, include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } }, party: { select: { name: true } }, journalEntry: { select: { sourceType: true, status: true } } } });
+    if (!row) throw new NotFoundException("تراکنش پیدا نشد.");
+    return { id: row.id, kind: row.kind, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), fromAccount: row.fromAccount?.name ?? null, toAccount: row.toAccount?.name ?? null, party: row.party?.name ?? null, method: row.method, reference: row.reference, status: row.journalEntry?.status ?? row.status, canVoid: row.status === "POSTED" && row.journalEntry?.status === "POSTED" && row.journalEntry.sourceType === "CASH_TX" && ["RECEIPT", "PAYMENT", "TRANSFER"].includes(row.kind) };
   }
 
   async voidTransaction(user: AuthenticatedUser, id: string, dto: import("./finance.dto.js").VoidFinanceTransactionDto, key: string | undefined, request: AppRequest) {
@@ -98,10 +147,23 @@ export class FinanceService {
     }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
   }
 
-  async cashCloses(user: AuthenticatedUser, limit = 50) {
+  async cashCloses(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.cashClose.findMany({ where: { businessId, branchId }, include: { financeAccount: { select: { name: true } } }, orderBy: [{ closeDate: "desc" }, { createdAt: "desc" }], take: Math.min(Math.max(limit, 1), 100) });
-    return rows.map((row) => ({ id: row.id, date: row.closeDate.toISOString().slice(0, 10), account: row.financeAccount.name, systemBalanceRial: row.systemBalanceRial.toString(), countedBalanceRial: row.countedBalanceRial.toString(), differenceRial: row.differenceRial.toString(), note: row.note, journalEntryId: row.journalEntryId }));
+    assertUuid(cursor, "نشانگر صفحه برای بستن‌های صندوق معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit, 50, 100) : 100;
+    const where = { businessId, branchId };
+    if (cursor && !(await this.prisma.cashClose.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای بستن‌های صندوق معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.cashClose.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { financeAccount: { select: { name: true } } }, orderBy: [{ closeDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, date: row.closeDate.toISOString().slice(0, 10), account: row.financeAccount.name, systemBalanceRial: row.systemBalanceRial.toString(), countedBalanceRial: row.countedBalanceRial.toString(), differenceRial: row.differenceRial.toString(), note: row.note, journalEntryId: row.journalEntryId }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
+  }
+
+  async cashCloseDetail(user: AuthenticatedUser, id: string) {
+    const { businessId, branchId } = this.scope(user);
+    const row = await this.prisma.cashClose.findFirst({ where: { id, businessId, branchId }, include: { financeAccount: { select: { name: true } } } });
+    if (!row) throw new NotFoundException("بستن صندوق پیدا نشد.");
+    return { id: row.id, date: row.closeDate.toISOString().slice(0, 10), account: row.financeAccount.name, systemBalanceRial: row.systemBalanceRial.toString(), countedBalanceRial: row.countedBalanceRial.toString(), differenceRial: row.differenceRial.toString(), note: row.note, journalEntryId: row.journalEntryId };
   }
 
   async cashClose(user: AuthenticatedUser, dto: CashCloseDto, key: string | undefined, request: AppRequest) {
@@ -120,7 +182,7 @@ export class FinanceService {
         if (!account) throw new NotFoundException("حساب مالی پیدا نشد.");
         await this.accounting.assertOpen(tx, businessId, date);
         const totals = await tx.journalLine.aggregate({
-          where: { businessId, branchId, ledgerAccountId: account.ledgerAccountId, journalEntry: { status: "POSTED", txnDate: { lte: date } } },
+          where: { businessId, branchId, ledgerAccountId: account.ledgerAccountId, journalEntry: { status: { in: ["POSTED", "REVERSED"] }, txnDate: { lte: date } } },
           _sum: { debitRial: true, creditRial: true },
         });
         const system = (totals._sum.debitRial ?? 0n) - (totals._sum.creditRial ?? 0n);
@@ -165,12 +227,13 @@ export class FinanceService {
     const result = await this.prisma.$transaction(async (tx) => {
       const overlap = await tx.closedPeriod.findFirst({ where: { businessId, reopenedAt: null, startDate: { lte: endDate }, endDate: { gte: startDate } }, select: { id: true } });
       if (overlap) throw new ConflictException("این بازه با یک دورهٔ بستهٔ دیگر هم‌پوشانی دارد.");
-      const [salesDrafts, purchaseDrafts, expenseDrafts] = await Promise.all([
+      const [salesDrafts, purchaseDrafts, expenseDrafts, stockCountDrafts] = await Promise.all([
         tx.salesInvoice.count({ where: { businessId, status: "DRAFT", txnDate: { gte: startDate, lte: endDate } } }),
         tx.purchase.count({ where: { businessId, status: "DRAFT", txnDate: { gte: startDate, lte: endDate } } }),
         tx.expense.count({ where: { businessId, status: "DRAFT", txnDate: { gte: startDate, lte: endDate } } }),
+        tx.stockCount.count({ where: { businessId, status: "DRAFT", txnDate: { gte: startDate, lte: endDate } } }),
       ]);
-      if (salesDrafts + purchaseDrafts + expenseDrafts > 0) throw new ConflictException("پیش‌نویس‌های باز در این بازه را ثبت یا باطل کنید، سپس دوره را ببندید.");
+      if (salesDrafts + purchaseDrafts + expenseDrafts + stockCountDrafts > 0) throw new ConflictException("پیش‌نویس‌های فروش، خرید، هزینه یا شمارش موجودی در این بازه را تعیین تکلیف کنید، سپس دوره را ببندید.");
       const period = await tx.closedPeriod.create({ data: { businessId, startDate, endDate, closeReason: reason, closedBy: user.id } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "accounting.period.closed", entityType: "closed_period", entityId: period.id, requestId: request.requestId ?? "unknown", afterJson: { startDate: dto.startDate, endDate: dto.endDate, reason } } });
       return { id: period.id, startDate: dto.startDate, endDate: dto.endDate, isClosed: true };
@@ -267,6 +330,8 @@ export class FinanceService {
   }
 
   private scope(user: AuthenticatedUser) { if (!user.businessId || !user.branchId) throw new BadRequestException("یک کسب‌وکار و شعبه را انتخاب کنید."); return { businessId: user.businessId, branchId: user.branchId }; }
+
+  private validDate(value: string, label: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException(`${label} معتبر نیست.`); const date = new Date(`${value}T00:00:00.000Z`); if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== value) throw new BadRequestException(`${label} معتبر نیست.`); return date; }
   private requireFinanceRole(user: AuthenticatedUser) { if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException("اجازهٔ ثبت عملیات مالی را ندارید."); }
   private requireKey(value?: string) { if (!value || value.length > 128) throw new BadRequestException("هدر Idempotency-Key برای عملیات مالی الزامی است."); return value; }
   private date(input?: string) { const value = input ?? new Date().toISOString().slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException("تاریخ سند معتبر نیست."); const date = new Date(`${value}T00:00:00.000Z`); if (date.toISOString().slice(0, 10) !== value) throw new BadRequestException("تاریخ سند معتبر نیست."); return date; }

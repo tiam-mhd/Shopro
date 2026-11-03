@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: shopro_test
+          POSTGRES_PASSWORD: shopro_test
+          POSTGRES_DB: shopro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shopro_test -d shopro_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://shopro_test:shopro_test@127.0.0.1:5432/shopro_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm run db:deploy
+      - run: npm run db:seed && npm run db:seed
+        env:
+          NODE_ENV: development
+      - run: npm test
+      - run: npm run test:integration
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: bash scripts/test-document-sequence-migration.sh
+      - run: npm run build

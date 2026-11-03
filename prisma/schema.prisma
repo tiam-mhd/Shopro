@@ -113,6 +113,7 @@ model SystemAdmin {
   isActive    Boolean               @default(true) @map("is_active")
   createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   sessions    SystemAdminSession[]
+  auditEvents SystemAdminAuditEvent[]
 
   @@map("system_admins")
 }
@@ -143,6 +144,22 @@ model SystemAdminSession {
 
   @@index([adminId, expiresAt])
   @@map("system_admin_sessions")
+}
+
+model SystemAdminAuditEvent {
+  id         String      @id @default(uuid()) @db.Uuid
+  adminId    String      @map("admin_id") @db.Uuid
+  action     String      @db.VarChar(80)
+  entityType String      @map("entity_type") @db.VarChar(80)
+  entityId   String?     @map("entity_id") @db.Uuid
+  requestId  String      @map("request_id") @db.VarChar(80)
+  metadata   Json?
+  occurredAt DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  admin      SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@map("system_admin_audit_events")
 }
 
 model OtpChallenge {
@@ -241,7 +258,6 @@ model Branch {
   stockCounts StockCount[]
   journals   JournalEntry[]
   journalLines JournalLine[]
-  sequences  DocumentSequence[]
   cashCloses CashClose[]
 
   @@unique([businessId, code])
@@ -759,6 +775,7 @@ model JournalLine {
   branch          Branch        @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@index([businessId, ledgerAccountId, branchId])
+  @@index([businessId, partyId, journalEntryId])
   @@map("journal_lines")
 }
 
@@ -835,12 +852,10 @@ model SyncRecord {
 model DocumentSequence {
   id         String   @id @default(uuid()) @db.Uuid
   businessId String   @map("business_id") @db.Uuid
-  branchId   String   @map("branch_id") @db.Uuid
   type       String   @db.VarChar(32)
   nextValue  BigInt   @default(1) @map("next_value")
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
 
-  @@unique([businessId, branchId, type])
+  @@unique([businessId, type])
   @@map("document_sequences")
 }

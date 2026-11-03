@@ -1,27 +1,117 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { AccountingService } from "../finance/accounting.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { CreateExpenseCategoryDto, CreateExpenseDto, PostExpenseDto, VoidExpenseDto } from "./expenses.dto.js";
+import { prepareExpenseAttachment } from "./attachment-files.js";
+import { AttachmentStorageService } from "./attachment-storage.service.js";
+import { createAttachmentDownloadGrant, verifyAttachmentDownloadGrant } from "./attachment-download-token.js";
+import { lockAttachmentMutationDuringBackup } from "./attachment-backup-lock.js";
+import { assertUuid } from "../common/uuid-param.pipe.js";
 
 const money = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); const result = BigInt(value); if (result <= 0n) throw new BadRequestException("مبلغ باید بزرگ‌تر از صفر باشد."); return result; };
 
 @Injectable()
 export class ExpensesService {
-  constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService) {}
+  constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService, private readonly attachmentStorage: AttachmentStorageService) {}
 
-  async list(user: AuthenticatedUser) {
+  async list(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.expense.findMany({ where: { businessId, branchId }, include: { category: { select: { name: true } }, payee: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: 200 });
-    return rows.map((row) => ({ id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRial: row.taxRial.toString(), category: row.category.name, payee: row.payee?.name ?? null, status: row.status, note: row.note }));
+    assertUuid(cursor, "نشانگر صفحه برای فهرست هزینه‌ها معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 200;
+    const where = { businessId, branchId };
+    if (cursor && !(await this.prisma.expense.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست هزینه‌ها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.expense.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { category: { select: { name: true } }, payee: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRial: row.taxRial.toString(), category: row.category.name, payee: row.payee?.name ?? null, status: row.status, note: row.note }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async get(user: AuthenticatedUser, id: string) {
     const { businessId, branchId } = this.scope(user);
-    const row = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, include: { category: { select: { name: true } }, payee: { select: { name: true, phone: true, email: true, address: true } } } });
+    const row = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, include: { category: { select: { name: true } }, payee: { select: { name: true, phone: true, email: true, address: true } }, attachment: { select: { fileName: true, mimeType: true, bytes: true, createdAt: true } } } });
     if (!row) throw new NotFoundException("هزینه پیدا نشد.");
-    return { id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRateBasisPoints: row.taxRateBasisPoints, taxRial: row.taxRial.toString(), categoryId: row.categoryId, category: row.category.name, payeeId: row.payeeId, payee: row.payee, status: row.status, note: row.note, postedAt: row.postedAt?.toISOString() ?? null };
+    return { id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRateBasisPoints: row.taxRateBasisPoints, taxRial: row.taxRial.toString(), categoryId: row.categoryId, category: row.category.name, payeeId: row.payeeId, payee: row.payee, status: row.status, note: row.note, postedAt: row.postedAt?.toISOString() ?? null, canManageAttachment: this.canManageExpense(user), attachment: row.attachment ? { fileName: row.attachment.fileName, mimeType: row.attachment.mimeType, bytes: row.attachment.bytes.toString(), uploadedAt: row.attachment.createdAt.toISOString() } : null };
+  }
+
+  async uploadAttachment(user: AuthenticatedUser, id: string, file: { originalname?: string; buffer?: Uint8Array; size?: number } | undefined, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.assertExpenseId(id);
+    if (!this.canManageExpense(user)) throw new ForbiddenException("افزودن پیوست برای نقش شما مجاز نیست.");
+    const prepared = prepareExpenseAttachment(file);
+    const expense = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, select: { id: true, status: true, attachmentId: true } });
+    if (!expense) throw new NotFoundException("هزینه پیدا نشد.");
+    if (expense.status !== "DRAFT") throw new ConflictException("پس از ثبت نهایی هزینه نمی‌توان پیوست آن را تغییر داد.");
+    if (expense.attachmentId) throw new ConflictException("برای این هزینه پیوستی ثبت شده است؛ ابتدا آن را بردارید.");
+
+    const attachmentId = randomUUID();
+    const storageKey = `${attachmentId}.${prepared.extension}`;
+    await this.attachmentStorage.save(storageKey, prepared.bytes);
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await lockAttachmentMutationDuringBackup(tx);
+        const current = await tx.expense.findFirst({ where: { id, businessId, branchId }, select: { id: true, status: true, attachmentId: true } });
+        if (!current) throw new NotFoundException("هزینه پیدا نشد.");
+        if (current.status !== "DRAFT") throw new ConflictException("پس از ثبت نهایی هزینه نمی‌توان پیوست آن را تغییر داد.");
+        if (current.attachmentId) throw new ConflictException("برای این هزینه پیوستی ثبت شده است؛ ابتدا آن را بردارید.");
+        const attachment = await tx.attachment.create({ data: { id: attachmentId, businessId, storageKey, fileName: prepared.fileName, mimeType: prepared.mimeType, bytes: BigInt(prepared.bytes.byteLength), checksum: prepared.checksum, uploadedBy: user.id } });
+        await tx.expense.update({ where: { id }, data: { attachmentId: attachment.id } });
+        await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.attachment.added", entityType: "expense", entityId: id, requestId: request.requestId ?? "unknown", afterJson: { mimeType: prepared.mimeType, bytes: String(prepared.bytes.byteLength), checksum: prepared.checksum } } });
+        return { fileName: attachment.fileName, mimeType: attachment.mimeType, bytes: attachment.bytes.toString(), uploadedAt: attachment.createdAt.toISOString() };
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      await this.attachmentStorage.remove(storageKey).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async issueAttachmentDownloadToken(user: AuthenticatedUser, id: string) {
+    const { businessId, branchId } = this.scope(user);
+    this.assertExpenseId(id);
+    const expense = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, select: { attachment: { select: { id: true } } } });
+    if (!expense?.attachment) throw new NotFoundException("پیوستی برای این هزینه ثبت نشده است.");
+    const secret = process.env.SESSION_SECRET;
+    if (!secret || secret.length < 32) throw new ServiceUnavailableException("امضای امن دریافت فایل تنظیم نشده است.");
+    return createAttachmentDownloadGrant({ expenseId: id, attachmentId: expense.attachment.id, businessId, branchId, userId: user.id }, secret);
+  }
+
+  async downloadAttachment(user: AuthenticatedUser, id: string, token?: string) {
+    const { businessId, branchId } = this.scope(user);
+    this.assertExpenseId(id);
+    const expense = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, select: { attachment: { select: { id: true, storageKey: true, fileName: true, mimeType: true, bytes: true, checksum: true } } } });
+    if (!expense?.attachment) throw new NotFoundException("پیوستی برای این هزینه ثبت نشده است.");
+    const secret = process.env.SESSION_SECRET;
+    if (!secret || secret.length < 32) throw new ServiceUnavailableException("امضای امن دریافت فایل تنظیم نشده است.");
+    if (!verifyAttachmentDownloadGrant(token, secret, { expenseId: id, attachmentId: expense.attachment.id, businessId, branchId, userId: user.id })) throw new UnauthorizedException("مجوز دریافت این فایل پایان یافته یا معتبر نیست؛ دوباره درخواست دریافت کنید.");
+    const bytes = await this.attachmentStorage.read(expense.attachment.storageKey);
+    const checksum = createHash("sha256").update(bytes).digest("hex");
+    if (BigInt(bytes.byteLength) !== expense.attachment.bytes || checksum !== expense.attachment.checksum) throw new ConflictException("محتوای ذخیره‌شدهٔ پیوست با اطلاعات ثبت‌شده هم‌خوانی ندارد.");
+    return { bytes, fileName: expense.attachment.fileName, mimeType: expense.attachment.mimeType };
+  }
+
+  async removeAttachment(user: AuthenticatedUser, id: string, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.assertExpenseId(id);
+    if (!this.canManageExpense(user)) throw new ForbiddenException("حذف پیوست برای نقش شما مجاز نیست.");
+    const removed = await this.prisma.$transaction(async (tx) => {
+      await lockAttachmentMutationDuringBackup(tx);
+      const expense = await tx.expense.findFirst({ where: { id, businessId, branchId }, select: { id: true, status: true, attachmentId: true } });
+      if (!expense) throw new NotFoundException("هزینه پیدا نشد.");
+      if (expense.status !== "DRAFT") throw new ConflictException("پس از ثبت نهایی هزینه نمی‌توان پیوست آن را تغییر داد.");
+      if (!expense.attachmentId) throw new NotFoundException("پیوستی برای این هزینه ثبت نشده است.");
+      const attachment = await tx.attachment.findFirst({ where: { id: expense.attachmentId, businessId }, select: { id: true, storageKey: true } });
+      if (!attachment) throw new ConflictException("اطلاعات پیوست هزینه کامل نیست.");
+      await tx.expense.update({ where: { id }, data: { attachmentId: null } });
+      const remainingReferences = await tx.expense.count({ where: { businessId, attachmentId: attachment.id } });
+      if (remainingReferences === 0) await tx.attachment.delete({ where: { id: attachment.id } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.attachment.removed", entityType: "expense", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { attachmentId: attachment.id } } });
+      return { attachmentId: attachment.id, storageKey: remainingReferences === 0 ? attachment.storageKey : null };
+    }, { isolationLevel: "Serializable" });
+    if (removed.storageKey) await this.removeStoredAttachment(removed.storageKey, removed.attachmentId, request.requestId);
+    return { id, removed: true };
   }
 
   async categories(user: AuthenticatedUser) {
@@ -84,13 +174,27 @@ export class ExpensesService {
   async deleteDraft(user: AuthenticatedUser, id: string, request: AppRequest) {
     const { businessId, branchId } = this.scope(user);
     if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException();
-    return this.prisma.$transaction(async (tx) => {
-      const expense = await tx.expense.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, select: { id: true, expenseNo: true, amountRial: true, taxRial: true } });
+    const deleted = await this.prisma.$transaction(async (tx) => {
+      await lockAttachmentMutationDuringBackup(tx);
+      const expense = await tx.expense.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, select: { id: true, expenseNo: true, amountRial: true, taxRial: true, attachmentId: true } });
       if (!expense) throw new ConflictException("فقط پیش‌نویس هزینه را می‌توان حذف کرد؛ سند نهایی باید با ابطال اصلاح شود.");
+      let cleanup: { attachmentId: string; storageKey: string } | null = null;
+      if (expense.attachmentId) {
+        const attachment = await tx.attachment.findFirst({ where: { id: expense.attachmentId, businessId }, select: { id: true, storageKey: true } });
+        if (!attachment) throw new ConflictException("اطلاعات پیوست هزینه کامل نیست.");
+        await tx.expense.update({ where: { id }, data: { attachmentId: null } });
+        const remainingReferences = await tx.expense.count({ where: { businessId, attachmentId: attachment.id } });
+        if (remainingReferences === 0) {
+          await tx.attachment.delete({ where: { id: attachment.id } });
+          cleanup = { attachmentId: attachment.id, storageKey: attachment.storageKey };
+        }
+      }
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.draft.deleted", entityType: "expense", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { amountRial: expense.amountRial.toString(), expenseNo: expense.expenseNo } } });
       await tx.expense.delete({ where: { id } });
-      return { id, status: "DELETED" };
-    });
+      return { id, status: "DELETED", cleanup };
+    }, { isolationLevel: "Serializable" });
+    if (deleted.cleanup) await this.removeStoredAttachment(deleted.cleanup.storageKey, deleted.cleanup.attachmentId, request.requestId);
+    return { id: deleted.id, status: deleted.status };
   }
 
   async post(user: AuthenticatedUser, id: string, dto: PostExpenseDto, key?: string, request?: AppRequest) {
@@ -105,6 +209,7 @@ export class ExpensesService {
       if (!expense) throw new NotFoundException("هزینه پیدا نشد.");
       if (expense.status !== "DRAFT") throw new ConflictException("این هزینه قبلاً ثبت نهایی شده است.");
       await this.accounting.assertOpen(tx, businessId, expense.txnDate);
+      const expenseNo = expense.expenseNo ?? await this.accounting.nextDocumentNumber(tx, { businessId, type: "EXPENSE", prefix: "E" });
       const cash = dto.financeAccountId ? await tx.financeAccount.findFirst({ where: { id: dto.financeAccountId, businessId, branchId, isActive: true } }) : null;
       if (dto.financeAccountId && !cash) throw new BadRequestException("حساب پرداخت معتبر نیست.");
       const payable = await this.accounting.account(tx, businessId, "accounts_payable");
@@ -117,10 +222,10 @@ export class ExpensesService {
       ];
       const journal = await this.accounting.createJournal(tx, { businessId, branchId, date: expense.txnDate, sourceType: "EXPENSE", sourceId: journalSourceId, memo: expense.note ?? "ثبت هزینه", actorId: user.id, lines });
       if (cash) {
-        const cashTxn = await tx.cashTransaction.create({ data: { businessId, branchId, kind: "PAYMENT", txnDate: expense.txnDate, amountRial: expense.amountRial + expense.taxRial, fromAccountId: cash.id, partyId: expense.payeeId, method: cash.kind === "CASH" ? "CASH" : cash.kind === "POS" ? "POS" : "BANK", reference: expense.expenseNo ?? expense.id, idempotencyKey: `expense:${expense.id}`, createdBy: user.id, journalEntryId: journal.id } });
+        const cashTxn = await tx.cashTransaction.create({ data: { businessId, branchId, kind: "PAYMENT", txnDate: expense.txnDate, amountRial: expense.amountRial + expense.taxRial, fromAccountId: cash.id, partyId: expense.payeeId, method: cash.kind === "CASH" ? "CASH" : cash.kind === "POS" ? "POS" : "BANK", reference: expenseNo, idempotencyKey: `expense:${expense.id}`, createdBy: user.id, journalEntryId: journal.id } });
         void cashTxn;
       }
-      const posted = await tx.expense.update({ where: { id }, data: { status: "POSTED", postedAt: new Date() } });
+      const posted = await tx.expense.update({ where: { id }, data: { expenseNo, status: "POSTED", postedAt: new Date() } });
       const result = { id: posted.id, status: posted.status, journalEntryId: journal.id, amountRial: (posted.amountRial + posted.taxRial).toString() };
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash: bodyHash, response: result });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.posted", entityType: "expense", entityId: posted.id, requestId: request?.requestId ?? "unknown", afterJson: result } });
@@ -137,7 +242,8 @@ export class ExpensesService {
     const requestHash = this.accounting.idempotencyHash({ id, reason, action: "void-expense" });
     const previous = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
     if (previous) return previous;
-    return this.prisma.$transaction(async (tx) => {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
       const expense = await tx.expense.findFirst({ where: { id, businessId, branchId }, select: { id: true, expenseNo: true, txnDate: true, status: true, amountRial: true, taxRial: true, payeeId: true } });
       if (!expense) throw new NotFoundException("هزینه پیدا نشد.");
       if (expense.status !== "POSTED") throw new ConflictException("فقط هزینهٔ ثبت‌شده قابل ابطال است.");
@@ -156,9 +262,21 @@ export class ExpensesService {
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.voided", entityType: "expense", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { status: expense.status }, afterJson: { ...result, amountRial: expense.amountRial.toString(), taxRial: expense.taxRial.toString(), payeeId: expense.payeeId } } });
       return result;
-    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+    } catch (error) {
+      if (this.isTransactionConflict(error)) {
+        const saved = await this.accounting.existingIdempotentAfterConflict(user.id, businessId, key, requestHash);
+        if (saved) return saved;
+        throw new ConflictException("درخواست ابطال هم‌زمان پردازش شد؛ وضعیت هزینه را تازه‌سازی کنید.");
+      }
+      throw error;
+    }
   }
 
   private scope(user: AuthenticatedUser) { if (!user.businessId || !user.branchId) throw new BadRequestException("یک کسب‌وکار و شعبه را انتخاب کنید."); return { businessId: user.businessId, branchId: user.branchId }; }
+  private canManageExpense(user: AuthenticatedUser) { return ["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? ""); }
+  private assertExpenseId(value: string) { if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new BadRequestException("شناسهٔ هزینه معتبر نیست."); }
+  private async removeStoredAttachment(storageKey: string, attachmentId: string, requestId?: string) { try { await this.attachmentStorage.remove(storageKey); } catch { process.stderr.write(JSON.stringify({ level: "warn", event: "attachment.orphan_cleanup_failed", attachmentId, requestId: requestId ?? "unknown" }) + "\n"); } }
   private date(value?: string) { const dateText = value ?? new Date().toISOString().slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) throw new BadRequestException("تاریخ سند معتبر نیست."); const date = new Date(`${dateText}T00:00:00.000Z`); if (date.toISOString().slice(0, 10) !== dateText) throw new BadRequestException("تاریخ سند معتبر نیست."); return date; }
+  private isTransactionConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error.code === "P2002" || error.code === "P2034"); }
 }

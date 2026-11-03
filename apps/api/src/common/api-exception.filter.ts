@@ -13,10 +13,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const context = host.switchToHttp();
     const response = context.getResponse<Response>();
     const request = context.getRequest<AppRequest>();
-    const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+    const multerCode = exception && typeof exception === "object" && "code" in exception ? (exception as { code?: unknown }).code : undefined;
+    const multerError = exception && typeof exception === "object" && (exception as { name?: unknown }).name === "MulterError";
+    const status = exception instanceof HttpException ? exception.getStatus() : multerError && multerCode === "LIMIT_FILE_SIZE" ? HttpStatus.PAYLOAD_TOO_LARGE : multerError && typeof multerCode === "string" && multerCode.startsWith("LIMIT_") ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
     const body = exception instanceof HttpException ? exception.getResponse() : null;
     const detail = typeof body === "object" && body && "message" in body ? (body as { message: unknown }).message : undefined;
-    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.join("؛ ") : messages[status] ?? "خطایی در پردازش درخواست رخ داد.";
+    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.join("؛ ") : status === HttpStatus.PAYLOAD_TOO_LARGE ? "حجم فایل پیوست نباید بیشتر از ۱۰ مگابایت باشد." : multerError && status === HttpStatus.BAD_REQUEST ? "ساختار فایل پیوست معتبر نیست." : messages[status] ?? "خطایی در پردازش درخواست رخ داد.";
     response.status(status).json({ code: status === 500 ? "INTERNAL_ERROR" : `HTTP_${status}`, message, requestId: request.requestId ?? null });
     if (status >= 500) process.stderr.write(JSON.stringify({ level: "error", requestId: request.requestId, path: request.path, method: request.method, status, error: safeErrorChain(exception) }) + "\n");
   }

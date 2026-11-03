@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Patch, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { CurrentUser } from "../common/current-user.decorator.js";
+import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
-import { AddMemberDto, CreateBranchDto, CreateBusinessDto, UpdateBusinessDto } from "./businesses.dto.js";
+import { AddMemberDto, CreateBranchDto, CreateBusinessDto, UpdateBusinessDto, UpdateMemberDto } from "./businesses.dto.js";
 import { BusinessesService } from "./businesses.service.js";
 
 @Controller("businesses")
@@ -14,4 +15,7 @@ export class BusinessesController {
   @Post("current/branches") branch(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateBranchDto, @Req() request: AppRequest) { return this.businesses.createBranch(user, dto, request); }
   @Get("current/members") members(@CurrentUser() user: AuthenticatedUser) { return this.businesses.members(user); }
   @Post("current/members") addMember(@CurrentUser() user: AuthenticatedUser, @Body() dto: AddMemberDto, @Req() request: AppRequest) { return this.businesses.addMember(user, dto, request); }
+  @Patch("current/members/:id") updateMember(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateMemberDto, @Req() request: AppRequest) { return this.businesses.updateMember(user, id, dto, request); }
+  @Get("current/members/:id/history") memberHistory(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string) { return this.businesses.memberHistory(user, id); }
+  @Get("current/audit") auditEvents(@CurrentUser() user: AuthenticatedUser, @Query("actorId") actorId?: string, @Query("action") action?: string, @Query("entityType") entityType?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.businesses.auditEvents(user, { actorId, action, entityType, from, to, cursor, limit }); }
 }

@@ -1,15 +1,13 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { format as formatJalali, getDaysInMonth, parse } from "date-fns-jalali";
+import { format as formatJalali, getDaysInMonth } from "date-fns-jalali";
 import { CalendarDays, ChevronDown, X } from "lucide-react";
+import { jalaliParts, parseJalali, toIsoDate } from "../lib/jalali-date.js";
 
 const months = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
 const digits = (value: string) => value.replace(/[0-9]/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
-const jalaliParts = (date: Date) => formatJalali(date, "yyyy-M-d").split("-").map(Number) as [number, number, number];
-const parseJalali = (year: number, month: number, day: number) => parse(`${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`, "yyyy/MM/dd", new Date(2000, 0, 1));
-const toIso = (date: Date) => new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())).toISOString().slice(0, 10);
 const WHEEL_ITEM_HEIGHT = 40;
 
-export function JalaliDatePicker({ value, onChange, label = "تاریخ" }: { value: string; onChange: (iso: string) => void; label?: string }) {
+export function JalaliDatePicker({ value, onChange, label = "تاریخ", clearable = false }: { value: string; onChange: (iso: string) => void; label?: string; clearable?: boolean }) {
   const [open, setOpen] = useState(false);
   const current = useMemo(() => {
     const date = value ? new Date(`${value}T12:00:00`) : new Date();
@@ -24,7 +22,7 @@ export function JalaliDatePicker({ value, onChange, label = "تاریخ" }: { va
   const clampDay = (nextMonth: number, nextYear: number, selected: number) => Math.min(selected, getDaysInMonth(parseJalali(nextYear, nextMonth, 1)));
   const openPicker = () => { const [y, m, d] = jalaliParts(current); setYear(y); setMonth(m); setDay(d); setOpen(true); };
   return <>
-    <button type="button" className="date-field" onClick={openPicker} aria-label={`انتخاب ${label}`}><CalendarDays size={18} /><span>{label}</span><strong dir="ltr">{digits(formatJalali(current, "yyyy/MM/dd"))}</strong><ChevronDown size={16} /></button>
+    {clearable ? <div className="date-field-wrap"><button type="button" className="date-field" onClick={openPicker} aria-label={`انتخاب ${label}`}><CalendarDays size={18} /><span>{label}</span><strong dir="ltr">{value ? digits(formatJalali(current, "yyyy/MM/dd")) : "انتخاب نشده"}</strong><ChevronDown size={16} /></button>{value && <button type="button" className="icon-button date-clear-button" onClick={() => onChange("")} aria-label={`پاک‌کردن ${label}`}><X size={16} /></button>}</div> : <button type="button" className="date-field" onClick={openPicker} aria-label={`انتخاب ${label}`}><CalendarDays size={18} /><span>{label}</span><strong dir="ltr">{digits(formatJalali(current, "yyyy/MM/dd"))}</strong><ChevronDown size={16} /></button>}
     {open && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
       <section className="date-modal" role="dialog" aria-modal="true" aria-labelledby="date-title" dir="rtl">
         <header className="modal-heading"><div><span className="eyebrow">تقویم خورشیدی</span><h2 id="date-title">انتخاب {label}</h2></div><button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="بستن"><X size={20} /></button></header>
@@ -35,7 +33,7 @@ export function JalaliDatePicker({ value, onChange, label = "تاریخ" }: { va
         </div>
         <button className="today-button" type="button" onClick={() => { setYear(today[0]); setMonth(today[1]); setDay(today[2]); }}>رفتن به امروز <span>{digits(formatJalali(new Date(), "yyyy/MM/dd"))}</span></button>
         <p className="date-hint">تاریخ انتخاب‌شده در فاکتور و گزارش شما ثبت می‌شود.</p>
-        <button className="button button-primary confirm-date" type="button" onClick={() => { const date = parseJalali(year, month, day); onChange(toIso(date)); setOpen(false); }}>تأیید تاریخ</button>
+        <button className="button button-primary confirm-date" type="button" onClick={() => { const date = parseJalali(year, month, day); onChange(toIsoDate(date)); setOpen(false); }}>تأیید تاریخ</button>
       </section>
     </div>}
   </>;

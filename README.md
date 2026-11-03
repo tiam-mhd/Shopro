@@ -10,7 +10,7 @@
 
 ## اجرای محلی
 
-1. فایل `.env.example` را به `.env` کپی و کلیدهای تصادفی را مقداردهی کنید. `SESSION_SECRET` و `OTP_HASH_SECRET` باید جداگانه و حداقل ۳۲ نویسهٔ تصادفی باشند.
+1. فایل `.env.example` را به `.env` کپی و کلیدهای تصادفی را مقداردهی کنید. `SESSION_SECRET` و `OTP_HASH_SECRET` باید جداگانه و حداقل ۳۲ نویسهٔ تصادفی باشند. `TRUST_PROXY_HOPS` در توسعه صفر است؛ پشت reverse proxy فقط تعداد hopهای مورداعتماد را وارد کنید.
 2. PostgreSQL توسعه را با `docker compose -f infra/docker-compose.yml up -d` اجرا کنید.
 3. وابستگی‌ها را با `npm ci` نصب کنید.
 4. Prisma Client و طرح پایگاه داده را آماده کنید:
@@ -36,6 +36,8 @@
 
 برای استقرار با کمترین تعداد آیتم، یک سرویس Docker رابط PWA و API را با هم اجرا می‌کند و یک سرویس PostgreSQL داده‌ها را نگه می‌دارد. Dockerfile چندمرحله‌ای در ریشهٔ مخزن قرار دارد. راهنمای ساخت دو سرویس، تنظیم محیط، migration و ساخت مدیر سامانه در [راهنمای Runflare](docs/runflare-deployment.md) است؛ الگوی env قابل کپی نیز در `infra/runflare.env.example` قرار دارد.
 
+ابزار رمزگذاری‌شدهٔ backup/restore برای runner جداگانه و محدودیت‌های فعلی آن در [راهنمای پشتیبان‌گیری](docs/backup-restore.md) آمده است. این runner و فضای پایدار در Runflare هنوز پیکربندی نشده‌اند.
+
 ## مدیر سامانه
 
 مدیر سامانه از جدول و نشست مجزای `system_admins` ساخته می‌شود و به‌صورت خودکار کاربر یا عضو یک کسب‌وکار نمی‌شود. پس از اجرای migration:
@@ -45,6 +47,10 @@ npm run admin:create -- --phone 09123456789 --name "نام مدیر"
 ```
 
 یا `ADMIN_BOOTSTRAP_PHONE` و `ADMIN_BOOTSTRAP_NAME` را در محیط اجرای فرمان بگذارید. ورود مدیر سامانه از مسیر جداگانهٔ `/api/v1/system-admin/auth/otp/request` و `/api/v1/system-admin/auth/otp/verify` انجام می‌شود.
+
+پس از ورود، API فقط‌خواندنی مرور سامانه، فهرست صفحه‌بندی‌شدهٔ کسب‌وکارها و سابقهٔ audit در [راهنمای مدیر سامانه](docs/system-admin.md) در دسترس است. نشست و CSRF مدیر از نشست کاربران عادی جدا نگه‌داری می‌شود.
+
+نتیجهٔ ممیزی وابستگی‌ها و فهرست مجوزها در [گزارش dependency audit](docs/dependency-audit.md) ثبت شده است.
 
 ## مدل دسترسی
 

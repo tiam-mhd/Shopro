@@ -9,7 +9,7 @@ function cookie(name: string): string | undefined {
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers(options.headers);
-  if (options.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (options.body && !(typeof FormData !== "undefined" && options.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
   const businessId = sessionStorage.getItem("shopro_business_id");
   const branchId = sessionStorage.getItem("shopro_branch_id");
   if (businessId) headers.set("x-business-id", businessId);
@@ -29,4 +29,19 @@ export const get = <T,>(path: string, signal?: AbortSignal) => api<T>(path, { si
 export const post = <T,>(path: string, body?: unknown, headers?: Record<string, string>) => api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });
 export const patch = <T,>(path: string, body: unknown) => api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T,>(path: string) => api<T>(path, { method: "DELETE" });
+export const uploadFile = <T,>(path: string, file: File) => { const body = new FormData(); body.append("file", file); return api<T>(path, { method: "POST", body }); };
+export async function downloadFile(path: string, additionalHeaders: Record<string, string> = {}) {
+  const headers = new Headers();
+  const businessId = sessionStorage.getItem("shopro_business_id");
+  const branchId = sessionStorage.getItem("shopro_branch_id");
+  if (businessId) headers.set("x-business-id", businessId);
+  if (branchId) headers.set("x-branch-id", branchId);
+  for (const [name, value] of Object.entries(additionalHeaders)) headers.set(name, value);
+  const response = await fetch(`/api/v1${path}`, { headers, credentials: "include" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+    throw new ApiError(response.status, body?.message ?? "دریافت فایل انجام نشد.", body?.code);
+  }
+  return response.blob();
+}
 export const newOperationId = () => crypto.randomUUID();

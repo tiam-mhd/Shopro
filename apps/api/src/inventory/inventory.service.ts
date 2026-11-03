@@ -5,6 +5,8 @@ import { AccountingService, type JournalLineInput } from "../finance/accounting.
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import type { CreateStockCountDto } from "./inventory.dto.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
+import { assertUuid } from "../common/uuid-param.pipe.js";
 
 function milli(value: string) {
   const normalized = toAsciiDigits(value).trim();
@@ -19,22 +21,47 @@ const roundedDivide = (numerator: bigint, denominator: bigint) => numerator >= 0
 export class InventoryService {
   constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService) {}
 
-  async levels(user: AuthenticatedUser) {
+  async levels(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const products = await this.prisma.product.findMany({ where: { businessId, isActive: true, kind: "STOCK", trackInventory: true }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, balances: { where: { branchId }, take: 1 } }, orderBy: { normalizedName: "asc" }, take: 500 });
-    return products.map((product) => ({ productId: product.id, name: product.name, sku: product.sku, unit: product.unit, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? null, averageCostRial: product.balances[0]?.averageCostRial.toString() ?? "0", valueRial: product.balances[0]?.inventoryValueRial.toString() ?? "0" }));
+    assertUuid(cursor, "نشانگر صفحه برای موجودی معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 500;
+    const where = { businessId, isActive: true, kind: "STOCK" as const, trackInventory: true };
+    if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = products.map((product) => ({ productId: product.id, name: product.name, sku: product.sku, unit: product.unit, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? null, averageCostRial: product.balances[0]?.averageCostRial.toString() ?? "0", valueRial: product.balances[0]?.inventoryValueRial.toString() ?? "0" }));
+    return pageMode ? cursorPage(mapped, limit, (product) => product.productId) : mapped;
   }
 
-  async movements(user: AuthenticatedUser, productId?: string) {
+  async movements(user: AuthenticatedUser, productId?: string, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.inventoryMovement.findMany({ where: { businessId, branchId, ...(productId ? { productId } : {}) }, include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: 200 });
-    return rows.map((row) => ({ id: row.id, productId: row.product.id, product: row.product.name, unit: row.product.unit.labelFa, date: row.txnDate.toISOString().slice(0, 10), sourceType: row.sourceType, quantityDelta: row.quantityDelta.toString(), unitCostRial: row.unitCostRial.toString(), valueDeltaRial: row.valueDeltaRial.toString() }));
+    assertUuid(cursor, "نشانگر صفحه برای گردش موجودی معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 200;
+    const where = { businessId, branchId, ...(productId ? { productId } : {}) };
+    if (cursor && !(await this.prisma.inventoryMovement.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای گردش موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.inventoryMovement.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, productId: row.product.id, product: row.product.name, unit: row.product.unit.labelFa, date: row.txnDate.toISOString().slice(0, 10), sourceType: row.sourceType, quantityDelta: row.quantityDelta.toString(), unitCostRial: row.unitCostRial.toString(), valueDeltaRial: row.valueDeltaRial.toString() }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
-  async counts(user: AuthenticatedUser) {
+  async counts(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.stockCount.findMany({ where: { businessId, branchId }, include: { lines: { include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: 50 });
-    return rows.map((row) => ({ id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.name, unit: line.product.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) }));
+    assertUuid(cursor, "نشانگر صفحه برای شمارش موجودی معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 50;
+    const where = { businessId, branchId };
+    if (cursor && !(await this.prisma.stockCount.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای شمارش موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.stockCount.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { lines: { include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.name, unit: line.product.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
+  }
+
+  async count(user: AuthenticatedUser, id: string) {
+    const { businessId, branchId } = this.scope(user);
+    const row = await this.prisma.stockCount.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } } } } });
+    if (!row) throw new NotFoundException("شمارش موجودی پیدا نشد.");
+    return { id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.name, unit: line.product.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) };
   }
 
   async createCount(user: AuthenticatedUser, dto: CreateStockCountDto, request: AppRequest) {

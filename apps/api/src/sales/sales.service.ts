@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { AccountingService, type JournalLineInput } from "../finance/accounting.service.js";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { CreateSalesDto, CreateSalesReturnDto, PostSalesDto, SalesLineDto, VoidSalesDto } from "./sales.dto.js";
 
 const money = (value: string | undefined) => {
@@ -30,17 +31,35 @@ const signedQuantityMilli = (value: string) => {
 };
 const roundedDivide = (numerator: bigint, denominator: bigint) => numerator >= 0n ? (numerator + denominator / 2n) / denominator : -((-numerator + denominator / 2n) / denominator);
 const extensionRial = (qtyMilli: bigint, unitRial: bigint) => (qtyMilli * unitRial + 500n) / 1000n;
+export function saleCogsRial(onHandMilli: bigint, saleQtyMilli: bigint, inventoryValueRial: bigint | null, averageCostRial: bigint) {
+  return inventoryValueRial !== null && onHandMilli === saleQtyMilli ? inventoryValueRial : extensionRial(saleQtyMilli, averageCostRial);
+}
+export function remainingInventoryValueRial(onHandMilli: bigint, saleQtyMilli: bigint, currentValueRial: bigint, cogsRial: bigint) {
+  return onHandMilli - saleQtyMilli === 0n ? 0n : currentValueRial - cogsRial;
+}
 const taxRial = (baseRial: bigint, basisPoints: number) => (baseRial * BigInt(basisPoints) + 5000n) / 10000n;
 
 @Injectable()
 export class SalesService {
   constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService) {}
 
-  async list(user: AuthenticatedUser, search?: string, status?: string) {
+  async list(user: AuthenticatedUser, search?: string, status?: string, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
     const q = search ? normalizePersianSearch(search) : undefined;
-    const rows = await this.prisma.salesInvoice.findMany({ where: { businessId, branchId, ...(status && ["DRAFT", "POSTED", "VOIDED"].includes(status) ? { status: status as "DRAFT" | "POSTED" | "VOIDED" } : {}), ...(q ? { OR: [{ invoiceNo: { contains: q, mode: "insensitive" } }, { customer: { name: { contains: q, mode: "insensitive" } } }] } : {}) }, include: { customer: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: 200 });
-    return rows.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), customer: row.customer?.name ?? null, subtotalRial: row.subtotalRial.toString(), discountRial: row.discountRial.toString(), taxRial: row.taxRial.toString(), totalRial: row.totalRial.toString(), status: row.status, documentType: row.returnOfId ? "RETURN" : "SALE", returnReason: row.returnReason }));
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 200;
+    const where = {
+      businessId, branchId,
+      ...(status && ["DRAFT", "POSTED", "VOIDED"].includes(status) ? { status: status as "DRAFT" | "POSTED" | "VOIDED" } : {}),
+      ...(q ? { OR: [
+        { invoiceNo: { contains: q, mode: "insensitive" as const } },
+        { customer: { name: { contains: q, mode: "insensitive" as const } } },
+      ] } : {}),
+    };
+    if (cursor && !(await this.prisma.salesInvoice.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست فاکتورها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.salesInvoice.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { customer: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), customer: row.customer?.name ?? null, subtotalRial: row.subtotalRial.toString(), discountRial: row.discountRial.toString(), taxRial: row.taxRial.toString(), totalRial: row.totalRial.toString(), status: row.status, documentType: row.returnOfId ? "RETURN" : "SALE", returnReason: row.returnReason }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async get(user: AuthenticatedUser, id: string) {
@@ -70,6 +89,11 @@ export class SalesService {
         const invoice = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { lines: true } });
         if (!invoice) throw new NotFoundException("فاکتور فروش پیدا نشد.");
         if (invoice.status !== "POSTED" || invoice.returnOfId) throw new ConflictException("برگشت فقط برای فاکتور فروش ثبت‌شده مجاز است.");
+        const invoiceLock = await tx.salesInvoice.updateMany({
+          where: { id, businessId, branchId, status: "POSTED", returnOfId: null, version: invoice.version },
+          data: { version: { increment: 1 } },
+        });
+        if (invoiceLock.count !== 1) throw new ConflictException("فاکتور هم‌زمان تغییر کرده است؛ آن را تازه‌سازی کنید.");
         await this.accounting.assertOpen(tx, businessId, date);
         const originalLines = new Map(invoice.lines.map((line) => [line.id, line]));
         const previousLines = await tx.salesInvoiceLine.findMany({
@@ -107,12 +131,35 @@ export class SalesService {
         const cashRefund = dto.cashRefundRial === undefined ? (invoice.customerId ? 0n : total) : money(dto.cashRefundRial);
         if (cashRefund > total) throw new BadRequestException("مبلغ بازپرداخت نقدی از مبلغ برگشت بیشتر است.");
         if (!invoice.customerId && cashRefund !== total) throw new BadRequestException("برای فاکتور بدون مشتری، مبلغ برگشت باید کامل به حساب پرداخت شود.");
+        if (cashRefund > 0n) {
+          const [collected, returnInvoices] = await Promise.all([
+            tx.cashTransaction.aggregate({
+              where: { businessId, branchId, kind: "RECEIPT", status: "POSTED", journalEntry: { sourceType: "SALE", sourceId: id } },
+              _sum: { amountRial: true },
+            }),
+            tx.salesInvoice.findMany({ where: { businessId, branchId, returnOfId: id }, select: { id: true } }),
+          ]);
+          const returnMovements = returnInvoices.length ? await tx.cashTransaction.groupBy({
+            by: ["kind"],
+            where: {
+              businessId,
+              branchId,
+              status: "POSTED",
+              kind: { in: ["PAYMENT", "RECEIPT"] },
+              journalEntry: { sourceType: { in: ["SALE_RETURN", "SALE_RETURN_VOID"] }, sourceId: { in: returnInvoices.map((row) => row.id) } },
+            },
+            _sum: { amountRial: true },
+          }) : [];
+          const alreadyRefunded = (returnMovements.find((row) => row.kind === "PAYMENT")?._sum.amountRial ?? 0n)
+            - (returnMovements.find((row) => row.kind === "RECEIPT")?._sum.amountRial ?? 0n);
+          const availableRefund = (collected._sum.amountRial ?? 0n) - alreadyRefunded;
+          if (availableRefund < 0n || cashRefund > availableRefund) throw new BadRequestException("مبلغ بازپرداخت از وجه دریافت‌شده و بازپرداخت‌نشدهٔ این فاکتور بیشتر است.");
+        }
         if (cashRefund > 0n && !dto.refundFinanceAccountId) throw new BadRequestException("حساب پرداخت مبلغ برگشت را انتخاب کنید.");
         const refundAccount = cashRefund > 0n ? await tx.financeAccount.findFirst({ where: { id: dto.refundFinanceAccountId, businessId, branchId, isActive: true } }) : null;
         if (cashRefund > 0n && !refundAccount) throw new BadRequestException("حساب پرداخت انتخاب‌شده معتبر نیست.");
 
-        const sequence = await tx.documentSequence.upsert({ where: { businessId_branchId_type: { businessId, branchId, type: "RETURN" } }, create: { businessId, branchId, type: "RETURN", nextValue: 2n }, update: { nextValue: { increment: 1n } }, select: { nextValue: true } });
-        const returnNo = `R-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+        const returnNo = await this.accounting.nextDocumentNumber(tx, { businessId, type: "RETURN", prefix: "R" });
         const subtotal = lines.reduce((sum, line) => sum + line.base, 0n);
         const discountTotal = lines.reduce((sum, line) => sum + line.discount, 0n);
         const taxTotal = lines.reduce((sum, line) => sum + line.tax, 0n);
@@ -120,13 +167,14 @@ export class SalesService {
           businessId, branchId, customerId: invoice.customerId, invoiceNo: returnNo, txnDate: date, status: "POSTED",
           subtotalRial: -subtotal, discountRial: -discountTotal, taxRial: -taxTotal, totalRial: -total,
           note: reason, returnOfId: invoice.id, returnReason: reason, postedAt: new Date(), postedBy: user.id,
-          lines: { create: lines.map(({ input, original, quantity, discount, tax, total: lineTotal, cogs }) => ({
-            businessId, returnOfLineId: original.id, productId: original.productId, descriptionSnapshot: original.descriptionSnapshot, skuSnapshot: original.skuSnapshot,
-            quantity: new Prisma.Decimal(quantityText(quantity)), unitCodeSnapshot: original.unitCodeSnapshot, unitPriceRial: original.unitPriceRial,
-            discountRial: -discount, taxRateBasisPoints: original.taxRateBasisPoints, taxRial: -tax, lineTotalRial: -lineTotal,
-            cogsRial: cogs === null ? null : input.restock ? -cogs : 0n,
-          })) },
         } });
+        await tx.salesInvoiceLine.createMany({ data: lines.map(({ input, original, quantity, discount, tax, total: lineTotal, cogs }) => ({
+          businessId, invoiceId: returnInvoice.id, returnOfLineId: original.id, productId: original.productId,
+          descriptionSnapshot: original.descriptionSnapshot, skuSnapshot: original.skuSnapshot,
+          quantity: new Prisma.Decimal(quantityText(quantity)), unitCodeSnapshot: original.unitCodeSnapshot, unitPriceRial: original.unitPriceRial,
+          discountRial: -discount, taxRateBasisPoints: original.taxRateBasisPoints, taxRial: -tax, lineTotalRial: -lineTotal,
+          cogsRial: cogs === null ? null : input.restock ? -cogs : 0n,
+        })) });
         const revenueAccount = await this.accounting.account(tx, businessId, "sales_revenue");
         const taxAccount = await this.accounting.account(tx, businessId, "output_tax");
         const receivableAccount = invoice.customerId ? await this.accounting.account(tx, businessId, "accounts_receivable") : null;
@@ -163,9 +211,12 @@ export class SalesService {
         await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
         await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.return.posted", entityType: "sales_invoice", entityId: returnInvoice.id, requestId: request.requestId ?? "unknown", afterJson: { ...result, reason, lines: lines.map((line) => ({ invoiceLineId: line.original.id, quantity: quantityText(line.quantity), restock: line.input.restock })) } } });
         return result;
-      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+      }, { isolationLevel: "ReadCommitted", maxWait: 10000, timeout: 30000 });
     } catch (error) {
-      if (this.isUnique(error)) { const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash); if (prior) return prior; }
+      if (this.isUnique(error) || this.isTransactionConflict(error) || error instanceof ConflictException) {
+        const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
+        if (prior) return prior;
+      }
       throw error;
     }
   }
@@ -212,7 +263,7 @@ export class SalesService {
       const result = { id: row.id, status: row.status, subtotalRial: subtotal.toString(), discountRial: discounts.toString(), taxRial: tax.toString(), totalRial: total.toString() };
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
       return result;
-    }, { isolationLevel: "Serializable" });
+    });
     } catch (error) {
       if (this.isUnique(error)) {
         const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
@@ -273,7 +324,7 @@ export class SalesService {
     if (previous) return previous;
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      return await this.retrySerializationConflicts(() => this.prisma.$transaction(async (tx) => {
         const invoice = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { include: { unit: true } } } }, customer: true } });
         if (!invoice) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
         if (invoice.status !== "DRAFT") throw new ConflictException("این فاکتور قبلاً ثبت یا باطل شده است.");
@@ -304,10 +355,10 @@ export class SalesService {
           if (business.inventoryEnabled && !business.negativeStockAllowed && onHandMilli < qtyMilli) throw new ConflictException(`موجودی «${product.name}» برای این فروش کافی نیست.`);
           if (business.inventoryEnabled) {
             const avgCost = balance?.averageCostRial ?? product.defaultCostRial ?? 0n;
-            const lineCogs = extensionRial(qtyMilli, avgCost);
+            const lineCogs = saleCogsRial(onHandMilli, qtyMilli, balance?.inventoryValueRial ?? null, avgCost);
             cogs += lineCogs;
             const nextQtyMilli = onHandMilli - qtyMilli;
-            const nextValue = (balance?.inventoryValueRial ?? 0n) - lineCogs;
+            const nextValue = remainingInventoryValueRial(onHandMilli, qtyMilli, balance?.inventoryValueRial ?? 0n, lineCogs);
             const nextAvg = nextQtyMilli > 0n ? (nextValue * 1000n + nextQtyMilli / 2n) / nextQtyMilli : 0n;
             await tx.inventoryBalance.upsert({
               where: { businessId_branchId_productId: { businessId, branchId, productId: product.id } },
@@ -341,16 +392,19 @@ export class SalesService {
           const cash = await tx.cashTransaction.create({ data: { businessId, branchId, kind: "RECEIPT", txnDate: invoice.txnDate, amountRial: paymentAmounts[index], toAccountId: accounts[index].id, partyId: invoice.customerId, method: payment.method, reference: invoice.invoiceNo, status: "POSTED", journalEntryId: journal.id, idempotencyKey: `sale:${invoice.id}:${index}`, createdBy: user.id } });
           await tx.paymentAllocation.create({ data: { businessId, cashTransactionId: cash.id, salesInvoiceId: invoice.id, amountRial: paymentAmounts[index] } });
         }
-        const sequence = await tx.documentSequence.upsert({ where: { businessId_branchId_type: { businessId, branchId, type: "SALE" } }, create: { businessId, branchId, type: "SALE", nextValue: 2n }, update: { nextValue: { increment: 1n } }, select: { nextValue: true } });
-        const invoiceNo = `S-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+        const invoiceNo = await this.accounting.nextDocumentNumber(tx, { businessId, type: "SALE", prefix: "S" });
         const posted = await tx.salesInvoice.update({ where: { id: invoice.id }, data: { invoiceNo, status: "POSTED", postedAt: new Date(), postedBy: user.id, version: { increment: 1 } } });
         const result = { id: posted.id, invoiceNo, status: posted.status, totalRial: posted.totalRial.toString(), paidRial: paid.toString(), balanceRial: outstanding.toString(), journalEntryId: journal.id };
         await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
         await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.posted", entityType: "sales_invoice", entityId: posted.id, requestId: request?.requestId ?? "unknown", afterJson: { ...result, customerId: posted.customerId } } });
         return result;
-      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 }));
     } catch (error) {
-      if (this.isUnique(error)) throw new ConflictException("درخواست تکراری بود؛ وضعیت فاکتور را تازه‌سازی کنید.");
+      if (this.isUnique(error) || this.isTransactionConflict(error) || error instanceof ConflictException) {
+        const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
+        if (prior) return prior;
+        if (this.isUnique(error) || this.isTransactionConflict(error)) throw new ConflictException("درخواست هم‌زمان ثبت شد؛ وضعیت فاکتور را تازه‌سازی کنید.");
+      }
       throw error;
     }
   }
@@ -432,9 +486,10 @@ export class SalesService {
         return result;
       }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
     } catch (error) {
-      if (this.isUnique(error)) {
-        const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
+      if (this.isUnique(error) || this.isTransactionConflict(error)) {
+        const prior = await this.accounting.existingIdempotentAfterConflict(user.id, businessId, key, requestHash);
         if (prior) return prior;
+        if (this.isTransactionConflict(error)) throw new ConflictException("درخواست ابطال هم‌زمان پردازش شد؛ وضعیت فاکتور را تازه‌سازی کنید.");
       }
       throw error;
     }
@@ -456,4 +511,14 @@ export class SalesService {
   private scope(user: AuthenticatedUser) { if (!user.businessId || !user.branchId) throw new BadRequestException("یک کسب‌وکار و شعبه را انتخاب کنید."); return { businessId: user.businessId, branchId: user.branchId }; }
   private date(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException("تاریخ سند باید در قالب ISO میلادی باشد."); const date = new Date(`${value}T00:00:00.000Z`); if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new BadRequestException("تاریخ سند معتبر نیست."); return date; }
   private isUnique(error: unknown) { return typeof error === "object" && error !== null && "code" in error && error.code === "P2002"; }
+  private isTransactionConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && error.code === "P2034"; }
+  private async retrySerializationConflicts<T>(operation: () => Promise<T>, maxAttempts = 3): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await operation(); }
+      catch (error) {
+        if (!this.isTransactionConflict(error) || attempt + 1 >= maxAttempts) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1) + Math.floor(Math.random() * 20)));
+      }
+    }
+  }
 }

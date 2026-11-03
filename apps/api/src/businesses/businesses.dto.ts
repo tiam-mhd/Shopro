@@ -1,4 +1,4 @@
-import { IsArray, IsEnum, IsOptional, IsString, Length, Matches } from "class-validator";
+import { ArrayMaxSize, ArrayUnique, IsArray, IsEnum, IsOptional, IsString, Length, Matches } from "class-validator";
 
 export class CreateBusinessDto {
   @IsString() @Length(2, 160)
@@ -37,6 +37,17 @@ export class AddMemberDto {
   @IsEnum(["MANAGER", "ACCOUNTANT", "CASHIER", "VIEWER"])
   role!: "MANAGER" | "ACCOUNTANT" | "CASHIER" | "VIEWER";
 
-  @IsArray() @IsString({ each: true })
+  @IsArray() @ArrayUnique() @ArrayMaxSize(100) @IsString({ each: true })
   branchIds!: string[];
+}
+
+export class UpdateMemberDto {
+  @IsOptional() @IsEnum(["MANAGER", "ACCOUNTANT", "CASHIER", "VIEWER"])
+  role?: "MANAGER" | "ACCOUNTANT" | "CASHIER" | "VIEWER";
+
+  @IsOptional() @IsEnum(["ACTIVE", "SUSPENDED"])
+  status?: "ACTIVE" | "SUSPENDED";
+
+  @IsOptional() @IsArray() @ArrayUnique() @ArrayMaxSize(100) @IsString({ each: true })
+  branchIds?: string[];
 }

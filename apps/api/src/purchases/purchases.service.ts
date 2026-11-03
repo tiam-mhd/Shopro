@@ -4,7 +4,9 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { AccountingService, type JournalLineInput } from "../finance/accounting.service.js";
 import { toAsciiDigits } from "@shopro/contracts";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
+import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { CreatePurchaseDto, PostPurchaseDto } from "./purchases.dto.js";
+import { assertUuid } from "../common/uuid-param.pipe.js";
 
 const money = (value: string | undefined) => { if (!value) return 0n; if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); return BigInt(value); };
 const quantityMilli = (value: string) => { const normalized = toAsciiDigits(value).trim(); if (!/^\d+(?:\.\d{1,3})?$/.test(normalized)) throw new BadRequestException("تعداد حداکثر سه رقم اعشار دارد."); const [whole, fraction = ""] = normalized.split("."); const qty = BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, "0")); if (qty <= 0n) throw new BadRequestException("تعداد باید بزرگ‌تر از صفر باشد."); return qty; };
@@ -16,10 +18,16 @@ const tax = (base: bigint, rate: number) => (base * BigInt(rate) + 5000n) / 1000
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService) {}
 
-  async list(user: AuthenticatedUser) {
+  async list(user: AuthenticatedUser, cursor?: string, requestedLimit?: string) {
     const { businessId, branchId } = this.scope(user);
-    const rows = await this.prisma.purchase.findMany({ where: { businessId, branchId }, include: { supplier: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }], take: 200 });
-    return rows.map((row) => ({ id: row.id, purchaseNo: row.purchaseNo, date: row.txnDate.toISOString().slice(0, 10), supplier: row.supplier?.name ?? null, totalRial: row.totalRial.toString(), status: row.status }));
+    assertUuid(cursor, "نشانگر صفحه برای فهرست خریدها معتبر نیست.");
+    const pageMode = requestedLimit !== undefined || cursor !== undefined;
+    const limit = pageMode ? pageLimit(requestedLimit) : 200;
+    const where = { businessId, branchId };
+    if (cursor && !(await this.prisma.purchase.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست خریدها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
+    const rows = await this.prisma.purchase.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { supplier: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, purchaseNo: row.purchaseNo, date: row.txnDate.toISOString().slice(0, 10), supplier: row.supplier?.name ?? null, totalRial: row.totalRial.toString(), status: row.status }));
+    return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async get(user: AuthenticatedUser, id: string) {
@@ -138,7 +146,8 @@ export class PurchasesService {
     const requestHash = this.accounting.idempotencyHash({ id, payments: dto.payments ?? [] });
     const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
     if (prior) return prior;
-    return this.prisma.$transaction(async (tx) => {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
       const purchase = await tx.purchase.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: true } } } });
       if (!purchase) throw new NotFoundException("پیش‌نویس خرید پیدا نشد.");
       if (purchase.status !== "DRAFT") throw new ConflictException("این خرید قبلاً ثبت نهایی شده است.");
@@ -188,8 +197,7 @@ export class PurchasesService {
       for (let i = 0; i < payments.length; i++) creditLines.push({ ledgerAccountId: accounts[i].ledgerAccountId, creditRial: amounts[i], description: `پرداخت از ${accounts[i].name}` });
       if (outstanding > 0n) creditLines.push({ ledgerAccountId: await this.accounting.account(tx, businessId, "accounts_payable"), creditRial: outstanding, partyId: purchase.supplierId, description: "ماندهٔ خرید" });
 
-      const sequence = await tx.documentSequence.upsert({ where: { businessId_branchId_type: { businessId, branchId, type: "PURCHASE" } }, create: { businessId, branchId, type: "PURCHASE", nextValue: 2n }, update: { nextValue: { increment: 1n } }, select: { nextValue: true } });
-      const purchaseNo = `P-${String(sequence.nextValue - 1n).padStart(6, "0")}`;
+      const purchaseNo = await this.accounting.nextDocumentNumber(tx, { businessId, type: "PURCHASE", prefix: "P" });
       const journal = await this.accounting.createJournal(tx, { businessId, branchId, date: purchase.txnDate, sourceType: "PURCHASE", sourceId: purchase.id, memo: `خرید ${purchaseNo}`, actorId: user.id, lines: [...debitLines, ...creditLines] });
       for (const cashId of cashIds) {
         await tx.cashTransaction.update({ where: { id: cashId }, data: { journalEntryId: journal.id } });
@@ -200,7 +208,15 @@ export class PurchasesService {
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "purchase.posted", entityType: "purchase", entityId: posted.id, requestId: request?.requestId ?? "unknown", afterJson: { ...result, supplierId: posted.supplierId } } });
       return result;
-    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+    } catch (error) {
+      if (this.isPostConflict(error)) {
+        const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
+        if (prior) return prior;
+        throw new ConflictException("درخواست هم‌زمان ثبت شد؛ وضعیت خرید را تازه‌سازی کنید.");
+      }
+      throw error;
+    }
   }
 
   async void(user: AuthenticatedUser, id: string, dto: import("./purchases.dto.js").VoidPurchaseDto, key: string | undefined, request: AppRequest) {
@@ -212,7 +228,8 @@ export class PurchasesService {
     const requestHash = this.accounting.idempotencyHash({ id, reason, action: "void-purchase" });
     const prior = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
     if (prior) return prior;
-    return this.prisma.$transaction(async (tx) => {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
       const purchase = await tx.purchase.findFirst({ where: { id, businessId, branchId }, select: { id: true, purchaseNo: true, txnDate: true, status: true, totalRial: true, supplierId: true } });
       if (!purchase) throw new NotFoundException("خرید پیدا نشد.");
       if (purchase.status !== "POSTED") throw new ConflictException("فقط خرید ثبت‌شده قابل ابطال است.");
@@ -252,10 +269,19 @@ export class PurchasesService {
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "purchase.voided", entityType: "purchase", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { status: purchase.status }, afterJson: { ...result, totalRial: purchase.totalRial.toString(), supplierId: purchase.supplierId } } });
       return result;
-    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+      }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 30000 });
+    } catch (error) {
+      if (this.isPostConflict(error)) {
+        const saved = await this.accounting.existingIdempotentAfterConflict(user.id, businessId, key, requestHash);
+        if (saved) return saved;
+        throw new ConflictException("درخواست ابطال هم‌زمان پردازش شد؛ وضعیت خرید را تازه‌سازی کنید.");
+      }
+      throw error;
+    }
   }
 
   private scope(user: AuthenticatedUser) { if (!user.businessId || !user.branchId) throw new BadRequestException("یک کسب‌وکار و شعبه را انتخاب کنید."); return { businessId: user.businessId, branchId: user.branchId }; }
   private requireRole(user: AuthenticatedUser) { if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException("اجازهٔ ثبت خرید را ندارید."); }
   private date(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BadRequestException("تاریخ سند معتبر نیست."); const date = new Date(`${value}T00:00:00.000Z`); if (date.toISOString().slice(0, 10) !== value) throw new BadRequestException("تاریخ سند معتبر نیست."); return date; }
+  private isPostConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error.code === "P2002" || error.code === "P2034"); }
 }
