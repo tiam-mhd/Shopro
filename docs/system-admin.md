@@ -1,6 +1,6 @@
 # System administrator API
 
-System-administrator accounts are separate from ordinary users and business memberships. Create or reactivate one from a trusted operator shell with `npm run admin:create -- --phone 09123456789 --name "نام مدیر"`. The CLI needs the application database URL; do not expose it in shared logs or terminal recordings.
+System-administrator accounts are separate from ordinary users and business memberships. For the initial production administrator and subscription catalog, use `npm run db:setup:production` with the guarded bootstrap environment described in the [Runflare guide](runflare-deployment.md). This activates a full-access system administrator without creating a business user. In development use `npm run admin:create -- --phone 09123456789 --name "نام مدیر"`; for an additional production administrator use `npm run admin:create:prod -- --phone 09123456789 --name "نام مدیر"`. These CLIs need the application database URL; do not expose it in shared logs or terminal recordings.
 
 ## Sign-in and routes
 

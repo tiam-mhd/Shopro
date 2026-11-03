@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../apps/api/src/generated/prisma/client.js";
 import { UNIT_CATALOG } from "../apps/api/src/products/unit-catalog.js";
-import { seedSubscriptionCatalog } from "./subscription-catalog.seed.js";
+import { seedSubscriptionCatalog } from "../apps/api/src/subscriptions/subscription-catalog.seed.js";
 
 if (process.env.NODE_ENV !== "development") {
   throw new Error("Seed فقط در NODE_ENV=development اجرا می‌شود.");
@@ -86,7 +86,7 @@ async function main() {
       }
     }
   }, { isolationLevel: "Serializable" });
-  const subscriptionCatalog = await seedSubscriptionCatalog(prisma, true);
+  const subscriptionCatalog = await seedSubscriptionCatalog(prisma, { allowDevelopmentAdmin: true });
   console.log(`فهرست اشتراک ${subscriptionCatalog.planCode} و چهار نسخهٔ قیمت به‌شکل idempotent آماده شد.`);
   console.log("نمونهٔ توسعهٔ Shopro آماده شد.");
 }

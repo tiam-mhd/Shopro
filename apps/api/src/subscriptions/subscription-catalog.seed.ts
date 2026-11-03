@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../apps/api/src/generated/prisma/client.js";
+import type { PrismaClient } from "../generated/prisma/client.js";
 
 const EFFECTIVE_FROM = new Date("2026-11-01T00:00:00.000Z");
 const PRICES = [
@@ -8,9 +8,13 @@ const PRICES = [
   { durationMonths: 12, priceRial: 42_900_000n },
 ] as const;
 
-export async function seedSubscriptionCatalog(prisma: PrismaClient, allowDevelopmentAdmin = false) {
-  let admin = await prisma.systemAdmin.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
-  if (!admin && allowDevelopmentAdmin) {
+type SeedOptions = { allowDevelopmentAdmin?: boolean; adminId?: string };
+
+export async function seedSubscriptionCatalog(prisma: PrismaClient, options: SeedOptions = {}) {
+  let admin = options.adminId
+    ? await prisma.systemAdmin.findFirst({ where: { id: options.adminId, isActive: true }, select: { id: true } })
+    : await prisma.systemAdmin.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
+  if (!admin && options.allowDevelopmentAdmin) {
     admin = await prisma.systemAdmin.upsert({
       where: { phone: process.env.SHOPRO_SEED_ADMIN_PHONE ?? "09000000000" },
       update: {},

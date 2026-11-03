@@ -9,6 +9,13 @@ import type { CreateSubscriptionPlanDto, CreateSubscriptionPriceDto, Subscriptio
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DURATIONS = new Set([1, 3, 6, 12]);
 
+function tehranDateKey(date: Date) {
+  const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 @Injectable()
 export class SubscriptionAdminService {
   constructor(private readonly prisma: PrismaService) {}
@@ -71,13 +78,28 @@ export class SubscriptionAdminService {
   async addPrice(admin: AuthenticatedSystemAdmin, request: AppRequest, planId: string, dto: CreateSubscriptionPriceDto) {
     const amount = BigInt(dto.priceRial);
     if (!DURATIONS.has(dto.durationMonths) || amount < 0n) throw new BadRequestException("مدت یا مبلغ قیمت معتبر نیست.");
-    const effectiveFrom = new Date(dto.effectiveFrom);
-    if (effectiveFrom <= new Date()) throw new BadRequestException("تاریخ مؤثر نسخهٔ قیمت باید در آینده باشد.");
+    const requestedFrom = new Date(dto.effectiveFrom);
+    if (Number.isNaN(requestedFrom.getTime())) throw new BadRequestException("تاریخ مؤثر نسخهٔ قیمت معتبر نیست.");
+    const now = new Date();
+    const requestedDate = tehranDateKey(requestedFrom);
+    const today = tehranDateKey(now);
+    if (requestedDate < today) throw new BadRequestException("تاریخ شروع قیمت نمی‌تواند در گذشته باشد.");
+    // A Jalali date selected for today means activate now; future dates start at Tehran midnight.
+    const effectiveFrom = requestedDate === today ? now : requestedFrom;
+    const immediate = requestedDate === today;
     const price = await this.prisma.$transaction(async (tx) => {
       const plan = await tx.subscriptionPlan.findUnique({ where: { id: planId }, select: { id: true, code: true } });
       if (!plan) throw new NotFoundException("پلن اشتراک پیدا نشد.");
       const latest = await tx.subscriptionPriceVersion.findFirst({ where: { planId, durationMonths: dto.durationMonths }, orderBy: { effectiveFrom: "desc" } });
-      if (latest && effectiveFrom <= latest.effectiveFrom) throw new ConflictException("نسخهٔ قیمت جدید باید تاریخ مؤثر دیرتری داشته باشد؛ نسخهٔ قبلی و سفارش‌های آن تغییر نمی‌کنند.");
+      if (immediate) {
+        const explicitOverlap = await tx.subscriptionPriceVersion.findFirst({
+          where: { planId, durationMonths: dto.durationMonths, effectiveFrom: { lte: now }, effectiveTo: { gt: now } },
+          select: { id: true },
+        });
+        if (explicitOverlap) throw new ConflictException("نسخهٔ قبلی بازهٔ پایان صریح دارد؛ برای جلوگیری از هم‌پوشانی، تاریخ آینده انتخاب کنید.");
+      } else if (latest && effectiveFrom <= latest.effectiveFrom) {
+        throw new ConflictException("نسخهٔ قیمت جدید باید بعد از آخرین نسخه شروع شود؛ نسخهٔ قبلی و سفارش‌های آن تغییر نمی‌کنند.");
+      }
       const created = await tx.subscriptionPriceVersion.create({ data: {
         planId, durationMonths: dto.durationMonths, priceRial: amount, currency: "IRR", effectiveFrom, createdById: admin.id,
       } });

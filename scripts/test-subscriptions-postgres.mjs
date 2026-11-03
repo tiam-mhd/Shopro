@@ -77,6 +77,21 @@ async function main() {
   const adminSubscriptions = new SubscriptionAdminService(prisma);
   const guard = new SubscriptionEntitlementGuard(reflector, prisma);
 
+  const tehranParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const selectedToday = new Date(`${tehranParts.year}-${tehranParts.month}-${tehranParts.day}T00:00:00+03:30`);
+  await prisma.subscriptionPriceVersion.create({ data: {
+    planId: ids.plan, durationMonths: 6, priceRial: 24_900_000n, currency: "IRR",
+    effectiveFrom: new Date(Date.now() + 60_000), createdById: ids.admin,
+  } });
+  const activatedPrice = await adminSubscriptions.addPrice({ id: ids.admin }, requestContext(), ids.plan, {
+    durationMonths: 6, priceRial: "24900000", effectiveFrom: selectedToday.toISOString(),
+  });
+  assert.ok(new Date(activatedPrice.effectiveFrom) <= new Date(), "a price set to today's Jalali date activates immediately");
+  const visiblePlan = (await subscriptions.listPlans()).find(({ code }) => code === `TEST_${suffix.slice(0, 8).toUpperCase()}`);
+  assert.equal(visiblePlan?.durations.find(({ durationMonths }) => durationMonths === 6)?.priceRial, "24900000", "the public app plans endpoint exposes today's price even when a later version is already scheduled");
+  const visiblePriceOrder = await subscriptions.createOrder(user1, { planCode: `TEST_${suffix.slice(0, 8).toUpperCase()}`, durationMonths: 6 }, `same-day-${randomUUID()}`);
+  assert.equal(visiblePriceOrder.amountRial, "24900000", "checkout uses the same immediately active price shown to the app");
+
   await denied(guard, user1, "SUBSCRIPTION_REQUIRED");
   assert.equal(await guard.canActivate(guardContext(user1, "/api/v1/subscriptions/orders", "POST")), true);
   assert.equal(await guard.canActivate(guardContext(user1, "/api/v1/reports/dashboard", "GET")), true);

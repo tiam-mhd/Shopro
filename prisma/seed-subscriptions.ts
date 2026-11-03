@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../apps/api/src/generated/prisma/client.js";
-import { seedSubscriptionCatalog } from "./subscription-catalog.seed.js";
+import { seedSubscriptionCatalog } from "../apps/api/src/subscriptions/subscription-catalog.seed.js";
 
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.SHOPRO_SUBSCRIPTION_SEED_CONFIRM !== "SEED_SUBSCRIPTION_CATALOG") {
@@ -12,7 +12,7 @@ async function main() {
   if (!connectionString) throw new Error("DATABASE_URL تنظیم نشده است.");
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
   try {
-    const result = await seedSubscriptionCatalog(prisma, process.env.NODE_ENV === "development");
+    const result = await seedSubscriptionCatalog(prisma, { allowDevelopmentAdmin: process.env.NODE_ENV === "development" });
     console.log(JSON.stringify({ event: "subscription_catalog.seeded", planCode: result.planCode, prices: result.prices }));
   } finally {
     await prisma.$disconnect();

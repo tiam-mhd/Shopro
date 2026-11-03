@@ -46,7 +46,9 @@
 npm run admin:create -- --phone 09123456789 --name "نام مدیر"
 ```
 
-یا `ADMIN_BOOTSTRAP_PHONE` و `ADMIN_BOOTSTRAP_NAME` را در محیط اجرای فرمان بگذارید. ورود مدیر سامانه از مسیر جداگانهٔ `/api/v1/system-admin/auth/otp/request` و `/api/v1/system-admin/auth/otp/verify` انجام می‌شود.
+این فرمان برای توسعه است. در production، برای ساخت مدیر bootstrap و کاتالوگ اشتراک از `npm run db:setup:production` استفاده کنید؛ متغیرهای تأیید و مدیر در [راهنمای Runflare](docs/runflare-deployment.md) آمده‌اند. این مدیر مستقل است، فعال می‌شود و دسترسی کامل پنل سامانه را دارد. برای ساخت مدیران اضافی در production از `npm run admin:create:prod -- --phone ... --name ...` استفاده کنید.
+
+ورود مدیر سامانه از مسیر جداگانهٔ `/api/v1/system-admin/auth/otp/request` و `/api/v1/system-admin/auth/otp/verify` انجام می‌شود.
 
 پس از ورود، API فقط‌خواندنی مرور سامانه، فهرست صفحه‌بندی‌شدهٔ کسب‌وکارها و سابقهٔ audit در [راهنمای مدیر سامانه](docs/system-admin.md) در دسترس است. نشست و CSRF مدیر از نشست کاربران عادی جدا نگه‌داری می‌شود.
 
