@@ -119,6 +119,19 @@ enum SubscriptionOrderStatus {
   REFUNDED
 }
 
+enum ManualPaymentReviewStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum TelegramDeliveryStatus {
+  NOT_CONFIGURED
+  PENDING
+  SENT
+  FAILED
+}
+
 enum SubscriptionPaymentStatus {
   INITIATED
   SUCCEEDED
@@ -146,6 +159,7 @@ model User {
   auditEvents        AuditEvent[]        @relation("AuditActor")
   idempotencyRecords IdempotencyRecord[]
   subscriptionOrders SubscriptionOrder[]
+  manualPaymentSubmissions SubscriptionManualPaymentSubmission[]
 
   @@map("users")
 }
@@ -161,6 +175,8 @@ model SystemAdmin {
   subscriptionPriceVersions  SubscriptionPriceVersion[]
   subscriptionPeriods        SubscriptionPeriod[]
   subscriptionRolloutUpdates SubscriptionRolloutSetting[] @relation("SubscriptionRolloutUpdater")
+  manualPaymentSettingsUpdates SubscriptionManualPaymentSettings[] @relation("ManualPaymentSettingsUpdater")
+  reviewedManualPayments      SubscriptionManualPaymentSubmission[] @relation("ManualPaymentReviewer")
 
   @@map("system_admins")
 }
@@ -984,6 +1000,7 @@ model SubscriptionOrder {
   currency             String                       @default("IRR") @db.Char(3)
   status               SubscriptionOrderStatus      @default(PENDING)
   providerReference    String?                      @unique @map("provider_reference") @db.VarChar(160)
+  manualPaymentSettingsSnapshot Json?                 @map("manual_payment_settings_snapshot")
   createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
   paidAt               DateTime?                    @map("paid_at") @db.Timestamptz(6)
@@ -995,12 +1012,59 @@ model SubscriptionOrder {
   createdBy            User                         @relation(fields: [createdById], references: [id], onDelete: Restrict)
   attempts             SubscriptionPaymentAttempt[]
   periods              SubscriptionPeriod[]
+  manualPaymentSubmissions SubscriptionManualPaymentSubmission[]
 
   @@unique([businessId, branchId, idempotencyKey])
   @@unique([id, businessId, branchId])
   @@index([businessId, branchId, createdAt])
   @@index([status, createdAt])
   @@map("subscription_orders")
+}
+
+model SubscriptionManualPaymentSettings {
+  id                    String       @id @default("global") @db.VarChar(16)
+  enabled               Boolean      @default(true)
+  cardNumber            String       @default("6219861995926549") @map("card_number") @db.VarChar(32)
+  cardHolder            String       @default("محمدصالح محمدی") @map("card_holder") @db.VarChar(120)
+  bankName              String?      @map("bank_name") @db.VarChar(80)
+  instructions          String?      @db.VarChar(1000)
+  telegramContactHandle String       @default("@tiaammhd") @map("telegram_contact_handle") @db.VarChar(64)
+  telegramTargetChatId  String?      @map("telegram_target_chat_id") @db.VarChar(80)
+  updatedById           String?      @map("updated_by_id") @db.Uuid
+  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy             SystemAdmin? @relation("ManualPaymentSettingsUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("subscription_manual_payment_settings")
+}
+
+model SubscriptionManualPaymentSubmission {
+  id                String                    @id @default(uuid()) @db.Uuid
+  orderId           String                    @map("order_id") @db.Uuid
+  paymentAttemptId  String                    @unique @map("payment_attempt_id") @db.Uuid
+  submittedById     String                    @map("submitted_by_id") @db.Uuid
+  reviewStatus      ManualPaymentReviewStatus @default(PENDING_REVIEW) @map("review_status")
+  trackingCode      String?                   @map("tracking_code") @db.VarChar(120)
+  storageKey        String                    @unique @map("storage_key") @db.VarChar(500)
+  fileName          String                    @map("file_name") @db.VarChar(255)
+  mimeType          String                    @map("mime_type") @db.VarChar(120)
+  bytes             BigInt
+  checksum          String                    @db.Char(64)
+  telegramStatus    TelegramDeliveryStatus    @default(NOT_CONFIGURED) @map("telegram_status")
+  telegramMessageId String?                   @map("telegram_message_id") @db.VarChar(40)
+  telegramErrorCode String?                   @map("telegram_error_code") @db.VarChar(80)
+  reviewedByAdminId String?                   @map("reviewed_by_admin_id") @db.Uuid
+  rejectionReason   String?                   @map("rejection_reason") @db.VarChar(500)
+  submittedAt       DateTime                  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  reviewedAt        DateTime?                 @map("reviewed_at") @db.Timestamptz(6)
+  order             SubscriptionOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentAttempt    SubscriptionPaymentAttempt @relation(fields: [paymentAttemptId, orderId], references: [id, orderId], onDelete: Restrict)
+  submittedBy       User                      @relation(fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedByAdmin   SystemAdmin?              @relation("ManualPaymentReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([reviewStatus, submittedAt])
+  @@index([orderId, submittedAt])
+  @@unique([paymentAttemptId, orderId])
+  @@map("subscription_manual_payment_submissions")
 }
 
 model SubscriptionPeriod {
@@ -1046,7 +1110,9 @@ model SubscriptionPaymentAttempt {
   createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
   completedAt        DateTime?                 @map("completed_at") @db.Timestamptz(6)
   order              SubscriptionOrder         @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  manualSubmission   SubscriptionManualPaymentSubmission?
 
+  @@unique([id, orderId])
   @@index([businessId, branchId, createdAt])
   @@index([orderId, createdAt])
   @@map("subscription_payment_attempts")

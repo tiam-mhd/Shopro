@@ -91,7 +91,7 @@ export class SubscriptionsService {
       ...(requestedCursor ? { cursor: { id: requestedCursor }, skip: 1 } : {}),
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: limit + 1,
-      include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } },
+      include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } },
     });
     const page = cursorPage(rows, limit, (row) => row.id);
     return { ...page, items: page.items.map((row) => this.orderDto(row)) };
@@ -101,7 +101,7 @@ export class SubscriptionsService {
     const scope = requireScope(user);
     const row = await this.prisma.subscriptionOrder.findFirst({
       where: { id: orderId, ...scope },
-      include: { attempts: { orderBy: { createdAt: "desc" }, take: 5 } },
+      include: { attempts: { orderBy: { createdAt: "desc" }, take: 5 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } },
     });
     if (!row) throw new NotFoundException("سفارش اشتراک پیدا نشد.");
     return this.orderDto(row);
@@ -120,11 +120,13 @@ export class SubscriptionsService {
       for (let retry = 0; retry < 5; retry++) {
         try {
           return await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } } });
+      const existing = await tx.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } } });
       if (existing) {
         if (existing.planCodeSnapshot !== dto.planCode || existing.durationMonths !== dto.durationMonths) throw new ConflictException("این کلید سفارش قبلاً برای پلن دیگری استفاده شده است.");
         return existing;
       }
+      const manualSettings = fake ? null : await tx.subscriptionManualPaymentSettings.findUnique({ where: { id: "global" } });
+      const manualEnabled = Boolean(manualSettings?.enabled);
       const branch = await tx.branch.findFirst({ where: { id: scope.branchId, businessId: scope.businessId, isActive: true }, select: { id: true } });
       if (!branch) throw new NotFoundException("شعبهٔ فعال برای این سفارش پیدا نشد.");
       const plan = await tx.subscriptionPlan.findFirst({ where: { code: dto.planCode, isActive: true } });
@@ -148,26 +150,33 @@ export class SubscriptionsService {
           durationMonths: dto.durationMonths,
           amountRial: price.priceRial,
           currency: price.currency,
-          status: fake ? "PENDING" : "FAILED",
-          attempts: { create: {
+          status: fake || manualEnabled ? "PENDING" : "FAILED",
+          ...(manualEnabled && manualSettings ? { manualPaymentSettingsSnapshot: {
+            cardNumber: manualSettings.cardNumber,
+            cardHolder: manualSettings.cardHolder,
+            bankName: manualSettings.bankName,
+            instructions: manualSettings.instructions,
+            telegramContactHandle: manualSettings.telegramContactHandle,
+          } } : {}),
+          ...(!manualEnabled || fake ? { attempts: { create: {
             provider: gateway.provider ?? "unconfigured",
             amountRial: price.priceRial,
             currency: price.currency,
             status: fake ? "INITIATED" : "UNAVAILABLE",
             safeErrorCode: fake ? null : "PAYMENT_PROVIDER_NOT_CONFIGURED",
             completedAt: fake ? null : now,
-          } },
+          } } } : {}),
         },
-        include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } },
+        include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } },
       });
       if (fake) {
         const checkout = gateway.createCheckout({ orderId: created.id, amountRial: price.priceRial, currency: price.currency });
-        created = await tx.subscriptionOrder.update({ where: { id: created.id }, data: { providerReference: checkout.providerReference }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } } });
+        created = await tx.subscriptionOrder.update({ where: { id: created.id }, data: { providerReference: checkout.providerReference }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } } });
       }
       return created;
           }, { isolationLevel: "ReadCommitted" }).catch(async (error: unknown) => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        const duplicate = await this.prisma.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } } });
+        const duplicate = await this.prisma.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } } });
         if (duplicate && duplicate.planCodeSnapshot === dto.planCode && duplicate.durationMonths === dto.durationMonths) return duplicate;
         if (duplicate) throw new ConflictException("این کلید سفارش قبلاً برای پلن دیگری استفاده شده است.");
       }
@@ -179,7 +188,7 @@ export class SubscriptionsService {
             continue;
           }
           if (isSerializationConflict(error) || isUniqueConflict(error)) {
-            const duplicate = await this.prisma.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 } } });
+            const duplicate = await this.prisma.subscriptionOrder.findUnique({ where: { businessId_branchId_idempotencyKey: { ...scope, idempotencyKey } }, include: { attempts: { orderBy: { createdAt: "desc" }, take: 3 }, manualPaymentSubmissions: { orderBy: { submittedAt: "desc" }, take: 1 } } });
             if (duplicate && duplicate.planCodeSnapshot === dto.planCode && duplicate.durationMonths === dto.durationMonths) return duplicate;
             if (duplicate) throw new ConflictException("این کلید سفارش قبلاً برای پلن دیگری استفاده شده است.");
             throw new ConflictException("ساخت سفارش هم‌زمان شد؛ همان درخواست را با همین کلید دوباره ارسال کنید.");
@@ -189,7 +198,11 @@ export class SubscriptionsService {
       }
       throw new ConflictException("\u0633\u0627\u062e\u062a \u0633\u0641\u0627\u0631\u0634 \u0647\u0645\u200c\u0632\u0645\u0627\u0646 \u0634\u062f\u061b \u0647\u0645\u0627\u0646 \u062f\u0631\u062e\u0648\u0627\u0633\u062a \u0631\u0627 \u0628\u0627 \u0647\u0645\u06cc\u0646 \u06a9\u0644\u06cc\u062f \u062f\u0648\u0628\u0627\u0631\u0647 \u0627\u0631\u0633\u0627\u0644 \u06a9\u0646\u06cc\u062f.");
     })();
-    return { ...this.orderDto(order), paymentMode: fake ? "fake" : "unavailable", message: fake ? "درگاه آزمایشی فعال است؛ پرداخت آزمایشی فقط در محیط توسعه انجام می‌شود." : "پرداخت واقعی هنوز به درگاه متصل نشده است؛ تا انتخاب و پیکربندی درگاه، سفارش قابل پرداخت نیست." };
+    const paymentMode = fake ? "fake" : order.manualPaymentSettingsSnapshot ? "card_transfer" : "unavailable";
+    const message = paymentMode === "fake" ? "درگاه آزمایشی فعال است؛ پرداخت آزمایشی فقط در محیط توسعه انجام می‌شود."
+      : paymentMode === "card_transfer" ? "مبلغ را کارت‌به‌کارت کنید و تصویر رسید را برای بررسی مدیر ارسال کنید. اشتراک پس از تأیید رسید فعال می‌شود."
+      : "روش پرداخت فعالی تنظیم نشده است؛ سفارش قابل پرداخت نیست.";
+    return { ...this.orderDto(order), paymentMode, message };
   }
 
   async confirmFakeOrder(user: AuthenticatedUser, orderId: string) {
@@ -210,7 +223,10 @@ export class SubscriptionsService {
   }
 
   /** Call only after a real provider adapter has verified its server signature and settlement fields. */
-  async settleVerifiedPayment(input: { orderId: string; provider: string; providerExternalId: string; amountRial: bigint; currency: string; confirmedAt: Date }) {
+  async settleVerifiedPayment(input: {
+    orderId: string; provider: string; providerExternalId: string; amountRial: bigint; currency: string; confirmedAt: Date;
+    manualReview?: { submissionId: string; adminId: string; requestId: string };
+  }) {
     if (!input.providerExternalId || input.providerExternalId.length > 160 || !Number.isFinite(input.confirmedAt.getTime())) throw new BadRequestException("رسید پرداخت معتبر نیست.");
     for (let retry = 0; retry < 3; retry++) {
       try {
@@ -222,6 +238,12 @@ export class SubscriptionsService {
           if (order.amountRial !== input.amountRial || order.currency !== input.currency) throw new ConflictException("مبلغ یا واحد سفارش با رسید پرداخت یکسان نیست.");
           const initialized = await tx.subscriptionPaymentAttempt.findFirst({ where: { orderId: order.id, provider: input.provider, status: "INITIATED" }, orderBy: { createdAt: "desc" } });
           if (!initialized) throw new ConflictException("تلاش پرداخت معتبری برای این سفارش وجود ندارد.");
+          if (input.manualReview) {
+            const submission = await tx.subscriptionManualPaymentSubmission.findUnique({ where: { id: input.manualReview.submissionId }, select: { id: true, orderId: true, paymentAttemptId: true, reviewStatus: true } });
+            if (input.provider !== "card_to_card" || !submission || submission.orderId !== order.id || submission.paymentAttemptId !== initialized.id || submission.reviewStatus !== "PENDING_REVIEW") {
+              throw new ConflictException("رسید برای این سفارش دیگر در انتظار بررسی نیست.");
+            }
+          }
           await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "branches" WHERE "id" = ${order.branchId}::uuid AND "business_id" = ${order.businessId}::uuid FOR UPDATE`;
           const previous = await tx.subscriptionPeriod.findFirst({ where: { branchSubscriptionId: order.branchSubscriptionId, revokedAt: null }, orderBy: [{ endsAt: "desc" }, { id: "desc" }] });
           const startsAt = previous && previous.endsAt.getTime() > input.confirmedAt.getTime() ? previous.endsAt : input.confirmedAt;
@@ -230,7 +252,7 @@ export class SubscriptionsService {
           if (duplicateReference && duplicateReference.orderId !== order.id) throw new ConflictException("شناسهٔ پرداخت قبلاً برای سفارش دیگری ثبت شده است.");
           await tx.subscriptionPaymentAttempt.update({ where: { id: initialized.id }, data: { providerExternalId: input.providerExternalId, status: "SUCCEEDED", completedAt: input.confirmedAt, safeErrorCode: null } });
           await tx.subscriptionOrder.update({ where: { id: order.id }, data: { status: "PAID", paidAt: input.confirmedAt } });
-          return tx.subscriptionPeriod.create({ data: {
+          const period = await tx.subscriptionPeriod.create({ data: {
             businessId: order.businessId,
             branchId: order.branchId,
             branchSubscriptionId: order.branchSubscriptionId,
@@ -243,6 +265,21 @@ export class SubscriptionsService {
             startsAt,
             endsAt,
           } });
+          if (input.manualReview) {
+            await tx.subscriptionManualPaymentSubmission.update({
+              where: { id: input.manualReview.submissionId },
+              data: { reviewStatus: "APPROVED", reviewedByAdminId: input.manualReview.adminId, reviewedAt: input.confirmedAt, rejectionReason: null },
+            });
+            await tx.systemAdminAuditEvent.create({ data: {
+              adminId: input.manualReview.adminId,
+              action: "subscription.manual_payment.approved",
+              entityType: "subscription_manual_payment_submission",
+              entityId: input.manualReview.submissionId,
+              requestId: input.manualReview.requestId,
+              metadata: { orderId: order.id, businessId: order.businessId, branchId: order.branchId, amountRial: order.amountRial.toString(), durationMonths: order.durationMonths },
+            } });
+          }
+          return period;
         }, { isolationLevel: "Serializable" });
       } catch (error) {
         if (isSerializationConflict(error) && retry < 2) continue;
@@ -305,12 +342,34 @@ export class SubscriptionsService {
     id: string; businessId: string; branchId: string; planCodeSnapshot: string; planNameFaSnapshot: string; durationMonths: number;
     amountRial: bigint; currency: string; status: string; providerReference: string | null; createdAt: Date; paidAt: Date | null;
     attempts?: Array<{ id: string; provider: string; providerExternalId: string | null; amountRial: bigint; currency: string; status: string; safeErrorCode: string | null; createdAt: Date; completedAt: Date | null }>;
+    manualPaymentSettingsSnapshot?: Prisma.JsonValue | null;
+    manualPaymentSubmissions?: Array<{ reviewStatus: string; trackingCode: string | null; fileName: string; rejectionReason: string | null; telegramStatus: string; submittedAt: Date }>;
   }) {
+    const paymentSnapshot = order.manualPaymentSettingsSnapshot && typeof order.manualPaymentSettingsSnapshot === "object" && !Array.isArray(order.manualPaymentSettingsSnapshot)
+      ? order.manualPaymentSettingsSnapshot as Prisma.JsonObject
+      : null;
+    const latestSubmission = order.manualPaymentSubmissions?.[0];
     return {
       id: order.id, businessId: order.businessId, branchId: order.branchId,
       plan: { code: order.planCodeSnapshot, nameFa: order.planNameFaSnapshot, durationMonths: order.durationMonths },
       amountRial: order.amountRial.toString(), currency: order.currency, status: order.status,
       receiptReference: order.providerReference, createdAt: order.createdAt.toISOString(), paidAt: order.paidAt?.toISOString() ?? null,
+      paymentInstructions: paymentSnapshot ? {
+        method: "CARD_TO_CARD",
+        cardNumber: typeof paymentSnapshot.cardNumber === "string" ? paymentSnapshot.cardNumber : "",
+        cardHolder: typeof paymentSnapshot.cardHolder === "string" ? paymentSnapshot.cardHolder : "",
+        bankName: typeof paymentSnapshot.bankName === "string" ? paymentSnapshot.bankName : null,
+        instructions: typeof paymentSnapshot.instructions === "string" ? paymentSnapshot.instructions : null,
+        telegramContactHandle: typeof paymentSnapshot.telegramContactHandle === "string" ? paymentSnapshot.telegramContactHandle : null,
+      } : null,
+      manualPayment: latestSubmission ? {
+        status: latestSubmission.reviewStatus,
+        trackingCode: latestSubmission.trackingCode,
+        receiptFileName: latestSubmission.fileName,
+        rejectionReason: latestSubmission.rejectionReason,
+        telegramStatus: latestSubmission.telegramStatus,
+        submittedAt: latestSubmission.submittedAt.toISOString(),
+      } : null,
       attempts: (order.attempts ?? []).map((attempt) => ({
         id: attempt.id, provider: attempt.provider, providerExternalId: attempt.providerExternalId,
         amountRial: attempt.amountRial.toString(), currency: attempt.currency, status: attempt.status,

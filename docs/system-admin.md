@@ -2,6 +2,8 @@
 
 System-administrator accounts are separate from ordinary users and business memberships. For the initial production administrator and subscription catalog, use `npm run db:setup:production` with the guarded bootstrap environment described in the [Runflare guide](runflare-deployment.md). This activates a full-access system administrator without creating a business user. In development use `npm run admin:create -- --phone 09123456789 --name "نام مدیر"`; for an additional production administrator use `npm run admin:create:prod -- --phone 09123456789 --name "نام مدیر"`. These CLIs need the application database URL; do not expose it in shared logs or terminal recordings.
 
+The subscription administration panel includes editable card-transfer details, Telegram destination settings, receipt delivery status, private receipt downloads, and approval/rejection actions. A confirmed manual payment atomically updates the order, payment attempt, subscription period, and admin audit record. Telegram Bot API authentication stays in the `TELEGRAM_BOT_TOKEN` Runflare secret and is never returned by the settings endpoint.
+
 ## Sign-in and routes
 
 All paths below are prefixed with `/api/v1`.

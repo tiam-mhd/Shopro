@@ -62,9 +62,12 @@ APIهای کاربر:
 - `GET /api/v1/subscriptions/current`
 - `GET /api/v1/subscriptions/orders` و `GET /api/v1/subscriptions/orders/:id`
 - `POST /api/v1/subscriptions/orders` با `Idempotency-Key`
+- `POST /api/v1/subscriptions/orders/:id/receipt` برای رسید خصوصی کارت‌به‌کارت
 - `POST /api/v1/subscriptions/orders/:id/dev-confirm` فقط در توسعه و تست
 
-APIهای مدیر سامانه در `/api/v1/system-admin/subscriptions` هستند: `plans`, `branches`, `orders`, `rollout`, `economics` و عملیات ثبت‌شدهٔ grant/extend/suspend/unsuspend/revoke/refund.
+APIهای مدیر سامانه در `/api/v1/system-admin/subscriptions` هستند: `plans`, `branches`, `orders`, `manual-payments`, `payment-settings`, `rollout`, `economics` و عملیات ثبت‌شدهٔ grant/extend/suspend/unsuspend/revoke/refund. پرداخت دستی تا تأیید رسید توسط مدیر معلق می‌ماند؛ تأیید، ثبت پرداخت، ایجاد دورهٔ اشتراک و audit را در یک تراکنش انجام می‌دهد. رد رسید با دلیل ثبت می‌شود و مالک می‌تواند رسید اصلاح‌شده بفرستد.
+
+برای اعلان تلگرام، `TELEGRAM_BOT_TOKEN` را در Runflare به‌صورت Secret تنظیم و در پنل مدیر، مقصد را ثبت کنید. آیدی `@tiaammhd` به‌عنوان آیدی تماس نگه‌داری می‌شود؛ برای فرستادن پیام مستقیم به کاربر باید او ابتدا ربات را Start کند و chat ID عددی‌اش تنظیم شود. تنظیمات کارت و راهنما برای سفارش جدید snapshot می‌شوند و سفارش‌های قبلی اطلاعات دریافتی زمان ایجاد را نگه می‌دارند.
 
 ## پرداخت، بازپرداخت و اقتصاد
 

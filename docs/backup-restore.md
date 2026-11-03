@@ -1,6 +1,6 @@
 # پشتیبان‌گیری و بازیابی شاپرو
 
-این ابزارها dump کامل PostgreSQL و فایل‌های ثبت‌شده در metadata پیوست را رمزگذاری و بازیابی می‌کنند. فرمان‌ها روی runner جداگانه اجرا می‌شوند؛ API عمومی یا مسیر مدیریتی برای دریافت backup وجود ندارد.
+این ابزارها dump کامل PostgreSQL و فایل‌های ثبت‌شده در metadata پیوست هزینه و رسید پرداخت اشتراک را رمزگذاری و بازیابی می‌کنند. فرمان‌ها روی runner جداگانه اجرا می‌شوند؛ API عمومی یا مسیر مدیریتی برای دریافت backup وجود ندارد.
 
 ## پیش‌نیاز و مرز امنیت
 
@@ -31,7 +31,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/backup/test-roun
 
 ## گرفتن backup
 
-1. الگوی `infra/backup.env.example` را فقط در محیط runner تنظیم کنید. `DATABASE_URL` باید اتصال همان دیتابیس هدف، `BACKUP_DIR` مسیر مطلق خارج از checkout و `BACKUP_RETENTION_DAYS` سیاست مصوب باشد. اگر جدول پیوست‌ها رکورد دارد، `ATTACHMENT_STORAGE_DIR` الزامی است.
+1. الگوی `infra/backup.env.example` را فقط در محیط runner تنظیم کنید. `DATABASE_URL` باید اتصال همان دیتابیس هدف، `BACKUP_DIR` مسیر مطلق خارج از checkout و `BACKUP_RETENTION_DAYS` سیاست مصوب باشد. اگر جدول پیوست هزینه یا رسید پرداخت رکورد دارد، `ATTACHMENT_STORAGE_DIR` الزامی است.
 2. پوشهٔ backup را روی storage خصوصی و جدا از دیتابیس/volume پیوست‌ها بسازید. خروجی شامل `database.dump.enc`، در صورت وجود رسید `attachments.tar.gz.enc`، و manifest فاقد محتوای مالی است.
 3. اجرا:
 
@@ -41,7 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/backup/test-roun
 
    موفقیت با JSON رویداد `backup.completed` و مسیر backup گزارش می‌شود. هر خطای dump، رمزنگاری، قفل، فایل مفقود، checksum نامعتبر یا retention کد خروجی غیرصفر می‌دهد. فایل‌های موقتِ ناقص به‌عنوان backup نهایی منتشر نمی‌شوند.
 
-4. ابزار قبل از dump تمام پیوست‌های ثبت‌شده در دیتابیس را از نظر اندازه و SHA-256 با فایل خصوصی تطبیق می‌دهد. فقط storage keyهای opaque موجود در جدول metadata در آرشیو می‌روند.
+4. ابزار قبل از dump تمام پیوست‌ها و رسیدهای پرداخت ثبت‌شده در دیتابیس را از نظر اندازه و SHA-256 با فایل خصوصی تطبیق می‌دهد. فقط storage keyهای opaque موجود در جدول‌های metadata در آرشیو می‌روند.
 
 ## بازیابی روی محیط دورریختنی
 

@@ -1,20 +1,27 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post, Query, Req, UploadedFile, UseInterceptors } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { Public } from "../common/public.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import { CreateSubscriptionOrderDto } from "./subscriptions.dto.js";
+import { CreateManualPaymentSubmissionDto } from "./subscriptions.dto.js";
+import { MAX_ATTACHMENT_BYTES } from "../expenses/attachment-files.js";
+import { ManualPaymentsService } from "./manual-payments.service.js";
 import { SubscriptionsService } from "./subscriptions.service.js";
+
+type UploadedReceiptFile = { originalname: string; buffer: Buffer; size: number };
 
 @Controller("subscriptions")
 export class SubscriptionsController {
-  constructor(private readonly subscriptions: SubscriptionsService) {}
+  constructor(private readonly subscriptions: SubscriptionsService, private readonly manualPayments: ManualPaymentsService) {}
 
   @Get("plans") plans() { return this.subscriptions.listPlans(); }
   @Get("current") current(@CurrentUser() user: AuthenticatedUser) { return this.subscriptions.current(user); }
   @Get("orders") orders(@CurrentUser() user: AuthenticatedUser, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.subscriptions.orders(user, cursor, limit); }
   @Get("orders/:id") order(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string) { return this.subscriptions.order(user, id); }
   @Post("orders") createOrder(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateSubscriptionOrderDto, @Headers("idempotency-key") key?: string) { return this.subscriptions.createOrder(user, dto, key); }
+  @Post("orders/:id/receipt") @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1, fields: 1, parts: 2 }, preservePath: false })) submitReceipt(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @UploadedFile() file: UploadedReceiptFile | undefined, @Body() dto: CreateManualPaymentSubmissionDto, @Req() request: AppRequest) { return this.manualPayments.submitReceipt(user, id, file, dto, request); }
   @Post("orders/:id/dev-confirm") confirmFake(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string) { return this.subscriptions.confirmFakeOrder(user, id); }
 
   @Public()

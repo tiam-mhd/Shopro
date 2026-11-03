@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, CalendarClock, CreditCard, History, ShieldAlert } from "lucide-react";
 import type { CursorPage } from "@shopro/contracts";
-import { get, post, newOperationId } from "../lib/api.js";
+import { api, get, post, newOperationId } from "../lib/api.js";
 import { faNumber, jalaliDate, money } from "../lib/format.js";
 import { InlineError, LoadingBlock, PageHeader, SubmitButton, messageOf } from "../App.js";
 import { Modal } from "../components/Modal.js";
@@ -10,8 +10,10 @@ import { Modal } from "../components/Modal.js";
 type MoneyCurrency = "IRR" | "IRT";
 type Plan = { code: string; nameFa: string; badge: string | null; features: string[]; durations: Array<{ priceVersionId: string; durationMonths: number; priceRial: string; monthlyEquivalentRial: string; savingRial: string; savingBasisPoints: number }> };
 type Current = { branch: { name: string; code: string; branchId: string }; status: string; rolloutMode: string; graceEndsAt: string | null; serverTime: string; plan: { code: string | null; nameFa: string | null; durationMonths: number | null } | null; period: { startsAt: string; endsAt: string; endsAtExclusive: boolean; remainingDays: number } | null; suspendedAt: string | null; suspensionReason: string | null };
-type Order = { id: string; plan: { code: string; nameFa: string; durationMonths: number }; amountRial: string; currency: string; status: string; receiptReference: string | null; createdAt: string; paidAt: string | null; attempts: Array<{ provider: string; status: string; safeErrorCode: string | null }> };
-type CreatedOrder = Order & { paymentMode: "fake" | "unavailable"; message: string };
+type PaymentInstructions = { method: "CARD_TO_CARD"; cardNumber: string; cardHolder: string; bankName: string | null; instructions: string | null; telegramContactHandle: string | null };
+type ManualPayment = { status: string; trackingCode: string | null; receiptFileName: string; rejectionReason: string | null; telegramStatus: string; submittedAt: string };
+type Order = { id: string; plan: { code: string; nameFa: string; durationMonths: number }; amountRial: string; currency: string; status: string; receiptReference: string | null; createdAt: string; paidAt: string | null; paymentInstructions: PaymentInstructions | null; manualPayment: ManualPayment | null; attempts: Array<{ provider: string; status: string; safeErrorCode: string | null }> };
+type CreatedOrder = Order & { paymentMode: "fake" | "unavailable" | "card_transfer"; message: string };
 
 const durationNames: Record<number, string> = { 1: "یک‌ماهه", 3: "سه‌ماهه", 6: "شش‌ماهه", 12: "یک‌ساله" };
 
@@ -21,6 +23,8 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
   const [created, setCreated] = useState<CreatedOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [trackingCode, setTrackingCode] = useState("");
   const plans = useQuery({ queryKey: ["subscription-plans"], queryFn: () => get<Plan[]>("/subscriptions/plans") });
   const current = useQuery({ queryKey: ["subscription-current"], queryFn: () => get<Current>("/subscriptions/current") });
   const history = useInfiniteQuery({ queryKey: ["subscription-orders"], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<Order>>(`/subscriptions/orders?limit=20${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (page) => page.nextCursor ?? undefined });
@@ -33,7 +37,7 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
     setBusy(true); setError("");
     try {
       const result = await post<CreatedOrder>("/subscriptions/orders", { planCode: selectedPlan.plan.code, durationMonths: selectedPlan.duration.durationMonths }, { "Idempotency-Key": newOperationId() });
-      setCreated(result); setSelected(null);
+      setCreated(result); setSelected(null); setReceiptFile(null); setTrackingCode("");
       await Promise.all([client.invalidateQueries({ queryKey: ["subscription-orders"] }), client.invalidateQueries({ queryKey: ["subscription-current"] })]);
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
@@ -45,6 +49,41 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
     try {
       const settled = await post<Order>(`/subscriptions/orders/${created.id}/dev-confirm`, {});
       setCreated({ ...settled, paymentMode: "fake", message: "پرداخت آزمایشی ثبت شد؛ این وضعیت فقط در محیط توسعه معتبر است." });
+      await Promise.all([client.invalidateQueries({ queryKey: ["subscription-orders"] }), client.invalidateQueries({ queryKey: ["subscription-current"] })]);
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
+
+  const submitReceipt = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!created || !receiptFile) return;
+    setBusy(true); setError("");
+    try {
+      const body = new FormData(); body.append("file", receiptFile); body.append("trackingCode", trackingCode.trim());
+      const result = await api<{ id: string; status: string; telegramStatus: string; submittedAt: string; message: string }>(`/subscriptions/orders/${created.id}/receipt`, { method: "POST", body });
+      const manualPayment: ManualPayment = { status: result.status, trackingCode: trackingCode.trim() || null, receiptFileName: receiptFile.name, rejectionReason: null, telegramStatus: result.telegramStatus, submittedAt: result.submittedAt };
+      setCreated({ ...created, manualPayment, message: result.message }); setReceiptFile(null); setTrackingCode("");
+      await client.invalidateQueries({ queryKey: ["subscription-orders"] });
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
+
+  const continueManualPayment = (order: Order) => {
+    setCreated({ ...order, paymentMode: order.paymentInstructions ? "card_transfer" : "unavailable", message: order.manualPayment?.status === "REJECTED" ? "رسید قبلی رد شده است؛ اطلاعات اصلاح‌شده را دوباره ارسال کنید." : "مبلغ را به کارت نمایش‌داده‌شده واریز و تصویر رسید را بارگذاری کنید." });
+    setReceiptFile(null); setTrackingCode(order.manualPayment?.trackingCode ?? ""); setError("");
+  };
+
+  const refreshOrder = async () => {
+    if (!created) return;
+    setBusy(true); setError("");
+    try {
+      const refreshed = await get<Order>(`/subscriptions/orders/${created.id}`);
+      const paymentMode = refreshed.paymentInstructions ? "card_transfer" : created.paymentMode;
+      const message = refreshed.status === "PAID" ? "پرداخت تأیید شد و اشتراک این شعبه فعال است."
+        : refreshed.manualPayment?.status === "REJECTED" ? "رسید قبلی رد شده است؛ اطلاعات اصلاح‌شده را دوباره ارسال کنید."
+        : refreshed.manualPayment?.status === "PENDING_REVIEW" ? "رسید شما در صف بررسی مدیر است."
+        : created.message;
+      setCreated({ ...refreshed, paymentMode, message });
       await Promise.all([client.invalidateQueries({ queryKey: ["subscription-orders"] }), client.invalidateQueries({ queryKey: ["subscription-current"] })]);
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
@@ -75,7 +114,9 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
           <div className="subscription-order-list">{history.data.pages.flatMap((page) => page.items).map((order) => <article className="subscription-order-row" key={order.id}>
             <div><strong>{order.plan.nameFa} · {durationNames[order.plan.durationMonths] ?? `${faNumber(order.plan.durationMonths)} ماه`}</strong><small>{jalaliDate(order.createdAt)}{order.paidAt ? ` · پرداخت ${jalaliDate(order.paidAt)}` : ""}</small></div>
             <strong>{money(order.amountRial, currency)}</strong>
-            <span className={`subscription-order-status ${order.status.toLowerCase()}`}>{orderStatus(order.status)}</span>
+            <span className={`subscription-order-status ${(order.manualPayment?.status ?? order.status).toLowerCase()}`}>{order.manualPayment ? manualPaymentStatus(order.manualPayment.status) : orderStatus(order.status)}</span>
+            {order.manualPayment?.rejectionReason && <small className="subscription-receipt">علت رد: {order.manualPayment.rejectionReason}</small>}
+            {order.paymentInstructions && order.status === "PENDING" && <button className="button button-text" type="button" onClick={() => continueManualPayment(order)}>{order.manualPayment?.status === "PENDING_REVIEW" ? "مشاهدهٔ وضعیت رسید" : "ارسال یا اصلاح رسید"}</button>}
             {order.receiptReference && <small className="subscription-receipt">رسید: <bdi dir="ltr">{order.receiptReference}</bdi></small>}
           </article>)}{!history.data.pages.some((page) => page.items.length) && <p className="subscription-empty">هنوز سفارشی برای این شعبه ثبت نشده است.</p>}</div>
           {history.hasNextPage && <button className="button button-secondary full" type="button" disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>{history.isFetchingNextPage ? "در حال دریافت…" : "سفارش‌های قدیمی‌تر"}</button>}
@@ -94,7 +135,35 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
       </form>}
     </Modal>
     <Modal open={Boolean(created)} onClose={() => setCreated(null)} title="وضعیت سفارش" description="نتیجه‌ای که سرور برای این سفارش ثبت کرده است.">
-      {created && <div className="subscription-result"><span className={`subscription-result-icon ${created.status === "PAID" ? "success" : "pending"}`}>{created.status === "PAID" ? <BadgeCheck /> : <CalendarClock />}</span><strong>{created.status === "PAID" ? "اشتراک فعال شد" : created.paymentMode === "unavailable" ? "درگاه پرداخت آماده نیست" : "سفارش در انتظار پرداخت"}</strong><p>{created.message}</p><div><span>مبلغ</span><b>{money(created.amountRial, currency)}</b></div><div><span>شعبه</span><b>{current.data?.branch.name ?? "—"}</b></div>{error && <InlineError error={error} />}{created.paymentMode === "fake" && created.status === "PENDING" && <button className="button button-primary full" type="button" disabled={busy} onClick={() => void confirmFake()}>{busy ? "در حال ثبت…" : "تأیید پرداخت آزمایشی"}</button>}{created.paymentMode === "unavailable" && <p className="notice notice-warning"><ShieldAlert size={16} />تا زمان اتصال درگاه واقعی، هیچ پرداختی ثبت یا تأیید نمی‌شود.</p>}</div>}
+      {created && <div className="subscription-result">
+        <span className={`subscription-result-icon ${created.status === "PAID" ? "success" : "pending"}`}>{created.status === "PAID" ? <BadgeCheck /> : <CalendarClock />}</span>
+        <strong>{created.status === "PAID" ? "اشتراک فعال شد" : created.paymentMode === "unavailable" ? "روش پرداخت آماده نیست" : created.manualPayment?.status === "PENDING_REVIEW" ? "رسید در انتظار بررسی" : created.manualPayment?.status === "REJECTED" ? "رسید نیاز به اصلاح دارد" : "سفارش در انتظار پرداخت"}</strong>
+        <p>{created.message}</p>
+        <div><span>مبلغ</span><b>{money(created.amountRial, currency)}</b></div>
+        <div><span>مدت</span><b>{durationNames[created.plan.durationMonths]}</b></div>
+        <div><span>شعبه</span><b>{current.data?.branch.name ?? "—"}</b></div>
+        {created.manualPayment?.rejectionReason && <p className="notice notice-error">دلیل رد رسید: {created.manualPayment.rejectionReason}</p>}
+        {created.paymentMode === "card_transfer" && created.manualPayment?.status === "PENDING_REVIEW" && <button className="button button-secondary full" type="button" disabled={busy} onClick={() => void refreshOrder()}>{busy ? "در حال تازه‌سازی…" : "تازه‌سازی وضعیت رسید"}</button>}
+        {created.paymentMode === "card_transfer" && created.paymentInstructions && created.status === "PENDING" && <>
+          <section className="manual-payment-instructions">
+            <h3>اطلاعات کارت‌به‌کارت</h3>
+            {created.paymentInstructions.bankName && <div><span>بانک</span><b>{created.paymentInstructions.bankName}</b></div>}
+            <div><span>شماره کارت</span><bdi dir="ltr">{formatCard(created.paymentInstructions.cardNumber)}</bdi></div>
+            <div><span>به نام</span><b>{created.paymentInstructions.cardHolder}</b></div>
+            {created.paymentInstructions.instructions && <p>{created.paymentInstructions.instructions}</p>}
+            {created.paymentInstructions.telegramContactHandle && <small>پشتیبانی تلگرام: <bdi dir="ltr">{created.paymentInstructions.telegramContactHandle}</bdi></small>}
+          </section>
+          {created.manualPayment?.status === "PENDING_REVIEW" ? <div className="notice notice-warning">رسید {created.manualPayment.receiptFileName} ثبت شده است. نتیجه پس از بررسی مدیر اعلام می‌شود.{created.manualPayment.telegramStatus !== "SENT" && <small> ارسال اعلان تلگرام هنوز تأیید نشده است.</small>}</div> : <form className="manual-payment-receipt-form" onSubmit={(event) => void submitReceipt(event)}>
+            <label className="field"><span className="field-label">تصویر یا فایل رسید</span><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required onChange={(event) => setReceiptFile(event.currentTarget.files?.[0] ?? null)} /><small>PDF، JPEG، PNG یا WebP · حداکثر ۱۰ مگابایت</small></label>
+            <label className="field"><span className="field-label">کد پیگیری انتقال (اختیاری)</span><input dir="auto" maxLength={120} value={trackingCode} onChange={(event) => setTrackingCode(event.target.value)} /></label>
+            <p className="muted">مبلغ را دقیقاً برابر سفارش واریز کنید. اشتراک فقط پس از تأیید رسید توسط مدیر فعال می‌شود.</p>
+            <button className="button button-primary full" disabled={busy || !receiptFile}>{busy ? "در حال ارسال رسید…" : created.manualPayment?.status === "REJECTED" ? "ارسال رسید اصلاح‌شده" : "ارسال رسید برای بررسی"}</button>
+          </form>}
+        </>}
+        {error && <InlineError error={error} />}
+        {created.paymentMode === "fake" && created.status === "PENDING" && <button className="button button-primary full" type="button" disabled={busy} onClick={() => void confirmFake()}>{busy ? "در حال ثبت…" : "تأیید پرداخت آزمایشی"}</button>}
+        {created.paymentMode === "unavailable" && <p className="notice notice-warning"><ShieldAlert size={16} />مدیر سامانه هنوز روش پرداخت کارت‌به‌کارت را فعال نکرده است.</p>}
+      </div>}
     </Modal>
   </PageHeader>;
 }
@@ -116,3 +185,9 @@ function SubscriptionStatus({ current }: { current: Current }) {
 function orderStatus(status: string) {
   return ({ PENDING: "در انتظار پرداخت", PAID: "پرداخت‌شده", FAILED: "ناموفق", CANCELLED: "لغوشده", REFUNDED: "مستردشده" } as Record<string, string>)[status] ?? status;
 }
+
+function manualPaymentStatus(status: string) {
+  return ({ PENDING_REVIEW: "رسید در انتظار بررسی", APPROVED: "پرداخت تأیید شد", REJECTED: "رسید رد شد" } as Record<string, string>)[status] ?? status;
+}
+
+function formatCard(value: string) { return value.replace(/\D/g, "").replace(/(.{4})/g, "$1 ").trim(); }

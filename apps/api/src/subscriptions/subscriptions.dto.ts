@@ -7,6 +7,20 @@ export class CreateSubscriptionOrderDto {
   @IsInt() @IsIn(durations) durationMonths!: (typeof durations)[number];
 }
 
+export class CreateManualPaymentSubmissionDto {
+  @IsOptional() @IsString() @MaxLength(120) @Matches(/^[^\u0000-\u001f\u007f]*$/) trackingCode?: string;
+}
+
+export class UpdateManualPaymentSettingsDto {
+  @IsBoolean() enabled!: boolean;
+  @IsString() @Matches(/^(?:[0-9۰-۹٠-٩][\s-]*){16}$/) cardNumber!: string;
+  @IsString() @MinLength(2) @MaxLength(120) cardHolder!: string;
+  @IsOptional() @IsString() @MaxLength(80) bankName?: string | null;
+  @IsOptional() @IsString() @MaxLength(1000) instructions?: string | null;
+  @IsString() @Matches(/^@[A-Za-z0-9_]{5,32}$/) telegramContactHandle!: string;
+  @IsString() @Matches(/^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})?$/) telegramTargetChatId!: string;
+}
+
 export class CreateSubscriptionPlanDto {
   @IsString() @Matches(/^[A-Z][A-Z0-9_]{2,23}$/) code!: string;
   @IsString() @MinLength(2) @MaxLength(80) nameFa!: string;

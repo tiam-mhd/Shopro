@@ -47,7 +47,7 @@ async function createAttachmentList(env, root, stagePath) {
   let count = 0;
   const seen = new Set();
   try {
-    await runQueryLines(env, "SELECT storage_key, bytes::text, checksum FROM attachments ORDER BY storage_key", async (line) => {
+    await runQueryLines(env, "SELECT storage_key, bytes::text, checksum FROM attachments UNION ALL SELECT storage_key, bytes::text, checksum FROM subscription_manual_payment_submissions ORDER BY storage_key", async (line) => {
       const [storageKey, bytes, checksum, extra] = line.split("\t");
       if (!storageKey || bytes === undefined || checksum === undefined || extra !== undefined) throw new Error("PostgreSQL returned invalid attachment metadata; backup was stopped.");
       if (seen.has(storageKey)) throw new Error("Database contains duplicate attachment storage keys; backup was stopped.");
@@ -119,7 +119,7 @@ async function main() {
       attachmentCount = result.count;
       attachmentListPath = result.listPath;
     } else {
-      const count = await querySingleValue(database.env, "SELECT count(*)::text FROM attachments");
+      const count = await querySingleValue(database.env, "SELECT ((SELECT count(*) FROM attachments) + (SELECT count(*) FROM subscription_manual_payment_submissions))::text");
       if (!/^\d+$/.test(count)) throw new Error("PostgreSQL returned an invalid attachment count.");
       if (BigInt(count) > 0n) throw new Error("ATTACHMENT_STORAGE_DIR is required because the database contains receipt attachments.");
     }

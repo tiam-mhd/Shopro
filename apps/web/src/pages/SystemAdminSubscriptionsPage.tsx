@@ -7,13 +7,14 @@ import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
 import { InlineError, LoadingBlock } from "../App.js";
 import { Modal } from "../components/Modal.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
+import { ManualPaymentsAdminTab, PaymentSettingsAdminTab } from "./SystemAdminManualPayments.js";
 
 type AdminSession = { admin: { id: string; phone: string; displayName: string }; csrfToken: string | null };
 type BranchRow = { id: string; businessId: string; businessName: string; branchName: string; branchCode: string; branchSubscriptionId: string | null; status: string; suspendedAt: string | null; suspensionReason: string | null; currentPeriod: { startsAt: string; endsAt: string; planNameFa: string | null; durationMonths: number | null; remainingDays: number } | null };
 type PlanRow = { id: string; code: string; nameFa: string; displayOrder: number; isActive: boolean; badge: string | null; features: string[]; prices: Array<{ id: string; durationMonths: number; priceRial: string; currency: string; effectiveFrom: string; effectiveTo: string | null; consumedOrderCount: number; immutable: boolean }> };
 type AdminOrder = { id: string; businessName: string; branchName: string; planNameFa: string; durationMonths: number; amountRial: string; currency: string; status: string; providerReference: string | null; createdAt: string; paidAt: string | null; attempts: Array<{ provider: string; providerExternalId: string | null; amountRial: string; status: string; safeErrorCode: string | null; createdAt: string }> };
 type Rollout = { mode: "OBSERVE" | "ENFORCE"; legacyGraceEndsAt: string | null; providerFeeBasisPoints: number | null; taxRateBasisPoints: number | null; variableCostRial: string | null; minimumContributionRial: string | null; report: { totalActiveBranches: number; activeSubscriptions: number; branchesWithoutActiveSubscription: number; suspendedBranches: number }; note: string };
-type Tab = "branches" | "orders" | "plans" | "rollout" | "economics";
+type Tab = "branches" | "orders" | "plans" | "manual-payments" | "payment-settings" | "rollout" | "economics";
 
 export function SystemAdminSubscriptionsApp() {
   const client = useQueryClient();
@@ -55,11 +56,13 @@ export function SystemAdminSubscriptionsApp() {
     <header className="system-admin-header"><div className="system-admin-brand"><img src="/icons/Logo.webp" alt="" /><div><span>شاپرو</span><strong>مدیریت مرکزی</strong></div></div><div className="system-admin-identity"><span><Shield size={16} />{session.data.admin.displayName}</span><button className="button button-secondary" type="button" disabled={busy} onClick={() => void logout()}><LogOut size={16} />خروج</button></div></header>
     <div className="system-admin-main"><div className="system-admin-title"><div><span className="eyebrow">کنترل دسترسی مستقل از حساب کسب‌وکار</span><h1>مدیریت اشتراک‌ها</h1><p>اشتراک و صورتحساب هر شعبه، نسخه‌های قیمت و rollout</p></div><button className="icon-button" type="button" aria-label="تازه‌سازی" onClick={() => { void client.invalidateQueries({ queryKey: ["system-admin"] }); }}><RefreshCw size={18} /></button></div>
       <nav className="system-admin-tabs" aria-label="بخش‌های مدیریت">{[
-        ["branches", "شعبه‌ها", Building2], ["orders", "سفارش و پرداخت", CreditCard], ["plans", "پلن و قیمت", PackageCheck], ["rollout", "راه‌اندازی", ShieldAlert], ["economics", "اقتصاد اشتراک", CircleDollarSign],
+        ["branches", "شعبه‌ها", Building2], ["orders", "سفارش‌ها", CreditCard], ["manual-payments", "رسیدهای کارت‌به‌کارت", CreditCard], ["payment-settings", "تنظیم پرداخت", Shield], ["plans", "پلن و قیمت", PackageCheck], ["rollout", "راه‌اندازی", ShieldAlert], ["economics", "اقتصاد اشتراک", CircleDollarSign],
       ].map(([key, label, Icon]) => <button type="button" key={key as string} className={tab === key ? "active" : ""} onClick={() => setTab(key as Tab)}><Icon size={16} />{label as string}</button>)}</nav>
       <div className="system-admin-content">
         {tab === "branches" && <BranchesAdminTab csrf={csrf} />}
         {tab === "orders" && <OrdersAdminTab csrf={csrf} />}
+        {tab === "manual-payments" && <ManualPaymentsAdminTab csrf={csrf} />}
+        {tab === "payment-settings" && <PaymentSettingsAdminTab csrf={csrf} />}
         {tab === "plans" && <PlansAdminTab csrf={csrf} />}
         {tab === "rollout" && <RolloutAdminTab csrf={csrf} />}
         {tab === "economics" && <EconomicsAdminTab />}

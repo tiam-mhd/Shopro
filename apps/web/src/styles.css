@@ -875,6 +875,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .subscription-order-status.paid, .admin-status-tag.active { color: var(--success-ink); background: var(--success-surface); }
 .subscription-order-status.failed, .subscription-order-status.refunded, .subscription-order-status.cancelled, .subscription-status-card.expired .subscription-order-status { color: var(--danger-ink); background: var(--red-soft); }
 .subscription-order-status.pending { color: var(--warning-ink); background: var(--warning-surface); }
+.subscription-order-status.pending_review { color: var(--warning-ink); background: var(--warning-surface); }
+.subscription-order-status.approved { color: var(--success-ink); background: var(--success-surface); }
+.subscription-order-status.rejected { color: var(--danger-ink); background: var(--red-soft); }
 .subscription-receipt { grid-column: 1 / -1; }
 .subscription-empty { margin: 0; padding: 14px 0; color: var(--muted); text-align: center; font-size: 10px; }
 .subscription-confirm-form, .subscription-result { display: grid; gap: 12px; }
@@ -888,6 +891,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .subscription-result-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 17px; color: var(--green-dark); background: var(--green-soft); }
 .subscription-result-icon.pending { color: var(--warning-ink); background: var(--warning-surface); }
 .subscription-result .notice { display: flex; align-items: center; gap: 8px; width: 100%; }
+.manual-payment-instructions, .manual-payment-receipt-form { display: grid; gap: 10px; width: 100%; padding: 14px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-soft); text-align: start; }
+.manual-payment-instructions h3 { margin: 0; color: var(--ink); font-size: 12px; }
+.manual-payment-instructions > div { display: flex; justify-content: space-between; gap: 10px; color: var(--muted-strong); font-size: 10px; }
+.manual-payment-instructions > div b, .manual-payment-instructions > div bdi { color: var(--ink); font-weight: 700; }
+.manual-payment-instructions > p, .manual-payment-instructions > small { margin: 0; color: var(--muted-strong); font-size: 9px; line-height: 1.8; }
+.manual-payment-receipt-form .field { display: grid; gap: 6px; color: var(--muted-strong); font-size: 10px; }
+.manual-payment-receipt-form input:not([type="file"]) { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; }
+.manual-payment-receipt-form input[type="file"] { width: 100%; color: var(--muted-strong); font: inherit; font-size: 10px; }
+.manual-payment-receipt-form small, .manual-payment-receipt-form .muted { color: var(--muted); font-size: 9px; line-height: 1.8; }
+.manual-payment-receipt-form p { margin: 0; }
 
 .system-admin-page { min-height: 100vh; color: var(--ink); background: var(--page); }
 .system-admin-header { position: sticky; z-index: 20; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px max(18px, calc((100vw - 1120px) / 2)); border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(18px); }
@@ -932,6 +945,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .admin-order-heading > div { display: grid; gap: 4px; }
 .admin-order-heading > b { color: var(--ink); font-size: 11px; white-space: nowrap; }
 .admin-order-meta { justify-content: flex-start; flex-wrap: wrap; color: var(--muted); font-size: 9px; }
+.admin-manual-payment-list { display: grid; }
+.admin-manual-payment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
+.admin-manual-payment-main { display: grid; gap: 4px; min-width: 0; }
+.admin-manual-payment-main strong { color: var(--ink); font-size: 11px; }
+.admin-manual-payment-main span, .admin-manual-payment-main small, .admin-safe-error { color: var(--muted-strong); font-size: 9px; line-height: 1.7; }
+.admin-manual-payment-main .danger-text, .admin-safe-error { color: var(--danger-ink); }
+.admin-manual-payment-row > .admin-row-actions { grid-column: 1 / -1; }
+.admin-status-tag.pending_review, .admin-status-tag.pending { color: var(--warning-ink); background: var(--warning-surface); }
+.admin-status-tag.approved, .admin-status-tag.sent { color: var(--success-ink); background: var(--success-surface); }
+.admin-status-tag.rejected, .admin-status-tag.failed { color: var(--danger-ink); background: var(--red-soft); }
+.admin-payment-settings-form { display: grid; gap: 14px; }
+.admin-payment-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.admin-payment-settings-form .field { display: grid; gap: 6px; color: var(--muted-strong); font-size: 10px; }
+.admin-payment-settings-form input:not([type="checkbox"]), .admin-payment-settings-form textarea { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; font-size: 11px; }
+.admin-payment-settings-form textarea { resize: vertical; }
+.admin-payment-settings-form .field small { color: var(--muted); font-size: 9px; line-height: 1.7; }
+.admin-setting-toggle { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.admin-setting-toggle input { width: 18px; height: 18px; accent-color: var(--green); }
+.admin-setting-toggle span { display: grid; gap: 4px; }
+.admin-setting-toggle strong { color: var(--ink); font-size: 10px; }
+.admin-setting-toggle small, .admin-telegram-state { color: var(--muted); font-size: 9px; }
+.admin-telegram-state { display: flex; flex-wrap: wrap; gap: 12px; }
 .admin-plan-heading { align-items: flex-start; }
 .admin-plan-heading > div { display: grid; gap: 4px; }
 .admin-plan-prices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -976,6 +1011,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-branch-row { grid-template-columns: minmax(0, 1fr) auto; }
   .admin-branch-row > .admin-row-actions { grid-column: 1 / -1; }
   .admin-plan-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-manual-payment-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .admin-manual-payment-row > .admin-status-tag:nth-of-type(2) { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
   .subscription-section, .admin-panel { padding: 13px; }
@@ -986,6 +1023,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-metric-grid { grid-template-columns: repeat(2, 1fr); }
   .admin-rollout-form { grid-template-columns: 1fr; }
   .admin-rollout-form > .button, .admin-rollout-form > .notice { grid-column: auto; }
+  .admin-payment-settings-grid { grid-template-columns: 1fr; }
+  .admin-manual-payment-row { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
   .attachment-file-row { align-items: stretch; flex-direction: column; }
