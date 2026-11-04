@@ -235,7 +235,7 @@ export class ManualPaymentsService {
   async reject(admin: AuthenticatedSystemAdmin, request: AppRequest, submissionId: string, reason: string) {
     if (!UUID_PATTERN.test(submissionId)) throw new BadRequestException("شناسهٔ رسید معتبر نیست.");
     const rejectionReason = reason.trim();
-    if (rejectionReason.length < 3 || rejectionReason.length > 500) throw new BadRequestException("دلیل رد رسید را در ۳ تا ۵۰۰ نویسه وارد کنید.");
+    if (rejectionReason.length < 3 || rejectionReason.length > 500) throw new BadRequestException("دلیل رد رسید را در ۳ تا ۵۰۰ کاراکتر وارد کنید.");
     return this.prisma.$transaction(async (tx) => {
       const current = await tx.subscriptionManualPaymentSubmission.findUnique({ where: { id: submissionId }, include: { order: true, paymentAttempt: true } });
       if (!current) throw new NotFoundException("رسید پرداخت پیدا نشد.");

@@ -162,6 +162,9 @@ model User {
   syncRecords        SyncRecord[]
   subscriptionOrders SubscriptionOrder[]
   manualPaymentSubmissions SubscriptionManualPaymentSubmission[]
+  businessCreationRequests BusinessCreationRequest[]
+  onboardingEvents OnboardingEvent[]
+  onboardingResultViews OnboardingResultView[]
 
   @@map("users")
 }
@@ -286,6 +289,10 @@ model Business {
   branchSubscriptions  BranchSubscription[]
   subscriptionOrders   SubscriptionOrder[]
   subscriptionPeriods  SubscriptionPeriod[]
+  onboardingProgress   OnboardingProgress[]
+  onboardingEvents     OnboardingEvent[]
+  onboardingResultViews OnboardingResultView[]
+  businessCreationRequests BusinessCreationRequest[]
 
   @@map("businesses")
 }
@@ -331,6 +338,10 @@ model Branch {
   subscriptionOrders  SubscriptionOrder[]
   subscriptionPeriods SubscriptionPeriod[]
   syncRecords         SyncRecord[]
+  onboardingProgress  OnboardingProgress[]
+  onboardingEvents    OnboardingEvent[]
+  onboardingResultViews OnboardingResultView[]
+  businessCreationRequests BusinessCreationRequest[]
 
   @@unique([businessId, code])
   @@unique([id, businessId])
@@ -348,6 +359,72 @@ model MemberBranch {
   @@id([memberId, branchId])
   @@index([businessId, branchId])
   @@map("member_branches")
+}
+
+model BusinessCreationRequest {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  branchId    String   @map("branch_id") @db.Uuid
+  key         String   @db.VarChar(128)
+  requestHash String   @map("request_hash") @db.Char(64)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([businessId, branchId])
+  @@map("business_creation_requests")
+}
+
+model OnboardingProgress {
+  id                 String   @id @default(uuid()) @db.Uuid
+  businessId         String   @map("business_id") @db.Uuid
+  branchId           String   @map("branch_id") @db.Uuid
+  financialStartMode String?  @map("financial_start_mode") @db.VarChar(24)
+  skippedSteps       String[] @default([]) @map("skipped_steps")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch             Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, branchId])
+  @@map("onboarding_progress")
+}
+
+model OnboardingResultView {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  viewedAt   DateTime @default(now()) @map("viewed_at") @db.Timestamptz(6)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, branchId, userId])
+  @@index([userId, viewedAt])
+  @@map("onboarding_result_views")
+}
+
+model OnboardingEvent {
+  id         String     @id @default(uuid()) @db.Uuid
+  userId     String     @map("user_id") @db.Uuid
+  businessId String?    @map("business_id") @db.Uuid
+  branchId   String?    @map("branch_id") @db.Uuid
+  eventName  String     @map("event_name") @db.VarChar(64)
+  stepName   String?    @map("step_name") @db.VarChar(32)
+  role       MemberRole?
+  deviceType String     @map("device_type") @db.VarChar(16)
+  occurredAt DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business?  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt])
+  @@index([businessId, branchId, occurredAt])
+  @@map("onboarding_events")
 }
 
 model Unit {

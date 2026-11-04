@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -45,25 +45,47 @@ export class BusinessesService {
     }));
   }
 
-  async create(user: AuthenticatedUser, dto: CreateBusinessDto, request: AppRequest) {
-    return this.prisma.$transaction(async (tx) => {
-      const business = await tx.business.create({
-        data: { displayName: dto.displayName.trim(), businessType: dto.businessType.trim(), displayCurrency: dto.displayCurrency ?? "IRT" },
-      });
-      const branch = await tx.branch.create({ data: { businessId: business.id, name: dto.initialBranchName.trim(), code: "MAIN" } });
-      const membership = await tx.businessMember.create({ data: { businessId: business.id, userId: user.id, role: "OWNER" } });
-      await tx.memberBranch.create({ data: { businessId: business.id, memberId: membership.id, branchId: branch.id } });
-      const createdAccounts = new Map<string, string>();
-      for (const [code, name, type, systemKey] of chart) {
-        const account = await tx.ledgerAccount.create({ data: { businessId: business.id, code, name, type, systemKey } });
-        if (systemKey) createdAccounts.set(systemKey, account.id);
+  async create(user: AuthenticatedUser, dto: CreateBusinessDto, request: AppRequest, rawKey?: string) {
+    const input = {
+      displayName: dto.displayName.trim(),
+      businessType: dto.businessType?.trim() || "فروشگاه",
+      initialBranchName: dto.initialBranchName.trim(),
+      displayCurrency: dto.displayCurrency ?? "IRT",
+    };
+    const key = rawKey?.trim();
+    if (key && !/^[A-Za-z0-9][A-Za-z0-9:._-]{7,127}$/.test(key)) throw new BadRequestException("کلید یکتای ساخت کسب‌وکار معتبر نیست.");
+    const requestHash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    if (key) {
+      const previous = await this.prisma.businessCreationRequest.findUnique({ where: { userId_key: { userId: user.id, key } } });
+      if (previous) return this.createdBusinessForRequest(user.id, previous, requestHash);
+    }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const business = await tx.business.create({
+          data: { displayName: input.displayName, businessType: input.businessType, displayCurrency: input.displayCurrency },
+        });
+        const branch = await tx.branch.create({ data: { businessId: business.id, name: input.initialBranchName, code: "MAIN" } });
+        const membership = await tx.businessMember.create({ data: { businessId: business.id, userId: user.id, role: "OWNER" } });
+        await tx.memberBranch.create({ data: { businessId: business.id, memberId: membership.id, branchId: branch.id } });
+        const createdAccounts = new Map<string, string>();
+        for (const [code, name, type, systemKey] of chart) {
+          const account = await tx.ledgerAccount.create({ data: { businessId: business.id, code, name, type, systemKey } });
+          if (systemKey) createdAccounts.set(systemKey, account.id);
+        }
+        await tx.unit.createMany({ data: UNIT_CATALOG.map(({ defaultVisible, ...unit }) => ({ id: randomUUID(), businessId: business.id, ...unit, isVisible: defaultVisible })) });
+        await tx.financeAccount.create({ data: { businessId: business.id, branchId: branch.id, name: "صندوق", kind: "CASH", ledgerAccountId: createdAccounts.get("cash")! } });
+        await tx.expenseCategory.create({ data: { businessId: business.id, name: "هزینه عمومی", expenseLedgerAccountId: createdAccounts.get("general_expense")! } });
+        if (key) await tx.businessCreationRequest.create({ data: { userId: user.id, businessId: business.id, branchId: branch.id, key, requestHash } });
+        await tx.auditEvent.create({ data: { businessId: business.id, actorId: user.id, action: "business.created", entityType: "business", entityId: business.id, requestId: request.requestId ?? "unknown", afterJson: { displayName: business.displayName, branchId: branch.id } } });
+        return { id: business.id, displayName: business.displayName, role: membership.role, branch: { id: branch.id, name: branch.name, code: branch.code }, displayCurrency: business.displayCurrency };
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (key && this.isIdempotencyRace(error)) {
+        const previous = await this.prisma.businessCreationRequest.findUnique({ where: { userId_key: { userId: user.id, key } } });
+        if (previous) return this.createdBusinessForRequest(user.id, previous, requestHash);
       }
-      await tx.unit.createMany({ data: UNIT_CATALOG.map(({ defaultVisible, ...unit }) => ({ id: randomUUID(), businessId: business.id, ...unit, isVisible: defaultVisible })) });
-      await tx.financeAccount.create({ data: { businessId: business.id, branchId: branch.id, name: "صندوق", kind: "CASH", ledgerAccountId: createdAccounts.get("cash")! } });
-      await tx.expenseCategory.create({ data: { businessId: business.id, name: "هزینه عمومی", expenseLedgerAccountId: createdAccounts.get("general_expense")! } });
-      await tx.auditEvent.create({ data: { businessId: business.id, actorId: user.id, action: "business.created", entityType: "business", entityId: business.id, requestId: request.requestId ?? "unknown", afterJson: { displayName: business.displayName, branchId: branch.id } } });
-      return { id: business.id, displayName: business.displayName, role: membership.role, branch: { id: branch.id, name: branch.name, code: branch.code }, displayCurrency: business.displayCurrency };
-    }, { isolationLevel: "Serializable" });
+      throw error;
+    }
   }
 
   async current(user: AuthenticatedUser) {
@@ -244,4 +266,16 @@ export class BusinessesService {
     return phone;
   }
   private isUnique(error: unknown) { return typeof error === "object" && error !== null && "code" in error && error.code === "P2002"; }
+  private isIdempotencyRace(error: unknown) { return typeof error === "object" && error !== null && "code" in error && ["P2002", "P2034"].includes(String(error.code)); }
+
+  private async createdBusinessForRequest(userId: string, previous: { requestHash: string; businessId: string; branchId: string }, requestHash: string) {
+    if (previous.requestHash !== requestHash) throw new ConflictException("این کلید برای درخواست دیگری استفاده شده است.");
+    const [business, branch, membership] = await Promise.all([
+      this.prisma.business.findFirst({ where: { id: previous.businessId }, select: { id: true, displayName: true, displayCurrency: true } }),
+      this.prisma.branch.findFirst({ where: { id: previous.branchId, businessId: previous.businessId, isActive: true }, select: { id: true, name: true, code: true } }),
+      this.prisma.businessMember.findFirst({ where: { businessId: previous.businessId, userId, role: "OWNER", status: "ACTIVE", branches: { some: { branchId: previous.branchId } } }, select: { role: true } }),
+    ]);
+    if (!business || !branch || !membership) throw new ForbiddenException("به کسب‌وکار این درخواست دسترسی فعال ندارید.");
+    return { id: business.id, displayName: business.displayName, role: membership.role, branch, displayCurrency: business.displayCurrency };
+  }
 }

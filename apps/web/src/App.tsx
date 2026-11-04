@@ -1,16 +1,17 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowDownLeft, ArrowUpRight, BookOpen, BriefcaseBusiness, Boxes, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard, FileText, House, LogOut, Menu, PackagePlus, Plus, ReceiptText, Settings, ShoppingBag, ShoppingCart, UsersRound, Wallet, Wifi, WifiOff, X } from "lucide-react";
+import { Activity, ArrowDownLeft, ArrowUpRight, BadgeCheck, BookOpen, BriefcaseBusiness, Boxes, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard, FileText, House, LogOut, Menu, PackagePlus, Plus, ReceiptText, Settings, ShoppingBag, ShoppingCart, UsersRound, Wallet, Wifi, WifiOff, X } from "lucide-react";
 import type { BusinessSummary, MemberRole, SessionUser } from "@shopro/contracts";
-import { ApiError, get, post } from "./lib/api.js";
+import { ApiError, get, patch, post } from "./lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "./lib/format.js";
 import { countAwaitingServer, countUnclaimedPendingSales, getOfflineDeviceId, listPendingSales, markPendingSaleFailed, markPendingSaleForRetry, markPendingSaleScopeConflict, markPendingSaleSucceeded, markPendingSaleSyncing, removePendingSale, removeUnclaimedPendingSales, type PendingSale } from "./lib/offline.js";
 import { classifyOfflineFailure, isQueueItemAutomaticallySyncable, isQueueItemManuallyRetryable } from "./lib/offline-state.js";
 import { OptionPicker } from "./components/OptionPicker.js";
 import type { PickerOptionLoader } from "./components/OptionPicker.js";
 import { BrandLogo } from "./components/BrandLogo.js";
+import { trackOnboardingEvent } from "./lib/onboarding-events.js";
 
 const SalesPage = lazy(() => import("./pages/Pages.js").then((module) => ({ default: module.SalesPage })));
 const InvoicesPage = lazy(() => import("./pages/Pages.js").then((module) => ({ default: module.InvoicesPage })));
@@ -32,11 +33,27 @@ const StockCountDetailsPage = lazy(() => import("./pages/DetailPages.js").then((
 const SettingsPage = lazy(() => import("./pages/SettingsPage.js").then((module) => ({ default: module.SettingsPage })));
 const SubscriptionsPage = lazy(() => import("./pages/SubscriptionsPage.js").then((module) => ({ default: module.SubscriptionsPage })));
 const SystemAdminSubscriptionsApp = lazy(() => import("./pages/SystemAdminSubscriptionsPage.js").then((module) => ({ default: module.SystemAdminSubscriptionsApp })));
+const BusinessCreationWizard = lazy(() => import("./pages/OnboardingPage.js").then((module) => ({ default: module.BusinessCreationWizard })));
+const OnboardingWorkspacePage = lazy(() => import("./pages/OnboardingPage.js").then((module) => ({ default: module.OnboardingWorkspacePage })));
+
+type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 
 type SessionResponse = { user: SessionUser & { businessId?: string; branchId?: string; role?: MemberRole } };
 type Dashboard = { displayCurrency: "IRR" | "IRT"; salesRial: string; netSalesRial: string; receiptsRial: string; expensesRial: string; grossProfitRial: string | null; grossProfitAvailable: boolean; salesCount: number; expenseCount: number; accountBalances: Array<{ id: string; name: string; balanceRial: string }>; cashPositionRial: string; lowStock: Array<{ id: string; name: string; quantity: string; reorderPoint: string; unit: string }>; openInvoices: number; salesTrend: Array<{ date: string; totalRial: string }> };
 
-export function App() { return <BrowserRouter><AppEntry /></BrowserRouter>; }
+export function App() {
+  useEffect(() => {
+    const onInstallAvailable = (event: Event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event as BeforeInstallPromptEvent;
+      window.dispatchEvent(new Event("shopro:install-available"));
+    };
+    window.addEventListener("beforeinstallprompt", onInstallAvailable);
+    return () => window.removeEventListener("beforeinstallprompt", onInstallAvailable);
+  }, []);
+  return <BrowserRouter><AppEntry /></BrowserRouter>;
+}
 
 function AppEntry() {
   const location = useLocation();
@@ -90,7 +107,7 @@ function AppContent() {
   if (session.isPending) return <LoadingScreen />;
   if (session.isError) {
     if (session.error instanceof ApiError && session.error.status !== 401) return <ErrorScreen message={session.error.message} onRetry={() => void session.refetch()} />;
-    return <AuthScreen />;
+    return location.pathname === "/login" ? <AuthScreen /> : <WelcomePage />;
   }
   const logout = async () => {
     const owned = (await listPendingSales()).filter((item) => item.userId === session.data.user.id);
@@ -107,7 +124,13 @@ function AppContent() {
   return <BusinessGate user={session.data.user} online={online} pendingCount={pendingCount} pendingItems={pendingItems} unclaimedPendingCount={unclaimedPendingCount} setUnclaimedPendingCount={setUnclaimedPendingCount} setPendingCount={setPendingCount} setPendingItems={setPendingItems} menuOpen={menuOpen} setMenuOpen={setMenuOpen} theme={theme} setTheme={setTheme} syncError={syncError} setSyncError={setSyncError} syncNotice={syncNotice} setSyncNotice={setSyncNotice} onLogout={logout} />;
 }
 
+function WelcomePage() {
+  return <main className="welcome-page" dir="rtl"><div className="auth-brand"><BrandLogo className="auth-logo" alt="" /><span>شاپرو</span></div><section className="welcome-card"><span className="eyebrow">همراه کسب‌وکار شما</span><h1>فروش و حسابداری شعبه را ساده‌تر مدیریت کنید</h1><p>فروش، خرید و حسابداری شعبه‌تان را از همین‌جا مدیریت کنید. در چند قدم کوتاه، شعبه را آماده می‌کنیم و اولین عملیات را ثبت می‌کنید.</p><div className="welcome-actions"><Link className="button button-primary full" to="/login?next=%2Fapp%2Fonboarding">شروع راه‌اندازی</Link><Link className="button button-secondary full" to="/login">ورود به حساب</Link></div></section><p className="privacy-note">ورود و ثبت‌نام با کد یک‌بارمصرف انجام می‌شود.</p></main>;
+}
+
 function AuthScreen() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
@@ -134,7 +157,7 @@ function AuthScreen() {
       setWait(false);
     }
   };
-  const verify = async (event: FormEvent) => { event.preventDefault(); setWait(true); setError(""); try { await post("/auth/otp/verify", { phone, code }); await queryClient.invalidateQueries({ queryKey: ["session"] }); } catch (cause) { setError(messageOf(cause)); } finally { setWait(false); } };
+  const verify = async (event: FormEvent) => { event.preventDefault(); setWait(true); setError(""); try { await post("/auth/otp/verify", { phone, code }); trackOnboardingEvent("auth_completed", "welcome"); await queryClient.invalidateQueries({ queryKey: ["session"] }); const next = searchParams.get("next"); if (next?.startsWith("/app/")) navigate(next, { replace: true }); } catch (cause) { setError(messageOf(cause)); } finally { setWait(false); } };
   return <main className="auth-page" dir="rtl"><div className="auth-brand"><BrandLogo className="auth-logo" alt="" /><span>شاپرو</span></div><section className="auth-card">
     <span className="eyebrow">همراه کسب‌وکار شما</span><h1>{sent ? "کد ورود را وارد کنید" : "ورود یا ساخت حساب"}</h1><p className="muted">{sent ? deliveryUncertain ? `وضعیت ارسال کد برای ${phone} از سمت سرویس پیامک تأیید نشد.` : `کد یک‌بارمصرف برای ${phone} ارسال شد.` : "با شماره موبایل وارد شوید یا حساب تازه بسازید."}</p>
     {!sent ? <form onSubmit={(event) => { event.preventDefault(); void request(); }}><label className="field-label" htmlFor="phone">شماره موبایل</label><input id="phone" autoComplete="tel" dir="ltr" inputMode="tel" placeholder="۰۹۱۲ ۳۴۵ ۶۷۸۹" value={phone} onChange={(event) => setPhone(event.target.value)} required minLength={10} maxLength={16} /><button className="button button-primary full" type="submit" disabled={wait}>{wait ? "در حال ارسال…" : "ارسال کد ورود"}</button></form> : <form onSubmit={(event) => void verify(event)}><label className="field-label" htmlFor="otp">کد یک‌بارمصرف</label><input id="otp" autoFocus autoComplete="one-time-code" dir="ltr" inputMode="numeric" maxLength={8} placeholder="کد پیامک‌شده" value={code} onChange={(event) => setCode(event.target.value)} required /><button className="button button-primary full" type="submit" disabled={wait}>{wait ? "در حال بررسی…" : "تأیید و ورود"}</button><button className="button button-text full" type="button" disabled={wait} onClick={() => { setSent(false); setCode(""); setError(""); setDeliveryUncertain(false); }}>تغییر شماره موبایل</button><button className="button button-text full" type="button" disabled={wait} onClick={() => void request()}>ارسال دوبارهٔ کد</button></form>}
@@ -144,9 +167,10 @@ function AuthScreen() {
 
 function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendingCount, setUnclaimedPendingCount, setPendingCount, setPendingItems, menuOpen, setMenuOpen, theme, setTheme, syncError, setSyncError, syncNotice, setSyncNotice, onLogout }: { user: SessionResponse["user"]; online: boolean; pendingCount: number; pendingItems: PendingSale[]; unclaimedPendingCount: number; setUnclaimedPendingCount: (count: number) => void; setPendingCount: (count: number) => void; setPendingItems: (items: PendingSale[]) => void; menuOpen: boolean; setMenuOpen: (open: boolean) => void; theme: string; setTheme: (value: string) => void; syncError: string; setSyncError: (value: string) => void; syncNotice: string; setSyncNotice: (value: string) => void; onLogout: () => void }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const businesses = useQuery({ queryKey: ["businesses"], queryFn: () => get<BusinessSummary[]>("/businesses") });
-  const [businessId, setBusinessId] = useState(sessionStorage.getItem("shopro_business_id") ?? "");
-  const [branchId, setBranchId] = useState(sessionStorage.getItem("shopro_branch_id") ?? "");
+  const [businessId, setBusinessId] = useState(() => sessionStorage.getItem("shopro_business_id") ?? readRememberedScope(user.id)?.businessId ?? "");
+  const [branchId, setBranchId] = useState(() => sessionStorage.getItem("shopro_branch_id") ?? readRememberedScope(user.id)?.branchId ?? "");
   const previousScope = useRef("");
   useLayoutEffect(() => {
     const scope = `${businessId}:${branchId}`;
@@ -166,7 +190,8 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
       setBusinessId(activeBusiness.id); setBranchId(activeBranch.id);
       sessionStorage.setItem("shopro_business_id", activeBusiness.id); sessionStorage.setItem("shopro_branch_id", activeBranch.id);
     }
-  }, [activeBusiness, activeBranch, businessId, branchId]);
+    rememberScope(user.id, activeBusiness.id, activeBranch.id);
+  }, [activeBusiness, activeBranch, businessId, branchId, user.id]);
   useEffect(() => { if (online && pendingCount > 0) void syncPendingSales(user.id, setPendingCount, setPendingItems).then((result) => { setSyncError(result.error ? result.message : ""); setSyncNotice(result.error ? "" : result.message); }).catch((cause) => { setSyncError(messageOf(cause)); setSyncNotice(""); }); }, [online, pendingCount, user.id, activeBusiness?.id, activeBranch?.id, setPendingCount, setPendingItems, setSyncError, setSyncNotice]);
   const sync = async (retryFailed = false, itemId?: string) => {
     setSyncError(""); setSyncNotice("");
@@ -187,12 +212,13 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
   };
   if (businesses.isPending) return <LoadingScreen />;
   if (businesses.isError) return <ErrorScreen message={messageOf(businesses.error)} onRetry={() => void businesses.refetch()} />;
-  if (!rows.length) return <><OnboardingPage /><UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} /></>;
-  return <div className="workspace" dir="rtl">
-    <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMenuOpen(!menuOpen)} aria-label="باز کردن فهرست">{menuOpen ? <X /> : <Menu />}</button><Link className="top-brand" to="/app"><BrandLogo className="small" alt="" /><span>شاپرو</span></Link><div className="topbar-selectors"><label className="select-wrap"><span className="sr-only">کسب‌وکار جاری</span><BriefcaseBusiness size={15} /><select aria-label="کسب‌وکار جاری" value={activeBusiness?.id ?? ""} onChange={(event) => { const next = rows.find((row) => row.id === event.target.value); if (!next) return; setBusinessId(next.id); setBranchId(next.branches[0]?.id ?? ""); sessionStorage.setItem("shopro_business_id", next.id); sessionStorage.setItem("shopro_branch_id", next.branches[0]?.id ?? ""); }}>{rows.map((row) => <option key={row.id} value={row.id}>{row.displayName}</option>)}</select><ChevronDown size={14} /></label>{activeBusiness && <label className="select-wrap branch-select"><span className="sr-only">شعبه جاری</span><select aria-label="شعبه جاری" value={activeBranch?.id ?? ""} onChange={(event) => { setBranchId(event.target.value); sessionStorage.setItem("shopro_branch_id", event.target.value); }}>{activeBusiness.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><ChevronDown size={14} /></label>}</div>{subscriptionNotice && <Link to="/app/subscription" className="subscription-topbar-pill"><CreditCard size={14} />{subscriptionNotice}</Link>}<span className={`connection-pill ${online ? "is-online" : "is-offline"}`}>{online ? <Wifi size={15} /> : <WifiOff size={15} />}<span>{online ? "متصل" : "آفلاین"}</span></span><button className="icon-button top-user" title="خروج" onClick={() => void onLogout()}><LogOut size={18} /></button></header>
+  if (!rows.length) return <><Suspense fallback={<LoadingScreen />}><BusinessCreationWizard userId={user.id} online={online} /></Suspense><UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} /></>;
+  if (location.pathname === "/" || location.pathname === "/login") return <Navigate to="/app/onboarding" replace />;
+  return <><div className="workspace" dir="rtl">
+    <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMenuOpen(!menuOpen)} aria-label="باز کردن فهرست">{menuOpen ? <X /> : <Menu />}</button><Link className="top-brand" to="/app"><BrandLogo className="small" alt="" /><span>شاپرو</span></Link><div className="topbar-selectors"><label className="select-wrap"><span className="sr-only">کسب‌وکار جاری</span><BriefcaseBusiness size={15} /><select aria-label="کسب‌وکار جاری" value={activeBusiness?.id ?? ""} onChange={(event) => { const next = rows.find((row) => row.id === event.target.value); if (!next) return; setBusinessId(next.id); setBranchId(next.branches[0]?.id ?? ""); sessionStorage.setItem("shopro_business_id", next.id); sessionStorage.setItem("shopro_branch_id", next.branches[0]?.id ?? ""); rememberScope(user.id, next.id, next.branches[0]?.id ?? ""); }}>{rows.map((row) => <option key={row.id} value={row.id}>{row.displayName}</option>)}</select><ChevronDown size={14} /></label>{activeBusiness && <label className="select-wrap branch-select"><span className="sr-only">شعبه جاری</span><select aria-label="شعبه جاری" value={activeBranch?.id ?? ""} onChange={(event) => { setBranchId(event.target.value); sessionStorage.setItem("shopro_branch_id", event.target.value); rememberScope(user.id, activeBusiness.id, event.target.value); }}>{activeBusiness.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><ChevronDown size={14} /></label>}</div>{subscriptionNotice && <Link to="/app/subscription" className="subscription-topbar-pill"><CreditCard size={14} />{subscriptionNotice}</Link>}<span className={`connection-pill ${online ? "is-online" : "is-offline"}`}>{online ? <Wifi size={15} /> : <WifiOff size={15} />}<span>{online ? "متصل" : "آفلاین"}</span></span><button className="icon-button top-user" title="خروج" onClick={() => void onLogout()}><LogOut size={18} /></button></header>
     <div className="workspace-body"><aside className={`side-nav ${menuOpen ? "open" : ""}`} aria-label="ناوبری"><div className="side-business"><span className="avatar">{activeBusiness?.displayName.slice(0, 1)}</span><div><strong>{activeBusiness?.displayName}</strong><span>{activeBranch?.name} · {roleLabel(activeBusiness?.role)}</span></div></div><nav>{navItems.map((item) => <NavLink to={item.to} key={item.to} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}><item.icon size={19} /><span>{item.label}</span></NavLink>)}</nav><div className="side-bottom"><button className="nav-item nav-plain" onClick={() => void onLogout()}><LogOut size={19} /><span>خروج از حساب</span></button><small>نسخهٔ آزمایشی · {user.displayName ?? user.phone}</small></div></aside>
       {menuOpen && <button className="nav-overlay" onClick={() => setMenuOpen(false)} aria-label="بستن فهرست" />}
-      <main className="page-content"><Suspense fallback={<div className="card page-content-loading" role="status">در حال بارگذاری صفحه…</div>}><Routes><Route path="/app" element={<DashboardPage business={activeBusiness!} pendingCount={pendingCount} />} /><Route path="/app/subscription" element={<SubscriptionsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} setPendingCount={setPendingCount} />} /><Route path="/app/invoices" element={<InvoicesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/invoices/:id" element={<InvoiceDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/parties" element={<PartiesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/parties/:id" element={<PartyDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products" element={<ProductsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products/:id" element={<ProductDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory" element={<InventoryPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory/counts/:id" element={<StockCountDetailsPage />} /><Route path="/app/purchases" element={<PurchasesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/purchases/:id" element={<PurchaseDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/expenses" element={<ExpensesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/expenses/:id" element={<ExpenseDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/finance" element={<FinancePage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/ledger" element={<LedgerPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/finance/:kind/:id" element={<FinanceDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/reports" element={<ReportsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/settings" element={<SettingsPage business={activeBusiness!} theme={theme} setTheme={setTheme} />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></Suspense></main></div>
+      <main className="page-content"><Suspense fallback={<div className="card page-content-loading" role="status">در حال بارگذاری صفحه…</div>}>{location.pathname === "/app/onboarding" ? <OnboardingWorkspacePage business={activeBusiness!} branchId={activeBranch?.id ?? ""} online={online} /> : <Routes><Route path="/app" element={<DashboardPage business={activeBusiness!} branchId={activeBranch?.id ?? ""} pendingCount={pendingCount} />} /><Route path="/app/subscription" element={<SubscriptionsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} setPendingCount={setPendingCount} />} /><Route path="/app/invoices" element={<InvoicesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/invoices/:id" element={<InvoiceDetailsPage currency={activeBusiness!.displayCurrency} branchName={activeBranch?.name ?? ""} />} /><Route path="/app/parties" element={<PartiesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/parties/:id" element={<PartyDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products" element={<ProductsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products/:id" element={<ProductDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory" element={<InventoryPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory/counts/:id" element={<StockCountDetailsPage />} /><Route path="/app/purchases" element={<PurchasesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/purchases/:id" element={<PurchaseDetailsPage currency={activeBusiness!.displayCurrency} branchName={activeBranch?.name ?? ""} />} /><Route path="/app/expenses" element={<ExpensesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/expenses/:id" element={<ExpenseDetailsPage currency={activeBusiness!.displayCurrency} branchName={activeBranch?.name ?? ""} />} /><Route path="/app/finance" element={<FinancePage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/ledger" element={<LedgerPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/finance/:kind/:id" element={<FinanceDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/reports" element={<ReportsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/settings" element={<SettingsPage business={activeBusiness!} theme={theme} setTheme={setTheme} />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes>}</Suspense></main></div>
     {(pendingItems.length > 0 || syncError || syncNotice) && <section className="pending-sync-panel" dir="rtl" aria-label="وضعیت همگام‌سازی فروش">
       <div className="pending-sync-heading"><strong>{pendingCount ? `${faNumber(pendingCount)} مورد هنوز به سرور نرسیده` : "وضعیت همگام‌سازی فروش"}</strong>{pendingCount > 0 && <button className="button button-secondary" type="button" disabled={!online} onClick={() => void sync(true)}>{online ? "ارسال و تلاش دوباره" : "پس از اتصال تلاش کنید"}</button>}</div>
       {syncError && <p className="notice notice-error" role="alert">{syncError}</p>}{syncNotice && <p className="notice notice-success" role="status">{syncNotice}</p>}
@@ -201,7 +227,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
     </section>}
     {unclaimedPendingCount > 0 && <UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} />}
     <BottomNav />
-  </div>;
+  </div><PwaInstallNudge businessId={activeBusiness?.id} branchId={activeBranch?.id} /></>;
 }
 
 function UnclaimedQueueNotice({ count, onClear }: { count: number; onClear: () => void }) {
@@ -230,27 +256,87 @@ function PendingSaleQueueItem({ item, online, businessId, branchId, onRetry, onR
   </article>;
 }
 
-function OnboardingPage() {
-  const queryClient = useQueryClient(); const [displayName, setDisplayName] = useState(""); const [businessType, setBusinessType] = useState("فروشگاه"); const [branchName, setBranchName] = useState("شعبهٔ اصلی"); const [currency, setCurrency] = useState<"IRT" | "IRR">("IRT"); const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
-  const create = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(""); try { const result = await post<{ id: string; branch: { id: string } }>("/businesses", { displayName, businessType, initialBranchName: branchName, displayCurrency: currency }); sessionStorage.setItem("shopro_business_id", result.id); sessionStorage.setItem("shopro_branch_id", result.branch.id); await queryClient.invalidateQueries({ queryKey: ["businesses"] }); } catch (cause) { setError(messageOf(cause)); } finally { setSaving(false); } };
-  return <main className="onboarding-page" dir="rtl"><section className="onboarding-card"><BrandLogo className="onboarding-logo" alt="لوگوی شاپرو" /><span className="eyebrow">شروع کار</span><h1>کسب‌وکار خود را بسازید</h1><p className="muted">اطلاعات اولیه را وارد کنید. می‌توانید چند کسب‌وکار و شعبه داشته باشید.</p><form onSubmit={(event) => void create(event)}><Field label="نام کسب‌وکار" value={displayName} onChange={setDisplayName} required placeholder="مثلاً فروشگاه من" /><Field label="نوع کسب‌وکار" value={businessType} onChange={setBusinessType} required placeholder="فروشگاه، خدماتی…" /><Field label="نام شعبهٔ اول" value={branchName} onChange={setBranchName} required /><label className="field-label" htmlFor="currency">واحد نمایش پول</label><select id="currency" value={currency} onChange={(event) => setCurrency(event.target.value as "IRR" | "IRT")}><option value="IRT">تومان</option><option value="IRR">ریال</option></select><button className="button button-primary full" disabled={saving}>{saving ? "در حال ساخت…" : "ساخت کسب‌وکار"}</button></form>{error && <p role="alert" className="form-error">{error}</p>}</section></main>;
-}
+type DashboardOnboarding = { branch: { id: string; name: string }; steps: Array<{ title: string; status: string }>; firstDocument: { id: string } | null; resultViewedAt: string | null; resultViewedByCurrentUser: boolean; activationComplete: boolean };
 
-export function DashboardPage({ business, pendingCount }: { business: BusinessSummary; pendingCount: number }) {
+export function DashboardPage({ business, branchId, pendingCount }: { business: BusinessSummary; branchId: string; pendingCount: number }) {
+  const client = useQueryClient();
   const query = useQuery({ queryKey: ["dashboard"], queryFn: () => get<Dashboard>("/reports/dashboard") });
+  const onboarding = useQuery({ queryKey: ["onboarding", business.id, branchId], queryFn: () => get<DashboardOnboarding>("/onboarding"), enabled: Boolean(branchId) });
+  const viewedOperation = useRef("");
+  const pendingViewedOperation = useRef("");
   const data = query.data;
+  useEffect(() => {
+    const status = onboarding.data;
+    if (!navigator.onLine || !query.isSuccess || !status?.firstDocument) return;
+    const operationKey = `${business.id}:${status.branch.id}:${status.firstDocument.id}`;
+    if (viewedOperation.current === operationKey || pendingViewedOperation.current === operationKey) return;
+    pendingViewedOperation.current = operationKey;
+    if (!status.resultViewedByCurrentUser) trackOnboardingEvent("dashboard_viewed_after_first_document", "result");
+    void patch("/onboarding/progress", { action: "mark_result_viewed" }).then(() => {
+      viewedOperation.current = operationKey;
+      return client.invalidateQueries({ queryKey: ["onboarding", business.id] });
+    }).catch(() => { viewedOperation.current = ""; }).finally(() => { pendingViewedOperation.current = ""; });
+  }, [business.id, client, onboarding.data, query.isSuccess]);
   const stats = [
     { label: "فروش خالص", value: data ? money(data.netSalesRial, data.displayCurrency) : "—", detail: `${faNumber(data?.salesCount ?? 0)} فاکتور`, icon: ShoppingCart, tone: "emerald" },
     { label: "دریافت", value: data ? money(data.receiptsRial, data.displayCurrency) : "—", detail: "وجه دریافت‌شده", icon: ArrowDownLeft, tone: "blue" },
     { label: "هزینه", value: data ? money(data.expensesRial, data.displayCurrency) : "—", detail: `${faNumber(data?.expenseCount ?? 0)} سند`, icon: ArrowUpRight, tone: "amber" },
     { label: "سود ناخالص", value: data?.grossProfitAvailable ? money(data.grossProfitRial, data.displayCurrency) : "در دسترس نیست", detail: "فروش منهای بهای تمام‌شده", icon: ChartNoAxesCombined, tone: "violet" },
   ];
-  return <PageHeader title="خانه" subtitle={`نمای امروز · ${jalaliDate(todayISO())}`}><div className="dashboard-page">{query.isError && <InlineError error={query.error} retry={() => void query.refetch()} />}{pendingCount > 0 && <div className="notice notice-warning"><Activity size={18} /><span>{faNumber(pendingCount)} عملیات فروش روی این دستگاه ذخیره شده و هنوز به سرور نرسیده است.</span></div>}{data && <><div className="metric-grid">{stats.map((stat) => <MetricCard key={stat.label} {...stat} />)}</div><section className="card cash-card"><div><div className="icon-tile emerald"><Wallet size={21} /></div><span><strong>موجودی صندوق و بانک</strong><small>ماندهٔ ثبت‌شده در این شعبه</small></span></div><strong className="cash-value">{money(data.cashPositionRial, data.displayCurrency)}</strong></section><div className="dashboard-columns"><section className="card"><SectionTitle title="اقدام سریع" action={<span className="eyebrow">برای شروع روز</span>} /><div className="quick-grid"><QuickAction to="/app/sales" icon={ShoppingCart} label="ثبت فروش" tone="emerald" /><QuickAction to="/app/expenses" icon={ReceiptText} label="ثبت هزینه" tone="amber" /><QuickAction to="/app/parties" icon={UsersRound} label="طرف‌حساب" tone="blue" /><QuickAction to="/app/products" icon={PackagePlus} label="افزودن کالا" tone="violet" /></div></section><section className="card low-stock-card"><SectionTitle title="موجودی رو به اتمام" action={<Link to="/app/inventory">مشاهدهٔ همه</Link>} />{data.lowStock.length ? <div className="compact-list">{data.lowStock.slice(0, 4).map((product) => <div className="compact-row" key={product.id}><span className="product-avatar"><Boxes size={18} /></span><span className="row-grow"><strong>{product.name}</strong><small>حد سفارش {faNumber(product.reorderPoint)}</small></span><span className="stock-warning">{faNumber(product.quantity)} <small>{product.unit}</small></span></div>)}</div> : <EmptyState icon={Boxes} title="موجودی کم پیدا نشد" text="هشدار کمبود کالا اینجا نمایش داده می‌شود." />}</section></div><section className="card trend-card"><SectionTitle title="فروش در بازهٔ جاری" action={<Link to="/app/reports">گزارش‌ها</Link>} />{data.salesTrend.length ? <div className="trend-list">{data.salesTrend.map((item) => <div className="trend-row" key={item.date}><span>{jalaliDate(item.date)}</span><div className="trend-track"><i style={{ width: `${trendPercent(item.totalRial, data.salesTrend)}%` }} /></div><strong>{money(item.totalRial, data.displayCurrency)}</strong></div>)}</div> : <EmptyState icon={ChartNoAxesCombined} title="فروشی در این بازه ثبت نشده" text="پس از ثبت فروش، نمودار روزانه اینجا تکمیل می‌شود." />}</section></>}{query.isPending && <LoadingBlock />}<p className="page-footnote">{business.displayName} · همهٔ مبالغ بر اساس اسناد ثبت‌شدهٔ این شعبه است.</p></div></PageHeader>;
+  return <PageHeader title="خانه" subtitle={`نمای امروز · ${jalaliDate(todayISO())}`}><div className="dashboard-page">{onboarding.data && <OnboardingResumeCard status={onboarding.data} />} {onboarding.isError && <div className="notice notice-warning">چک‌لیست راه‌اندازی فعلاً بارگیری نشد. <Link to="/app/onboarding">باز کردن راهنمای شروع</Link></div>}{query.isError && <InlineError error={query.error} retry={() => void query.refetch()} />}{pendingCount > 0 && <div className="notice notice-warning"><Activity size={18} /><span>{faNumber(pendingCount)} عملیات فروش روی این دستگاه ذخیره شده و هنوز به سرور نرسیده است.</span></div>}{data && <><div className="metric-grid">{stats.map((stat) => <MetricCard key={stat.label} {...stat} />)}</div><section className="card cash-card"><div><div className="icon-tile emerald"><Wallet size={21} /></div><span><strong>موجودی صندوق و بانک</strong><small>ماندهٔ ثبت‌شده در این شعبه</small></span></div><strong className="cash-value">{money(data.cashPositionRial, data.displayCurrency)}</strong></section><div className="dashboard-columns"><section className="card"><SectionTitle title="اقدام سریع" action={<span className="eyebrow">برای شروع روز</span>} /><div className="quick-grid"><QuickAction to="/app/sales" icon={ShoppingCart} label="ثبت فروش" tone="emerald" /><QuickAction to="/app/expenses" icon={ReceiptText} label="ثبت هزینه" tone="amber" /><QuickAction to="/app/parties" icon={UsersRound} label="طرف‌حساب" tone="blue" /><QuickAction to="/app/products" icon={PackagePlus} label="افزودن کالا" tone="violet" /></div></section><section className="card low-stock-card"><SectionTitle title="موجودی رو به اتمام" action={<Link to="/app/inventory">مشاهدهٔ همه</Link>} />{data.lowStock.length ? <div className="compact-list">{data.lowStock.slice(0, 4).map((product) => <div className="compact-row" key={product.id}><span className="product-avatar"><Boxes size={18} /></span><span className="row-grow"><strong>{product.name}</strong><small>حد سفارش {faNumber(product.reorderPoint)}</small></span><span className="stock-warning">{faNumber(product.quantity)} <small>{product.unit}</small></span></div>)}</div> : <EmptyState icon={Boxes} title="موجودی کم پیدا نشد" text="هشدار کمبود کالا اینجا نمایش داده می‌شود." />}</section></div><section className="card trend-card"><SectionTitle title="فروش در بازهٔ جاری" action={<Link to="/app/reports">گزارش‌ها</Link>} />{data.salesTrend.length ? <div className="trend-list">{data.salesTrend.map((item) => <div className="trend-row" key={item.date}><span>{jalaliDate(item.date)}</span><div className="trend-track"><i style={{ width: `${trendPercent(item.totalRial, data.salesTrend)}%` }} /></div><strong>{money(item.totalRial, data.displayCurrency)}</strong></div>)}</div> : <EmptyState icon={ChartNoAxesCombined} title="فروشی در این بازه ثبت نشده" text="پس از ثبت فروش، نمودار روزانه اینجا تکمیل می‌شود." />}</section></>}{query.isPending && <LoadingBlock />}<p className="page-footnote">{business.displayName} · همهٔ مبالغ بر اساس اسناد ثبت‌شدهٔ این شعبه است.</p></div></PageHeader>;
+}
+
+function OnboardingResumeCard({ status }: { status: DashboardOnboarding }) {
+  const next = status.steps.find((step) => step.status === "NEEDS_ACTION");
+  return <section className={`card onboarding-resume-card ${status.activationComplete ? "complete" : ""}`}>
+    <span className="onboarding-resume-icon"><BadgeCheck size={20} /></span>
+    <div><strong>{status.activationComplete ? "راه‌اندازی اولیه کامل شد" : next ? `ادامهٔ راه‌اندازی · ${status.branch.name}` : `راهنمای شروع · ${status.branch.name}`}</strong><p>{status.activationComplete ? "هر زمان خواستید از فهرست راهنما، انتخاب‌ها و مراحل اختیاری را ببینید." : next ? next.title + " هنوز نیازمند اقدام است." : "وضعیت فعلی شعبه و دسترسی نقش خود را ببینید."}</p></div>
+    <Link className="button button-secondary" to="/app/onboarding">{status.activationComplete ? "باز کردن چک‌لیست" : "ادامه"}</Link>
+  </section>;
+}
+
+function PwaInstallNudge({ businessId, branchId }: { businessId?: string; branchId?: string }) {
+  const [available, setAvailable] = useState(Boolean(deferredInstallPrompt));
+  const [visible, setVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const onboarding = useQuery({ queryKey: ["onboarding", businessId, branchId], queryFn: () => get<DashboardOnboarding>("/onboarding"), enabled: Boolean(businessId && branchId) });
+  useEffect(() => {
+    const update = () => setAvailable(Boolean(deferredInstallPrompt));
+    window.addEventListener("shopro:install-available", update);
+    return () => window.removeEventListener("shopro:install-available", update);
+  }, []);
+  useEffect(() => {
+    if (!available || !onboarding.data?.activationComplete) return;
+    const shownKey = `shopro_pwa_install_shown_${businessId}_${branchId}`;
+    if (sessionStorage.getItem(shownKey)) return;
+    sessionStorage.setItem(shownKey, "1");
+    setVisible(true);
+    trackOnboardingEvent("pwa_install_prompt_shown", "pwa");
+  }, [available, businessId, branchId, onboarding.data?.activationComplete]);
+  const install = async () => {
+    const prompt = deferredInstallPrompt;
+    if (!prompt) { setVisible(false); return; }
+    setBusy(true); setError("");
+    try {
+      await prompt.prompt();
+      const choice = await prompt.userChoice;
+      if (choice.outcome === "accepted") trackOnboardingEvent("pwa_install_prompt_accepted", "pwa");
+      deferredInstallPrompt = null;
+      setAvailable(false); setVisible(false);
+    } catch {
+      setError("پیشنهاد نصب از مرورگر دریافت نشد. می‌توانید به کار با نسخهٔ وب ادامه دهید.");
+      deferredInstallPrompt = null;
+      setAvailable(false);
+    } finally { setBusy(false); }
+  };
+  if (!visible || !available) return null;
+  return <aside className="pwa-install-nudge" dir="rtl" role="status" aria-live="polite"><div><strong>{error || "می‌خواهید شاپرو را روی این دستگاه نصب کنید؟"}</strong><p>نصب اختیاری است و مانع ادامهٔ کار نمی‌شود.</p></div><button className="button button-primary" type="button" disabled={busy} onClick={() => void install()}>{busy ? "در حال باز کردن پیشنهاد نصب…" : "نصب شاپرو"}</button><button className="button button-text" type="button" disabled={busy} onClick={() => setVisible(false)}>بعداً</button></aside>;
 }
 
 export function PageHeader({ title, subtitle, children, actions }: { title: string; subtitle?: string; children: ReactNode; actions?: ReactNode }) { return <div className="page-wrap"><header className="page-heading"><div><span className="eyebrow">فضای کاری</span><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{actions && <div className="heading-actions">{actions}</div>}</header>{children}</div>; }
 export function SectionTitle({ title, action }: { title: string; action?: ReactNode }) { return <div className="section-title"><h2>{title}</h2>{action && <span>{action}</span>}</div>; }
-export function Field({ label, value, onChange, type = "text", placeholder, required = false, dir, inputMode, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; required?: boolean; dir?: "ltr" | "rtl"; inputMode?: "text" | "numeric" | "decimal" | "tel"; disabled?: boolean }) { return <label className="field"><span className="field-label">{label}{required && <i> *</i>}</span><input type={type} inputMode={inputMode} dir={dir} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled} /></label>; }
+export function Field({ label, value, onChange, type = "text", placeholder, required = false, dir, inputMode, disabled = false, id, error }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; required?: boolean; dir?: "ltr" | "rtl"; inputMode?: "text" | "numeric" | "decimal" | "tel"; disabled?: boolean; id?: string; error?: string }) { return <label className="field" htmlFor={id}><span className="field-label">{label}{required && <i> *</i>}</span><input id={id} type={type} inputMode={inputMode} dir={dir} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled} aria-invalid={error ? true : undefined} aria-describedby={error && id ? `${id}-error` : undefined} />{error && <span className="field-error" id={id ? `${id}-error` : undefined} role="alert">{error}</span>}</label>; }
 export function SelectField({ label, value, onChange, options, placeholder, onAdd, addLabel, optionsKey, loadOptions }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; placeholder?: string; onAdd?: () => void; addLabel?: string; optionsKey?: string; loadOptions?: PickerOptionLoader }) { return <OptionPicker label={label} value={value} onChange={onChange} options={options} placeholder={placeholder} onAdd={onAdd} addLabel={addLabel} optionsKey={optionsKey} loadOptions={loadOptions} />; }
 export function SubmitButton({ children, busy, type = "submit" }: { children: ReactNode; busy?: boolean; type?: "button" | "submit" }) { return <button className="button button-primary" type={type} disabled={busy}>{busy ? "در حال ثبت…" : children}</button>; }
 export function EmptyState({ icon: Icon, title, text, action }: { icon: typeof Boxes; title: string; text: string; action?: React.ReactNode }) { return <div className="empty-state"><span className="empty-icon"><Icon size={24} /></span><strong>{title}</strong><p>{text}</p>{action}</div>; }
@@ -261,12 +347,25 @@ export function QuickAction({ to, icon: Icon, label, tone }: { to: string; icon:
 export function DataRows({ rows, emptyTitle, emptyText, icon = FileText, action, onRowClick }: { rows: Array<{ id: string; title: string; subtitle?: string; amount?: string; status?: string; tone?: string }>; emptyTitle: string; emptyText: string; icon?: typeof Boxes; action?: ReactNode; onRowClick?: (id: string) => void }) { return rows.length ? <div className="data-list">{rows.map((row) => { const content = <><span className="row-symbol"><FileText size={18} /></span><span className="row-grow"><strong>{row.title}</strong>{row.subtitle && <small>{row.subtitle}</small>}</span>{row.status && <span className={`status-badge ${row.tone ?? ""}`}>{row.status}</span>}{row.amount && <strong className="row-amount">{row.amount}</strong>}</>; return onRowClick ? <button className="data-row data-row-action" type="button" key={row.id} onClick={() => onRowClick(row.id)}>{content}</button> : <div className="data-row" key={row.id}>{content}</div>; })}</div> : <EmptyState icon={icon} title={emptyTitle} text={emptyText} action={action} />; }
 export function LoadMoreButton({ hasMore, isLoading, onClick }: { hasMore: boolean; isLoading: boolean; onClick: () => void }) { return hasMore ? <div className="pagination-more"><button className="button button-secondary" type="button" disabled={isLoading} onClick={onClick}>{isLoading ? "در حال بارگذاری…" : "نمایش موارد قدیمی‌تر"}</button></div> : null; }
 export function useBusinessCurrency(currency: "IRR" | "IRT") { return useMemo(() => (value: string | bigint | null | undefined) => money(value, currency), [currency]); }
-export function messageOf(error: unknown) { if (error instanceof ApiError) return error.message; if (error instanceof Error) return error.message; return "مشکلی پیش آمد. دوباره تلاش کنید."; }
+export function messageOf(error: unknown) { if (error instanceof ApiError) return error.message; if (error instanceof Error) return error.message; if (typeof error === "string" && error.trim()) return error; return "مشکلی پیش آمد. دوباره تلاش کنید."; }
 export function useInvalidate() { const client = useQueryClient(); return () => { void client.invalidateQueries(); }; }
 
 function BottomNav() { return <nav className="bottom-nav" aria-label="ناوبری اصلی">{[{ to: "/app", label: "خانه", icon: House, end: true }, { to: "/app/sales", label: "فروش", icon: ShoppingCart }, { to: "/app/invoices", label: "فاکتورها", icon: FileText }, { to: "/app/reports", label: "گزارش", icon: ChartNoAxesCombined }, { to: "/app/settings", label: "بیشتر", icon: Menu }].map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `bottom-link ${isActive ? "active" : ""}`}><item.icon size={20} /><span>{item.label}</span></NavLink>)}</nav>; }
-const navItems = [{ to: "/app", label: "خانه", icon: House }, { to: "/app/sales", label: "ثبت فروش", icon: ShoppingCart }, { to: "/app/invoices", label: "فاکتورها", icon: FileText }, { to: "/app/parties", label: "مشتریان و تأمین‌کنندگان", icon: UsersRound }, { to: "/app/products", label: "کالا و خدمات", icon: PackagePlus }, { to: "/app/inventory", label: "موجودی انبار", icon: Boxes }, { to: "/app/purchases", label: "خرید", icon: ShoppingBag }, { to: "/app/expenses", label: "هزینه‌ها", icon: ReceiptText }, { to: "/app/finance", label: "صندوق و بانک", icon: Wallet }, { to: "/app/ledger", label: "دفتر مالی", icon: BookOpen }, { to: "/app/reports", label: "گزارش‌ها", icon: ChartNoAxesCombined }, { to: "/app/subscription", label: "اشتراک شعبه", icon: CreditCard }, { to: "/app/settings", label: "تنظیمات", icon: Settings }];
+const navItems = [{ to: "/app", label: "خانه", icon: House }, { to: "/app/onboarding", label: "راهنمای شروع", icon: BadgeCheck }, { to: "/app/sales", label: "ثبت فروش", icon: ShoppingCart }, { to: "/app/invoices", label: "فاکتورها", icon: FileText }, { to: "/app/parties", label: "مشتریان و تأمین‌کنندگان", icon: UsersRound }, { to: "/app/products", label: "کالا و خدمات", icon: PackagePlus }, { to: "/app/inventory", label: "موجودی انبار", icon: Boxes }, { to: "/app/purchases", label: "خرید", icon: ShoppingBag }, { to: "/app/expenses", label: "هزینه‌ها", icon: ReceiptText }, { to: "/app/finance", label: "صندوق و بانک", icon: Wallet }, { to: "/app/ledger", label: "دفتر مالی", icon: BookOpen }, { to: "/app/reports", label: "گزارش‌ها", icon: ChartNoAxesCombined }, { to: "/app/subscription", label: "اشتراک شعبه", icon: CreditCard }, { to: "/app/settings", label: "تنظیمات", icon: Settings }];
 function roleLabel(role?: MemberRole) { return role ? ({ OWNER: "مالک", MANAGER: "مدیر", ACCOUNTANT: "حسابدار", CASHIER: "صندوقدار", VIEWER: "مشاهده‌گر" } as Record<MemberRole, string>)[role] : "عضو"; }
+function rememberedScopeKey(userId: string) { return `shopro_last_scope_${userId}`; }
+function readRememberedScope(userId: string) {
+  try {
+    const raw = localStorage.getItem(rememberedScopeKey(userId));
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    return typeof value?.businessId === "string" && typeof value?.branchId === "string" ? { businessId: value.businessId, branchId: value.branchId } : null;
+  } catch { return null; }
+}
+function rememberScope(userId: string, businessId: string, branchId: string) {
+  if (!businessId || !branchId) return;
+  try { localStorage.setItem(rememberedScopeKey(userId), JSON.stringify({ businessId, branchId })); } catch { /* server membership remains authoritative if storage is unavailable */ }
+}
 function trendPercent(value: string, rows: Dashboard["salesTrend"]) { const max = rows.reduce((top, item) => BigInt(item.totalRial) > top ? BigInt(item.totalRial) : top, 0n); return max === 0n ? 0 : Math.max(5, Number((BigInt(value) * 100n) / max)); }
 function LoadingScreen() { return <div className="full-screen-state" dir="rtl"><BrandLogo alt="" /><div className="loading-block"><i /><i /><i /></div></div>; }
 function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) { return <div className="full-screen-state" dir="rtl"><div className="brand-icon danger"><CircleHelp /></div><h1>اتصال برقرار نشد</h1><p>{message}</p><button className="button button-primary" onClick={onRetry}>تلاش دوباره</button></div>; }
@@ -307,6 +406,7 @@ async function syncPendingSales(userId: string, setCount: (count: number) => voi
       });
       if (result.status === "SUCCEEDED") {
         await markPendingSaleSucceeded(item.id, result.serverInvoiceNo ?? undefined);
+        trackOnboardingEvent("first_document_posted", "first_operation");
         succeeded++;
       } else if (result.status === "CONFLICT") {
         await markPendingSaleFailed(item.id, result.message ?? "اطلاعات فروش نیازمند بازبینی است.", false);

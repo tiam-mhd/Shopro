@@ -18,9 +18,10 @@ import { SystemAdminModule } from "./system-admin/system-admin.module.js";
 import { SubscriptionsModule } from "./subscriptions/subscriptions.module.js";
 import { SubscriptionEntitlementGuard } from "./subscriptions/subscription-entitlement.guard.js";
 import { SyncModule } from "./sync/sync.module.js";
+import { OnboardingModule } from "./onboarding/onboarding.module.js";
 
 @Module({
-  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule, SubscriptionsModule, SyncModule],
+  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule, SubscriptionsModule, SyncModule, OnboardingModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: SessionGuard },

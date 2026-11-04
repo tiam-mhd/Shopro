@@ -20,6 +20,7 @@ export function isTenantOperationalWrite(method: string, path: string) {
   if (method.toUpperCase() === "POST" && normalized === "/api/v1/businesses") return false;
   return ![
     "/api/v1/auth",
+    "/api/v1/onboarding",
     "/api/v1/subscriptions",
     "/api/v1/system-admin",
   ].some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));

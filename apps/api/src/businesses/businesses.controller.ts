@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
@@ -9,7 +9,7 @@ import { BusinessesService } from "./businesses.service.js";
 export class BusinessesController {
   constructor(private readonly businesses: BusinessesService) {}
   @Get() list(@CurrentUser() user: AuthenticatedUser) { return this.businesses.list(user); }
-  @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateBusinessDto, @Req() request: AppRequest) { return this.businesses.create(user, dto, request); }
+  @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateBusinessDto, @Req() request: AppRequest, @Headers("idempotency-key") key?: string) { return this.businesses.create(user, dto, request, key); }
   @Get("current") current(@CurrentUser() user: AuthenticatedUser) { return this.businesses.current(user); }
   @Patch("current") update(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateBusinessDto, @Req() request: AppRequest) { return this.businesses.update(user, dto, request); }
   @Post("current/branches") branch(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateBranchDto, @Req() request: AppRequest) { return this.businesses.createBranch(user, dto, request); }

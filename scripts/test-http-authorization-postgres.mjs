@@ -125,6 +125,34 @@ try {
     return { status: response.status, payload };
   };
 
+  const onboardingOwner = await createSessionUser("Onboarding retry fixture");
+  const creationKey = randomUUID();
+  const creationBody = { displayName: "Idempotent onboarding fixture", initialBranchName: "شعبه اصلی", displayCurrency: "IRT" };
+  const businessesBeforeCreate = await prisma.business.count({ where: { displayName: creationBody.displayName } });
+  const firstCreation = await request("/businesses", { auth: onboardingOwner, method: "POST", body: creationBody, extraHeaders: { "idempotency-key": creationKey } });
+  assert.equal(firstCreation.status, 201, `new owner should be able to create a business and first branch: ${JSON.stringify(firstCreation.payload)}`);
+  fixtures.businesses.push(firstCreation.payload.id);
+  const retryCreation = await request("/businesses", { auth: onboardingOwner, method: "POST", body: creationBody, extraHeaders: { "idempotency-key": creationKey } });
+  assert.equal(retryCreation.status, 201, `retry should return the saved business: ${JSON.stringify(retryCreation.payload)}`);
+  assert.equal(retryCreation.payload.id, firstCreation.payload.id, "retry must return the same business id");
+  assert.equal(retryCreation.payload.branch.id, firstCreation.payload.branch.id, "retry must return the same branch id");
+  assert.equal(await prisma.business.count({ where: { displayName: creationBody.displayName } }), businessesBeforeCreate + 1, "retry must not duplicate business creation");
+  const newOwnerOnboarding = await request("/onboarding", { auth: onboardingOwner, businessId: firstCreation.payload.id, branchId: firstCreation.payload.branch.id });
+  assert.equal(newOwnerOnboarding.status, 200);
+  assert.equal(newOwnerOnboarding.payload.business.name, creationBody.displayName);
+  assert.equal(newOwnerOnboarding.payload.branch.name, creationBody.initialBranchName);
+  assert.equal(newOwnerOnboarding.payload.role, "OWNER");
+  const skippedProduct = await request("/onboarding/progress", { auth: onboardingOwner, businessId: firstCreation.payload.id, branchId: firstCreation.payload.branch.id, method: "PATCH", body: { action: "skip_step", stepId: "product" } });
+  assert.equal(skippedProduct.status, 200);
+  const refreshedAuth = { user: onboardingOwner.user, rawSession: randomUUID(), csrf: randomUUID() };
+  await prisma.userSession.create({ data: { userId: onboardingOwner.user.id, tokenHash: hash(refreshedAuth.rawSession), csrfHash: hash(refreshedAuth.csrf), expiresAt: new Date(Date.now() + 60 * 60 * 1000) } });
+  const resumedSessionState = await request("/onboarding", { auth: refreshedAuth, businessId: firstCreation.payload.id, branchId: firstCreation.payload.branch.id });
+  assert.equal(resumedSessionState.status, 200);
+  assert.equal(resumedSessionState.payload.steps.find(({ id }) => id === "product").status, "SKIPPED", "progress must survive a new authenticated session");
+  const reopenedProduct = await request("/onboarding/progress", { auth: refreshedAuth, businessId: firstCreation.payload.id, branchId: firstCreation.payload.branch.id, method: "PATCH", body: { action: "resume_step", stepId: "product" } });
+  assert.equal(reopenedProduct.status, 200);
+  assert.equal(reopenedProduct.payload.steps.find(({ id }) => id === "product").status, "NEEDS_ACTION");
+
   const missingSession = await request("/products", { businessId: businessA.id, branchId: branchA1.id });
   assert.equal(missingSession.status, 401, "protected API routes must require a user session");
 
@@ -139,6 +167,22 @@ try {
   const scopedList = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedList.status, 200);
   assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Private A"], "list results must not leak a different tenant's products");
+  const scopedOnboarding = await request("/onboarding", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
+  assert.equal(scopedOnboarding.status, 200);
+  assert.equal(scopedOnboarding.payload.business.id, businessA.id);
+  assert.equal(scopedOnboarding.payload.branch.id, branchA1.id);
+  const foreignOnboarding = await request("/onboarding", { auth: outsider, businessId: businessA.id, branchId: branchA1.id });
+  assert.equal(foreignOnboarding.status, 403, "onboarding must respect tenant membership");
+  const wrongBranchOnboarding = await request("/onboarding", { auth: cashier, businessId: businessA.id, branchId: branchA2.id });
+  assert.equal(wrongBranchOnboarding.status, 403, "onboarding must respect branch membership");
+  const viewerOnboarding = await request("/onboarding", { auth: viewer, businessId: businessA.id, branchId: branchA1.id });
+  assert.equal(viewerOnboarding.status, 200);
+  assert.equal(viewerOnboarding.payload.role, "VIEWER");
+  assert.equal(viewerOnboarding.payload.nextAction.href, "/app/invoices");
+  const forbiddenViewerMode = await request("/onboarding/progress", { auth: viewer, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { action: "select_financial_start_mode", financialStartMode: "START_TODAY" } });
+  assert.equal(forbiddenViewerMode.status, 403, "viewers must not mutate financial onboarding progress");
+  const rejectedSensitiveEvent = await request("/onboarding/events", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { eventName: "onboarding_step_skipped", stepName: "product", deviceType: "DESKTOP", amountRial: "900", customerName: "must not be accepted" } });
+  assert.equal(rejectedSensitiveEvent.status, 400, "analytics must reject payloads containing financial or customer data");
 
   const managerBusinessUpdate = await request("/businesses/current", {
     auth: manager, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { displayName: "Manager-updated fixture" },
@@ -235,6 +279,14 @@ try {
   assert.equal(cashierPosted.status, 201, `cashiers may post authorized catalog-priced sales; received ${JSON.stringify(cashierPosted.payload)}`);
   assert.equal(cashierPosted.payload.status, "POSTED");
   assert.equal(await prisma.journalEntry.count({ where: { businessId: businessA.id, sourceType: "SALE", sourceId: cashierDraft.payload.id } }), 1, "cashier sale posting must create one accounting journal");
+  const cashierActivationBeforeResult = await request("/onboarding", { auth: cashier, businessId: businessA.id, branchId: branchA1.id });
+  assert.equal(cashierActivationBeforeResult.status, 200);
+  assert.equal(cashierActivationBeforeResult.payload.firstDocument.id, cashierDraft.payload.id, "a cashier's own posted sale should be the activation document");
+  assert.equal(cashierActivationBeforeResult.payload.activationComplete, false);
+  const cashierResultView = await request("/onboarding/progress", { auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { action: "mark_result_viewed" } });
+  assert.equal(cashierResultView.status, 200);
+  assert.equal(cashierResultView.payload.activationComplete, true, "activation result must not depend on an analytics event");
+  assert.equal(await prisma.onboardingEvent.count({ where: { userId: cashier.user.id, businessId: businessA.id, branchId: branchA1.id, eventName: "dashboard_viewed_after_first_document" } }), 0, "result progress must remain available while analytics is absent");
 
   const crossTenantId = await request(`/products/${productA.id}`, { auth: outsider, businessId: businessB.id, branchId: branchB1.id });
   assert.equal(crossTenantId.status, 404, "a valid user must not read another tenant's record by guessing its UUID");

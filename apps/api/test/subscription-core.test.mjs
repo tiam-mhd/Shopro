@@ -74,7 +74,7 @@ test("the central gate covers tenant writes but leaves login, onboarding, subscr
     assert.equal(isTenantOperationalWrite("POST", path), true, path);
   }
   for (const [method, path] of [
-    ["GET", "/api/v1/sales"], ["POST", "/api/v1/auth/logout"], ["POST", "/api/v1/businesses"],
+    ["GET", "/api/v1/sales"], ["POST", "/api/v1/auth/logout"], ["POST", "/api/v1/businesses"], ["PATCH", "/api/v1/onboarding/progress"], ["POST", "/api/v1/onboarding/events"],
     ["POST", "/api/v1/subscriptions/orders"], ["POST", "/api/v1/system-admin/subscriptions/rollout"],
   ]) assert.equal(isTenantOperationalWrite(method, path), false, `${method} ${path}`);
   assert.equal(isTenantOperationalWrite("PATCH", "/api/v1/businesses/current/branches/123"), true);

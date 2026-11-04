@@ -4,8 +4,8 @@ export class CreateBusinessDto {
   @IsString() @Length(2, 160)
   displayName!: string;
 
-  @IsString() @Length(2, 80)
-  businessType!: string;
+  @IsOptional() @IsString() @Length(2, 80)
+  businessType?: string;
 
   @IsString() @Length(2, 120)
   initialBranchName!: string;

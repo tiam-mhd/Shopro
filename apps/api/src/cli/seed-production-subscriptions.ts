@@ -19,7 +19,7 @@ async function main() {
   const phoneInput = process.env.ADMIN_BOOTSTRAP_PHONE;
   const displayName = process.env.ADMIN_BOOTSTRAP_NAME?.trim();
   if (!phoneInput || !displayName) throw new Error("برای ساخت مدیر مستقل، ADMIN_BOOTSTRAP_PHONE و ADMIN_BOOTSTRAP_NAME لازم‌اند.");
-  if (displayName.length > 120) throw new Error("نام مدیر سامانه نباید بیشتر از ۱۲۰ نویسه باشد.");
+  if (displayName.length > 120) throw new Error("نام مدیر سامانه نباید بیشتر از ۱۲۰ کاراکتر باشد.");
   const phone = normalizePhone(phoneInput);
   const prisma = new PrismaService();
   try {

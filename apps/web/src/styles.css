@@ -1014,6 +1014,77 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .admin-login-card .field { display: grid; gap: 5px; }
 .admin-login-card .field input { width: 100%; min-height: 43px; padding: 8px 11px; border: 1px solid var(--line-input); border-radius: 10px; color: var(--ink); background: var(--field-bg); font: inherit; }
 .admin-login-card > small { display: flex; justify-content: center; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
+.welcome-page { display: grid; min-height: 100dvh; align-content: center; justify-items: center; gap: 18px; padding: 24px 16px; color: var(--ink); background: radial-gradient(ellipse at 50% 0%, var(--surface-active), transparent 54%), var(--page); }
+.welcome-page .auth-brand { gap: 7px; }
+.welcome-page .auth-brand .brand-logo { width: 74px; height: 74px; }
+.welcome-card { display: grid; width: min(100%, 570px); gap: 13px; padding: clamp(22px, 5vw, 38px); border: 1px solid var(--line); border-radius: 25px; background: var(--surface); box-shadow: var(--shadow-auth); text-align: center; }
+.welcome-card h1 { margin: 0; color: var(--ink); font-size: clamp(22px, 4vw, 32px); line-height: 1.55; }
+.welcome-card p { margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 2; }
+.welcome-actions { display: grid; gap: 9px; margin-top: 6px; }
+.welcome-page > .privacy-note { margin: 0; padding: 0; border: 0; }
+.field-error { display: block; margin: 6px 0 0; color: var(--danger-ink); font-size: 10px; line-height: 1.7; }
+.field input[aria-invalid="true"], .field select[aria-invalid="true"] { border-color: var(--danger-ink); }
+.onboarding-page { padding: clamp(14px, 4vw, 30px); }
+.onboarding-card { display: grid; gap: 8px; }
+.onboarding-card > .onboarding-logo { width: 48px; height: 48px; margin-bottom: 3px; }
+.onboarding-card h1 { line-height: 1.6; }
+.onboarding-card .muted, .onboarding-help { margin: 0; color: var(--muted-strong); font-size: 10px; line-height: 1.9; }
+.onboarding-card form { display: grid; gap: 8px; margin-top: 12px; }
+.onboarding-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border: 1px solid var(--line-soft); border-radius: 11px; background: var(--surface-soft); font-size: 10px; }
+.onboarding-summary-row span { color: var(--muted); }
+.onboarding-summary-row strong { color: var(--ink); }
+.onboarding-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.onboarding-branch-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted-strong); background: var(--surface); font-size: 10px; }
+.onboarding-progress-card, .onboarding-step-card { display: grid; gap: 13px; margin-bottom: 13px; padding: clamp(14px, 2.5vw, 20px); }
+.onboarding-progress-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.onboarding-progress-heading > div { display: grid; gap: 5px; }
+.onboarding-progress-heading > div strong { color: var(--ink); font-size: 15px; }
+.onboarding-progress-heading > span { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.onboarding-progress-card > p, .onboarding-step-card > p { margin: 0; color: var(--muted-strong); font-size: 10px; line-height: 1.9; }
+.onboarding-progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-track); }
+.onboarding-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--trend-start), var(--green)); transition: width .25s ease; }
+.onboarding-step-heading { display: flex; align-items: center; gap: 10px; }
+.onboarding-step-heading > div { display: grid; gap: 4px; }
+.onboarding-step-heading h2 { margin: 0; color: var(--ink); font-size: 13px; }
+.onboarding-step-number { display: grid; flex: 0 0 32px; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: 11px; color: var(--muted-strong); background: var(--surface-soft); font-size: 11px; font-weight: 700; }
+.onboarding-step-number.done { color: var(--success-ink); border-color: var(--line-success); background: var(--success-surface); }
+.onboarding-status { width: fit-content; padding: 3px 7px; border-radius: 999px; color: var(--muted-strong); background: var(--surface-muted); font-size: 9px; }
+.onboarding-status-done { color: var(--success-ink); background: var(--success-surface); }
+.onboarding-status-needs_action { color: var(--warning-ink); background: var(--warning-surface); }
+.onboarding-status-skipped, .onboarding-status-unavailable { color: var(--muted-strong); background: var(--surface-muted); }
+.onboarding-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.onboarding-choice { display: grid; align-content: start; gap: 7px; min-height: 88px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; color: var(--ink); background: var(--surface); text-align: right; font: inherit; cursor: pointer; }
+.onboarding-choice strong { font-size: 11px; }
+.onboarding-choice span { color: var(--muted-strong); font-size: 9px; line-height: 1.8; }
+.onboarding-choice.selected { border-color: var(--green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 16%, transparent); background: var(--surface-active); }
+.onboarding-choice:disabled { opacity: .6; cursor: not-allowed; }
+.onboarding-product-form { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--surface-soft); }
+.onboarding-product-form .form-grid { gap: 9px; }
+.onboarding-product-form .field-label { margin-bottom: 5px; }
+.onboarding-product-form .field input, .onboarding-product-form .field select { min-height: 42px; }
+.onboarding-product-form .onboarding-help { padding: 9px 10px; border-radius: 10px; background: var(--surface); }
+.onboarding-product-form .notice, .onboarding-product-form > .field-error { margin: 0; }
+.onboarding-step-card .button { width: fit-content; min-height: 40px; }
+.onboarding-step-card .button svg { flex: 0 0 auto; }
+.onboarding-action-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.onboarding-limitation { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line-warning); border-radius: 13px; color: var(--warning-ink); background: var(--warning-surface); }
+.onboarding-limitation strong { font-size: 10px; }
+.onboarding-limitation p { margin: 0; color: var(--muted-strong); font-size: 9px; line-height: 1.9; }
+.onboarding-operation-review { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.onboarding-operation-review > span { display: grid; gap: 5px; min-width: 0; }
+.onboarding-operation-review small { color: var(--muted); font-size: 9px; }
+.onboarding-operation-review strong { overflow-wrap: anywhere; color: var(--ink); font-size: 10px; }
+.onboarding-resume-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 13px; padding: 15px; border-inline-start: 3px solid var(--green); }
+.onboarding-resume-card.complete { border-inline-start-color: var(--line-success); }
+.onboarding-resume-icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 12px; color: var(--success-ink); background: var(--success-surface); }
+.onboarding-resume-card > div strong { color: var(--ink); font-size: 11px; }
+.onboarding-resume-card > div p { margin: 4px 0 0; color: var(--muted); font-size: 9px; line-height: 1.7; }
+.pwa-install-nudge { position: fixed; z-index: 40; inset-inline: 20px; bottom: max(78px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 10px; width: min(720px, calc(100vw - 40px)); margin-inline: auto; padding: 13px 15px; border: 1px solid var(--line); border-radius: 15px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-auth); }
+.pwa-install-nudge > div { flex: 1; min-width: 0; }
+.pwa-install-nudge strong { font-size: 10px; }
+.pwa-install-nudge p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+.pwa-install-nudge .button { white-space: nowrap; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid color-mix(in srgb, var(--green) 45%, white); outline-offset: 2px; }
 @media (max-width: 760px) {
   .subscription-plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .subscription-status-card { grid-template-columns: auto minmax(0, 1fr); }
@@ -1028,6 +1099,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-plan-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-manual-payment-row { grid-template-columns: minmax(0, 1fr) auto; }
   .admin-manual-payment-row > .admin-status-tag:nth-of-type(2) { grid-column: 1 / -1; }
+  .onboarding-progress-heading { flex-direction: column; }
+  .onboarding-resume-card { grid-template-columns: auto minmax(0, 1fr); }
+  .onboarding-resume-card > .button { grid-column: 1 / -1; width: 100%; }
 }
 @media (max-width: 480px) {
   .subscription-section, .admin-panel { padding: 13px; }
@@ -1040,6 +1114,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .admin-rollout-form > .button, .admin-rollout-form > .notice { grid-column: auto; }
   .admin-payment-settings-grid { grid-template-columns: 1fr; }
   .admin-manual-payment-row { grid-template-columns: 1fr; }
+  .onboarding-choice-grid, .onboarding-product-form .form-grid { grid-template-columns: 1fr; }
+  .onboarding-operation-review { grid-template-columns: 1fr; }
+  .onboarding-progress-card, .onboarding-step-card { padding: 13px; }
+  .onboarding-step-card .button { width: 100%; justify-content: center; }
+  .onboarding-action-list > .button { flex: 1 1 100%; }
+  .pwa-install-nudge { inset-inline: 10px; bottom: calc(72px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); flex-wrap: wrap; }
+  .pwa-install-nudge > div { flex-basis: 100%; }
+  .pwa-install-nudge .button { flex: 1; }
 }
 @media (max-width: 600px) {
   .attachment-file-row { align-items: stretch; flex-direction: column; }
