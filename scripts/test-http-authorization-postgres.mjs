@@ -20,7 +20,7 @@ if (!["localhost", "127.0.0.1", "::1"].includes(databaseUrl.hostname.replace(/^\
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const prisma = new PrismaService();
-const fixtures = { businesses: [], users: [], expenses: [] };
+const fixtures = { businesses: [], users: [], expenses: [], stockCounts: [] };
 const previousAttachmentStorageDir = process.env.ATTACHMENT_STORAGE_DIR;
 const previousSessionSecret = process.env.SESSION_SECRET;
 let attachmentRoot;
@@ -80,6 +80,8 @@ try {
   const unitA = await prisma.unit.create({ data: { businessId: businessA.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
   const unitB = await prisma.unit.create({ data: { businessId: businessB.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
   const productA = await prisma.product.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n, trackInventory: false } });
+  const stockProductA = await prisma.product.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Countable A", normalizedName: "countable a", kind: "STOCK", salePriceRial: 100n, defaultCostRial: 100n, trackInventory: true } });
+  await prisma.inventoryBalance.create({ data: { businessId: businessA.id, branchId: branchA1.id, productId: stockProductA.id, quantityOnHand: "12", inventoryValueRial: 1200n, averageCostRial: 100n } });
   await prisma.product.create({ data: { businessId: businessB.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n, trackInventory: false } });
   const auditParty = await prisma.party.create({ data: { businessId: businessA.id, type: "CUSTOMER", name: "Audit target", normalizedName: "audit target" } });
   await Promise.all([
@@ -166,7 +168,34 @@ try {
 
   const scopedList = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedList.status, 200);
-  assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Private A"], "list results must not leak a different tenant's products");
+  assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Countable A", "Private A"], "list results must not leak a different tenant's products");
+  const stockCountDraft = await request("/inventory/counts", {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    body: { txnDate: "2026-11-04", reason: "HTTP stock count regression", lines: [{ productId: stockProductA.id, countedQuantity: "15" }] },
+  });
+  assert.equal(stockCountDraft.status, 201, `owners should be able to create stock-count drafts: ${JSON.stringify(stockCountDraft.payload)}`);
+  fixtures.stockCounts.push(stockCountDraft.payload.id);
+  assert.equal(stockCountDraft.payload.status, "DRAFT");
+  assert.equal(stockCountDraft.payload.lineCount, 1);
+  const persistedStockCount = await prisma.stockCount.findUniqueOrThrow({ where: { id: stockCountDraft.payload.id }, include: { lines: true } });
+  assert.equal(persistedStockCount.businessId, businessA.id);
+  assert.equal(persistedStockCount.branchId, branchA1.id);
+  assert.equal(persistedStockCount.lines.length, 1);
+  assert.equal(persistedStockCount.lines[0].systemQuantitySnapshot.toString(), "12");
+  assert.equal(persistedStockCount.lines[0].countedQuantity.toString(), "15");
+  assert.equal(persistedStockCount.lines[0].deltaQuantity.toString(), "3");
+  const updatedStockCount = await request(`/inventory/counts/${stockCountDraft.payload.id}`, {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
+    body: { txnDate: "2026-11-04", reason: "Updated HTTP stock count", lines: [{ productId: stockProductA.id, countedQuantity: "14" }] },
+  });
+  assert.equal(updatedStockCount.status, 200, `owners should be able to update stock-count drafts: ${JSON.stringify(updatedStockCount.payload)}`);
+  const persistedUpdatedStockCount = await prisma.stockCount.findUniqueOrThrow({ where: { id: stockCountDraft.payload.id }, include: { lines: true } });
+  assert.equal(persistedUpdatedStockCount.reason, "Updated HTTP stock count");
+  assert.equal(persistedUpdatedStockCount.lines.length, 1);
+  assert.equal(persistedUpdatedStockCount.lines[0].systemQuantitySnapshot.toString(), "12");
+  assert.equal(persistedUpdatedStockCount.lines[0].countedQuantity.toString(), "14");
+  assert.equal(persistedUpdatedStockCount.lines[0].deltaQuantity.toString(), "2");
+  assert.equal(await prisma.auditEvent.count({ where: { entityId: stockCountDraft.payload.id, action: { in: ["inventory.count.created", "inventory.count.draft.updated"] } } }), 2);
   const scopedOnboarding = await request("/onboarding", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedOnboarding.status, 200);
   assert.equal(scopedOnboarding.payload.business.id, businessA.id);
@@ -430,7 +459,7 @@ try {
   await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_audit ON audit_events");
   await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = false;
-  console.log("HTTP authorization integration passed: tenant/branch isolation, suspended-membership and inactive-branch denial, manager business/branch/product allow paths, accountant product allow and business/branch denial, member PII masking, owner-only access, catalog-priced cashier sale posting, cashier price/discount and mixed product-field denial, viewer product/sale write denial, cashier report denial, CSRF rollback, UUID validation, owner write, private attachment upload/download/removal and audit, advisory attachment lock, and database-trigger rollback for product create/update, party create/update, expense category, and expense draft audits.");
+  console.log("HTTP authorization integration passed: tenant/branch isolation, suspended-membership and inactive-branch denial, manager business/branch/product allow paths, accountant product allow and business/branch denial, member PII masking, owner-only access, inventory stock-count draft create/update and audit, catalog-priced cashier sale posting, cashier price/discount and mixed product-field denial, viewer product/sale write denial, cashier report denial, CSRF rollback, UUID validation, owner write, private attachment upload/download/removal and audit, advisory attachment lock, and database-trigger rollback for product create/update, party create/update, expense category, and expense draft audits.");
 } finally {
   if (app) await app.close();
   try {
@@ -446,6 +475,7 @@ try {
       }
       await prisma.expense.deleteMany({ where: { id: expenseId } });
     }
+    for (const stockCountId of fixtures.stockCounts) await prisma.stockCount.deleteMany({ where: { id: stockCountId } });
     for (const id of fixtures.businesses) await prisma.business.deleteMany({ where: { id } });
     for (const id of fixtures.users) await prisma.user.deleteMany({ where: { id } });
   } finally {

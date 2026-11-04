@@ -16,6 +16,14 @@ function milli(value: string) {
 }
 const quantityText = (value: bigint) => `${value / 1000n}.${(value % 1000n).toString().padStart(3, "0")}`;
 const roundedDivide = (numerator: bigint, denominator: bigint) => numerator >= 0n ? (numerator + denominator / 2n) / denominator : -((-numerator + denominator / 2n) / denominator);
+type CountQuantity = { productId: string; counted: bigint };
+function stockCountLineInputs(quantities: CountQuantity[], systemQuantityByProduct: ReadonlyMap<string, bigint>): Prisma.StockCountLineUncheckedCreateWithoutStockCountInput[] {
+  return quantities.map(({ productId, counted }) => {
+    const system = systemQuantityByProduct.get(productId) ?? 0n;
+    // The nested StockCount relation supplies businessId and stockCountId.
+    return { productId, countedQuantity: new Prisma.Decimal(quantityText(counted)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(system)), deltaQuantity: new Prisma.Decimal(quantityText(counted - system)) };
+  });
+}
 
 @Injectable()
 export class InventoryService {
@@ -77,10 +85,7 @@ export class InventoryService {
       const current = new Map(balances.map((balance) => [balance.productId, milli(balance.quantityOnHand.toString())]));
       const count = await tx.stockCount.create({ data: {
         businessId, branchId, txnDate: date, reason: dto.reason.trim(), createdBy: user.id,
-        lines: { create: quantities.map((line) => {
-          const system = current.get(line.productId) ?? 0n;
-          return { businessId, productId: line.productId, countedQuantity: new Prisma.Decimal(quantityText(line.counted)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(system)), deltaQuantity: new Prisma.Decimal(quantityText(line.counted - system)) };
-        }) },
+        lines: { create: stockCountLineInputs(quantities, current) },
       }, include: { lines: true } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "inventory.count.created", entityType: "stock_count", entityId: count.id, requestId: request.requestId ?? "unknown", afterJson: { txnDate: dto.txnDate, reason: dto.reason.trim(), lineCount: count.lines.length } } });
       return count;
@@ -106,7 +111,7 @@ export class InventoryService {
       await tx.stockCountLine.deleteMany({ where: { businessId, stockCountId: id } });
       const updated = await tx.stockCount.update({ where: { id }, data: {
         txnDate: date, reason: dto.reason.trim(),
-        lines: { create: quantities.map((line) => { const system = currentByProduct.get(line.productId) ?? 0n; return { businessId, productId: line.productId, countedQuantity: new Prisma.Decimal(quantityText(line.counted)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(system)), deltaQuantity: new Prisma.Decimal(quantityText(line.counted - system)) }; }) },
+        lines: { create: stockCountLineInputs(quantities, currentByProduct) },
       }, include: { lines: true } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "inventory.count.draft.updated", entityType: "stock_count", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { txnDate: before.txnDate.toISOString().slice(0, 10), reason: before.reason, lineCount: before.lines.length }, afterJson: { txnDate: dto.txnDate, reason: dto.reason.trim(), lineCount: updated.lines.length } } });
       return { id: updated.id, txnDate: updated.txnDate.toISOString().slice(0, 10), status: updated.status, lineCount: updated.lines.length };
