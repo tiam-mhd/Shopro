@@ -317,6 +317,7 @@ model Business {
   units                Unit[]
   categories           ProductCategory[]
   products             Product[]
+  productImages        ProductImage[]
   parties              Party[]
   financeAccounts      FinanceAccount[]
   ledgerAccounts       LedgerAccount[]
@@ -411,6 +412,7 @@ model Branch {
   storefrontPaymentCards   StorePaymentCard[]
   storefrontOtpGrants      StorefrontOtpGrant[]
   storefrontCustomerSessions StorefrontCustomerSession[]
+  productImages            ProductImage[]
   storefrontReservations   StorefrontReservation[]
 
   @@unique([businessId, code])
@@ -852,12 +854,31 @@ model Product {
   storefrontListings StorefrontListing[]
   storefrontOrderItems StorefrontOrderItem[]
   storefrontReservations StorefrontReservation[]
+  images             ProductImage[]
 
   @@unique([id, businessId])
   @@unique([businessId, sku])
   @@unique([businessId, barcode])
   @@index([businessId, isActive, normalizedName])
   @@map("products")
+}
+
+model ProductImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  position   Int      @default(0)
+  bytes      BigInt
+  checksum   String   @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  product    Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, branchId, productId, position])
+  @@index([businessId, branchId, productId])
+  @@map("product_images")
 }
 
 model Party {

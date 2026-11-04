@@ -1,17 +1,37 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { normalizePersianSearch } from "@shopro/contracts";
+import { randomUUID } from "node:crypto";
+import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
+import { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
 import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { CreateProductCategoryDto, CreateProductDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
 import { UNIT_GROUPS, unitGroupLabel } from "./unit-catalog.js";
 import { assertUuid } from "../common/uuid-param.pipe.js";
+import { AccountingService } from "../finance/accounting.service.js";
+import { AttachmentStorageService } from "../expenses/attachment-storage.service.js";
+import { prepareProductImage } from "./product-image-files.js";
 
 const parseMoney = (value: string) => { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); return BigInt(value); };
+const quantityText = (milli: bigint) => {
+  const sign = milli < 0n ? "-" : "";
+  const absolute = milli < 0n ? -milli : milli;
+  return `${sign}${absolute / 1000n}.${(absolute % 1000n).toString().padStart(3, "0")}`;
+};
+const roundDivide = (numerator: bigint, denominator: bigint) => numerator >= 0n ? (numerator + denominator / 2n) / denominator : -((-numerator + denominator / 2n) / denominator);
+
+function parseInitialQuantity(value: string, precision: number) {
+  const normalized = toAsciiDigits(value).replace(/٫/g, ".").replace(/[٬,\s]/g, "").trim();
+  const match = /^(\d{1,15})(?:\.(\d{1,3}))?$/.exec(normalized);
+  if (!match || (match[2]?.length ?? 0) > precision) throw new BadRequestException(`مقدار موجودی باید نامنفی و حداکثر ${precision} رقم اعشار داشته باشد.`);
+  return BigInt(match[1]) * 1000n + BigInt((match[2] ?? "").padEnd(3, "0"));
+}
+
+const productImagePath = (productId: string, imageId: string) => `/products/${productId}/images/${imageId}`;
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService, private readonly storage: AttachmentStorageService) {}
 
   async list(user: AuthenticatedUser, search?: string, onlyLow?: string, cursor?: string, requestedLimit?: string, kind?: string) {
     const businessId = this.business(user);
@@ -26,19 +46,19 @@ export class ProductsService {
     const rows = await this.prisma.product.findMany({
       where,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true } } },
+      include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } },
       orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: limit + (pageMode ? 1 : 0),
     });
-    const mapped = rows.map((row) => ({ id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, reorderPoint: row.reorderPoint?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0" }));
+    const mapped = rows.map((row) => ({ id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, reorderPoint: row.reorderPoint?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) }));
     const filtered = onlyLow === "true" ? mapped.filter((row) => row.reorderPoint !== null && Number(row.quantityOnHand) <= Number(row.reorderPoint)) : mapped;
     return pageMode ? cursorPage(filtered, limit, (row) => row.id) : filtered;
   }
 
   async get(user: AuthenticatedUser, id: string) {
     const businessId = this.business(user);
-    const row = await this.prisma.product.findFirst({ where: { id, businessId }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true, averageCostRial: true, inventoryValueRial: true } } } });
+    const row = await this.prisma.product.findFirst({ where: { id, businessId }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true, averageCostRial: true, inventoryValueRial: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } } });
     if (!row) throw new NotFoundException("کالا پیدا نشد.");
-    return { id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, isActive: row.isActive, reorderPoint: row.reorderPoint?.toString() ?? null, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", averageCostRial: row.balances[0]?.averageCostRial.toString() ?? null, inventoryValueRial: row.balances[0]?.inventoryValueRial.toString() ?? null };
+    return { id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, isActive: row.isActive, reorderPoint: row.reorderPoint?.toString() ?? null, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", averageCostRial: row.balances[0]?.averageCostRial.toString() ?? null, inventoryValueRial: row.balances[0]?.inventoryValueRial.toString() ?? null, images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) };
   }
 
   async create(user: AuthenticatedUser, dto: CreateProductDto, request: AppRequest) {
@@ -53,12 +73,40 @@ export class ProductsService {
     }
     if (!unit) throw new BadRequestException("واحد انتخاب‌شده معتبر یا برای نمایش فعال نیست.");
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده معتبر نیست.");
+    const initialQuantityMilli = dto.initialQuantity === undefined ? 0n : parseInitialQuantity(dto.initialQuantity, unit.precision);
+    if (dto.kind === "SERVICE" && initialQuantityMilli > 0n) throw new BadRequestException("برای خدمت نمی‌توان موجودی انبار ثبت کرد.");
+    const branchId = user.branchId;
+    if (initialQuantityMilli > 0n && !branchId) throw new BadRequestException("برای ثبت موجودی اولیه، ابتدا یک شعبه را انتخاب کنید.");
+    if (initialQuantityMilli > 0n) {
+      const businessSettings = await this.prisma.business.findUnique({ where: { id: businessId }, select: { inventoryEnabled: true } });
+      if (!businessSettings?.inventoryEnabled) throw new BadRequestException("مدیریت موجودی برای این کسب‌وکار فعال نیست.");
+    }
     const name = dto.name.trim();
+    const defaultCostRial = dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null;
     return this.prisma.$transaction(async (tx) => {
-      const product = await tx.product.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, kind: dto.kind, unitId: unit.id, categoryId: dto.categoryId || null, salePriceRial: parseMoney(dto.salePriceRial), defaultCostRial: dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint ?? null, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, trackInventory: dto.kind === "STOCK" } });
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.created", entityType: "product", entityId: product.id, requestId: request.requestId ?? "unknown", afterJson: { name: product.name, sku: product.sku, salePriceRial: product.salePriceRial.toString() } } });
+      const product = await tx.product.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, kind: dto.kind, unitId: unit.id, categoryId: dto.categoryId || null, salePriceRial: parseMoney(dto.salePriceRial), defaultCostRial, reorderPoint: dto.reorderPoint ?? null, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, trackInventory: dto.kind === "STOCK" } });
+      let openingValueRial = 0n;
+      if (initialQuantityMilli > 0n && branchId) {
+        const unitCostRial = defaultCostRial ?? 0n;
+        openingValueRial = (initialQuantityMilli * unitCostRial + 500n) / 1000n;
+        const quantity = quantityText(initialQuantityMilli);
+        const openingDate = new Date();
+        openingDate.setUTCHours(0, 0, 0, 0);
+        await this.accounting.assertOpen(tx, businessId, openingDate);
+        await tx.inventoryBalance.create({ data: { businessId, branchId, productId: product.id, quantityOnHand: new Prisma.Decimal(quantity), inventoryValueRial: openingValueRial, averageCostRial: unitCostRial } });
+        await tx.inventoryMovement.create({ data: { businessId, branchId, productId: product.id, txnDate: openingDate, sourceType: "PRODUCT_OPENING", sourceId: product.id, quantityDelta: new Prisma.Decimal(quantity), unitCostRial, valueDeltaRial: openingValueRial, createdBy: user.id } });
+        if (openingValueRial > 0n) {
+          const inventoryAccountId = await this.accounting.account(tx, businessId, "inventory");
+          const equityAccountId = await this.accounting.account(tx, businessId, "equity");
+          await this.accounting.createJournal(tx, { businessId, branchId, date: openingDate, sourceType: "PRODUCT_OPENING", sourceId: product.id, memo: `موجودی اولیهٔ ${product.name}`, actorId: user.id, lines: [
+            { ledgerAccountId: inventoryAccountId, debitRial: openingValueRial, description: `موجودی اولیهٔ ${product.name}` },
+            { ledgerAccountId: equityAccountId, creditRial: openingValueRial, description: "سرمایهٔ افتتاحیهٔ موجودی کالا" },
+          ] });
+        }
+      }
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.created", entityType: "product", entityId: product.id, requestId: request.requestId ?? "unknown", afterJson: { name: product.name, sku: product.sku, salePriceRial: product.salePriceRial.toString(), initialQuantity: quantityText(initialQuantityMilli), openingValueRial: openingValueRial.toString() } } });
       return this.serialize(product);
-    });
+    }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 
   async update(user: AuthenticatedUser, id: string, dto: UpdateProductDto, request: AppRequest) {
@@ -73,13 +121,136 @@ export class ProductsService {
       const hasCounts = await this.prisma.stockCountLine.count({ where: { businessId, productId: id } });
       if (hasMovements > 0 || hasCounts > 0) throw new BadRequestException("واحد کالایی که گردش یا شمارش موجودی دارد قابل تغییر نیست.");
     }
+    let targetQuantityMilli: bigint | undefined;
+    let quantityBranchId: string | undefined;
+    if (dto.currentQuantity !== undefined) {
+      if (before.kind !== "STOCK" || !before.trackInventory) throw new BadRequestException("برای خدمت نمی‌توان موجودی انبار ثبت کرد.");
+      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId ?? before.unitId, businessId }, select: { precision: true } });
+      if (!unit) throw new BadRequestException("واحد کالا برای ثبت موجودی معتبر نیست.");
+      targetQuantityMilli = parseInitialQuantity(dto.currentQuantity, unit.precision);
+      quantityBranchId = user.branchId;
+      if (!quantityBranchId) throw new BadRequestException("برای اصلاح موجودی، ابتدا یک شعبه را انتخاب کنید.");
+      const businessSettings = await this.prisma.business.findUnique({ where: { id: businessId }, select: { inventoryEnabled: true } });
+      if (!businessSettings?.inventoryEnabled) throw new BadRequestException("مدیریت موجودی برای این کسب‌وکار فعال نیست.");
+    }
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده متعلق به این کسب‌وکار نیست.");
     const product = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, unitId: dto.unitId, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
+      if (targetQuantityMilli !== undefined && quantityBranchId) await this.adjustCurrentQuantity(tx, user, updated, quantityBranchId, targetQuantityMilli, request);
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.salePriceRial !== undefined ? "product.price.updated" : "product.updated", entityType: "product", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, salePriceRial: before.salePriceRial.toString(), isActive: before.isActive }, afterJson: { name: updated.name, salePriceRial: updated.salePriceRial.toString(), isActive: updated.isActive } } });
       return updated;
-    });
+    }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
     return this.serialize(product);
+  }
+
+  private async adjustCurrentQuantity(tx: Prisma.TransactionClient, user: AuthenticatedUser, product: { id: string; name: string; defaultCostRial: bigint | null; kind: string; trackInventory: boolean }, branchId: string, countedMilli: bigint, request: AppRequest) {
+    if (product.kind !== "STOCK" || !product.trackInventory) throw new BadRequestException("برای خدمت نمی‌توان موجودی انبار ثبت کرد.");
+    const businessId = this.business(user);
+    const balance = await tx.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId, productId: product.id } } });
+    const currentMilli = balance ? parseInitialQuantity(balance.quantityOnHand.toString(), 3) : 0n;
+    if (currentMilli === countedMilli) return;
+    const deltaMilli = countedMilli - currentMilli;
+    const unitCostRial = balance?.averageCostRial ?? product.defaultCostRial ?? 0n;
+    const valueDeltaRial = countedMilli === 0n && balance ? -balance.inventoryValueRial : roundDivide(deltaMilli * unitCostRial, 1000n);
+    const nextValueRial = (balance?.inventoryValueRial ?? 0n) + valueDeltaRial;
+    if (nextValueRial < 0n) throw new BadRequestException("ارزش موجودی پس از اصلاح نمی‌تواند منفی شود.");
+    const averageCostRial = countedMilli > 0n ? roundDivide(nextValueRial * 1000n, countedMilli) : 0n;
+    const txnDate = new Date();
+    txnDate.setUTCHours(0, 0, 0, 0);
+    await this.accounting.assertOpen(tx, businessId, txnDate);
+    const count = await tx.stockCount.create({ data: {
+      businessId, branchId, txnDate, reason: `اصلاح موجودی از فرم کالا: ${product.name}`, createdBy: user.id,
+      lines: { create: { productId: product.id, countedQuantity: new Prisma.Decimal(quantityText(countedMilli)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(currentMilli)), deltaQuantity: new Prisma.Decimal(quantityText(deltaMilli)) } },
+    } });
+    await tx.inventoryBalance.upsert({
+      where: { businessId_branchId_productId: { businessId, branchId, productId: product.id } },
+      create: { businessId, branchId, productId: product.id, quantityOnHand: new Prisma.Decimal(quantityText(countedMilli)), inventoryValueRial: nextValueRial, averageCostRial },
+      update: { quantityOnHand: new Prisma.Decimal(quantityText(countedMilli)), inventoryValueRial: nextValueRial, averageCostRial },
+    });
+    await tx.inventoryMovement.create({ data: { businessId, branchId, productId: product.id, txnDate, sourceType: "STOCK_COUNT", sourceId: count.id, quantityDelta: new Prisma.Decimal(quantityText(deltaMilli)), unitCostRial, valueDeltaRial, createdBy: user.id } });
+    if (valueDeltaRial !== 0n) {
+      const inventoryAccountId = await this.accounting.account(tx, businessId, "inventory");
+      const journalLines = valueDeltaRial > 0n
+        ? [{ ledgerAccountId: inventoryAccountId, debitRial: valueDeltaRial, description: `افزایش موجودی ${product.name}` }, { ledgerAccountId: await this.accounting.account(tx, businessId, "other_income"), creditRial: valueDeltaRial, description: "افزایش ناشی از شمارش" }]
+        : [{ ledgerAccountId: await this.accounting.account(tx, businessId, "general_expense"), debitRial: -valueDeltaRial, description: `کسری موجودی ${product.name}` }, { ledgerAccountId: inventoryAccountId, creditRial: -valueDeltaRial, description: "کاهش موجودی شمارش‌شده" }];
+      await this.accounting.createJournal(tx, { businessId, branchId, date: txnDate, sourceType: "STOCK_COUNT", sourceId: count.id, memo: count.reason, actorId: user.id, lines: journalLines });
+    }
+    await tx.stockCount.update({ where: { id: count.id }, data: { status: "POSTED" } });
+    await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.stock.quantity.adjusted", entityType: "product", entityId: product.id, requestId: request.requestId ?? "unknown", beforeJson: { quantity: quantityText(currentMilli) }, afterJson: { quantity: quantityText(countedMilli), movementId: count.id, valueDeltaRial: valueDeltaRial.toString() } } });
+  }
+
+  async uploadImage(user: AuthenticatedUser, productId: string, placement: string | undefined, file: { originalname?: string; buffer?: Uint8Array; size?: number } | undefined, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    if (placement !== "PRIMARY" && placement !== "GALLERY") throw new BadRequestException("نوع جایگاه تصویر معتبر نیست.");
+    const product = await this.prisma.product.findFirst({ where: { id: productId, businessId, archivedAt: null }, select: { id: true, name: true } });
+    if (!product) throw new NotFoundException("کالا پیدا نشد.");
+    const prepared = await prepareProductImage(file);
+    const imageId = randomUUID();
+    const storageScope = { businessId, branchId, productId, imageId };
+    await this.storage.saveProductImage(storageScope, prepared.bytes);
+    let previousPrimaryId: string | null = null;
+    try {
+      const image = await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.productImage.findMany({ where: { businessId, branchId, productId }, orderBy: { position: "asc" }, select: { id: true, position: true } });
+        let position: number;
+        if (placement === "PRIMARY") {
+          previousPrimaryId = existing.find((row) => row.position === 0)?.id ?? null;
+          if (previousPrimaryId) await tx.productImage.delete({ where: { id: previousPrimaryId } });
+          position = 0;
+        } else {
+          const galleryCount = existing.filter((row) => row.position > 0).length;
+          if (galleryCount >= 8) throw new BadRequestException("گالری هر کالا حداکثر ۸ تصویر دارد.");
+          position = Math.max(0, ...existing.map((row) => row.position)) + 1;
+        }
+        const created = await tx.productImage.create({ data: { id: imageId, businessId, branchId, productId, position, bytes: BigInt(prepared.bytes.byteLength), checksum: prepared.checksum } });
+        await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: placement === "PRIMARY" ? "product.image.primary.updated" : "product.image.gallery.added", entityType: "product_image", entityId: imageId, requestId: request.requestId ?? "unknown", afterJson: { productId, position, bytes: prepared.bytes.byteLength, checksum: prepared.checksum } } });
+        return created;
+      }, { isolationLevel: "Serializable" });
+      if (previousPrimaryId) await this.storage.removeProductImage({ businessId, branchId, productId, imageId: previousPrimaryId }).catch(() => undefined);
+      return { id: image.id, position: image.position, path: productImagePath(productId, image.id) };
+    } catch (error) {
+      await this.storage.removeProductImage(storageScope).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async setPrimaryImage(user: AuthenticatedUser, productId: string, imageId: string, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    await this.prisma.$transaction(async (tx) => {
+      const images = await tx.productImage.findMany({ where: { businessId, branchId, productId }, orderBy: { position: "asc" }, select: { id: true } });
+      if (!images.some((image) => image.id === imageId)) throw new NotFoundException("تصویر کالا پیدا نشد.");
+      const reordered = [images.find((image) => image.id === imageId)!, ...images.filter((image) => image.id !== imageId)];
+      for (let index = 0; index < reordered.length; index++) await tx.productImage.update({ where: { id: reordered[index].id }, data: { position: -(index + 1) } });
+      for (let index = 0; index < reordered.length; index++) await tx.productImage.update({ where: { id: reordered[index].id }, data: { position: index } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.image.primary.selected", entityType: "product_image", entityId: imageId, requestId: request.requestId ?? "unknown", afterJson: { productId, imageId } } });
+    }, { isolationLevel: "Serializable" });
+    return { id: imageId, position: 0, path: productImagePath(productId, imageId) };
+  }
+
+  async deleteImage(user: AuthenticatedUser, productId: string, imageId: string, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    const image = await this.prisma.$transaction(async (tx) => {
+      const target = await tx.productImage.findFirst({ where: { id: imageId, businessId, branchId, productId } });
+      if (!target) throw new NotFoundException("تصویر کالا پیدا نشد.");
+      await tx.productImage.delete({ where: { id: imageId } });
+      const remaining = await tx.productImage.findMany({ where: { businessId, branchId, productId }, orderBy: { position: "asc" }, select: { id: true } });
+      for (let index = 0; index < remaining.length; index++) await tx.productImage.update({ where: { id: remaining[index].id }, data: { position: -(index + 1) } });
+      for (let index = 0; index < remaining.length; index++) await tx.productImage.update({ where: { id: remaining[index].id }, data: { position: index } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.image.deleted", entityType: "product_image", entityId: imageId, requestId: request.requestId ?? "unknown", beforeJson: { productId, position: target.position, checksum: target.checksum } } });
+      return target;
+    }, { isolationLevel: "Serializable" });
+    await this.storage.removeProductImage({ businessId, branchId, productId, imageId }).catch(() => undefined);
+    return { id: image.id, deleted: true };
+  }
+
+  async readImage(user: AuthenticatedUser, productId: string, imageId: string) {
+    const { businessId, branchId } = this.scope(user);
+    const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId, businessId, branchId }, select: { id: true } });
+    if (!image) throw new NotFoundException("تصویر کالا پیدا نشد.");
+    return this.storage.readProductImage({ businessId, branchId, productId, imageId });
   }
 
   async units(user: AuthenticatedUser) {
@@ -136,5 +307,6 @@ export class ProductsService {
 
   private serialize(product: { id: string; name: string; sku: string | null; barcode: string | null; kind: string; salePriceRial: bigint; defaultCostRial: bigint | null; taxRateBasisPoints: number; trackInventory: boolean }) { return { id: product.id, name: product.name, sku: product.sku, barcode: product.barcode, kind: product.kind, salePriceRial: product.salePriceRial.toString(), defaultCostRial: product.defaultCostRial?.toString() ?? null, taxRateBasisPoints: product.taxRateBasisPoints, trackInventory: product.trackInventory }; }
   private business(user: AuthenticatedUser) { if (!user.businessId) throw new BadRequestException("ابتدا یک کسب‌وکار انتخاب کنید."); return user.businessId; }
+  private scope(user: AuthenticatedUser) { const businessId = this.business(user); if (!user.branchId) throw new BadRequestException("ابتدا یک شعبه را انتخاب کنید."); return { businessId, branchId: user.branchId }; }
   private requireRole(user: AuthenticatedUser, allowed: string[]) { if (!allowed.includes(user.role ?? "")) throw new ForbiddenException(); }
 }

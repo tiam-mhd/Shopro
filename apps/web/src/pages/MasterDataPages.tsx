@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, Boxes, PackagePlus, Pencil, UsersRound } from "lucide-react";
-import type { CursorPage } from "@shopro/contracts";
-import { get, patch, post } from "../lib/api.js";
+import { Archive, Boxes, ImagePlus, PackagePlus, Pencil, Star, Trash2, UsersRound } from "lucide-react";
+import { toAsciiDigits, type CursorPage } from "@shopro/contracts";
+import { adminApi, del, downloadFile, get, patch, post } from "../lib/api.js";
 import { faNumber, money } from "../lib/format.js";
 import { Field, InlineError, LoadMoreButton, PageHeader, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
@@ -11,7 +11,9 @@ import { Modal } from "../components/Modal.js";
 type MoneyCurrency = "IRR" | "IRT";
 type PartyType = "CUSTOMER" | "SUPPLIER" | "BOTH";
 type Party = { id: string; name: string; type: PartyType; phone: string | null; email?: string | null; address?: string | null; balanceRial?: string };
-type Product = { id: string; name: string; sku: string | null; barcode?: string | null; kind: "STOCK" | "SERVICE"; unit: { id: string; labelFa: string }; salePriceRial: string; defaultCostRial?: string | null; taxRateBasisPoints?: number; quantityOnHand: string; reorderPoint?: string | null; category?: { id: string; name: string } | null };
+type ProductImage = { id: string; position: number; path: string };
+type QueuedProductImage = { id: string; file: File };
+type Product = { id: string; name: string; sku: string | null; barcode?: string | null; kind: "STOCK" | "SERVICE"; unit: { id: string; labelFa: string; precision?: number }; salePriceRial: string; defaultCostRial?: string | null; taxRateBasisPoints?: number; quantityOnHand: string; reorderPoint?: string | null; category?: { id: string; name: string } | null; images?: ProductImage[] };
 
 export function PartiesPage({ currency }: { currency: MoneyCurrency }) {
   const invalidate = useInvalidate();
@@ -73,24 +75,35 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<Product | null>(null);
-  const [showCategory, setShowCategory] = useState(false);
+  const [createdProductId, setCreatedProductId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [barcode, setBarcode] = useState("");
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
+  const [initialQuantity, setInitialQuantity] = useState("0");
+  const [currentQuantity, setCurrentQuantity] = useState("");
+  const [quantityBaseline, setQuantityBaseline] = useState("");
   const [reorder, setReorder] = useState("");
   const [taxPercent, setTaxPercent] = useState("0");
   const [unitId, setUnitId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [categoryName, setCategoryName] = useState("");
-  const [kind, setKind] = useState("STOCK");
+  const [kind, setKind] = useState<"STOCK" | "SERVICE">("STOCK");
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categoryBusy, setCategoryBusy] = useState(false);
+  const [categoryError, setCategoryError] = useState("");
+  const [primaryFile, setPrimaryFile] = useState<QueuedProductImage | null>(null);
+  const [galleryFiles, setGalleryFiles] = useState<QueuedProductImage[]>([]);
+  const [mediaImages, setMediaImages] = useState<ProductImage[]>([]);
+  const [removedImageIds, setRemovedImageIds] = useState<string[]>([]);
+  const [primaryImageId, setPrimaryImageId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const products = useInfiniteQuery({ queryKey: ["products", query], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<Product>>(`/products?limit=50&q=${encodeURIComponent(query)}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined });
   const productRows = products.data?.pages.flatMap((page) => page.items) ?? [];
   const unitBusinessId = sessionStorage.getItem("shopro_business_id");
-  const units = useQuery({ queryKey: ["units", unitBusinessId], queryFn: () => get<Array<{ id: string; labelFa: string }>>("/products/units") });
+  const units = useQuery({ queryKey: ["units", unitBusinessId], queryFn: () => get<Array<{ id: string; labelFa: string; precision: number }>>("/products/units") });
   const categories = useQuery({ queryKey: ["product-categories"], queryFn: () => get<Array<{ id: string; name: string }>>("/products/categories") });
   const unitOptions = (units.data ?? []).map((unit) => ({ value: unit.id, label: unit.labelFa }));
   if (editing && !unitOptions.some((unit) => unit.value === editing.unit.id)) unitOptions.push({ value: editing.unit.id, label: `${editing.unit.labelFa} · واحد فعلی کالا` });
@@ -103,27 +116,61 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
     if (!editing && !unitId && units.data?.length === 1) setUnitId(units.data[0].id);
   }, [editing, unitId, units.data]);
 
-  const clearForm = () => { setName(""); setSku(""); setBarcode(""); setPrice(""); setCost(""); setReorder(""); setTaxPercent("0"); setUnitId(""); setCategoryId(""); setCategoryName(""); setKind("STOCK"); setShowCategory(false); setError(""); };
+  const clearForm = () => { setCreatedProductId(null); setName(""); setSku(""); setBarcode(""); setPrice(""); setCost(""); setInitialQuantity("0"); setCurrentQuantity(""); setQuantityBaseline(""); setReorder(""); setTaxPercent("0"); setUnitId(""); setCategoryId(""); setCategoryName(""); setKind("STOCK"); setCategoryModalOpen(false); setPrimaryFile(null); setGalleryFiles([]); setMediaImages([]); setRemovedImageIds([]); setPrimaryImageId(""); setError(""); setCategoryError(""); };
   const openCreate = () => { setEditing(null); clearForm(); if (units.data?.length === 1) setUnitId(units.data[0].id); setFormOpen(true); };
-  const openEdit = (product: Product) => { setEditing(product); setName(product.name); setSku(product.sku ?? ""); setBarcode(product.barcode ?? ""); setPrice(fromRial(product.salePriceRial, currency)); setCost(product.defaultCostRial ? fromRial(product.defaultCostRial, currency) : ""); setReorder(product.reorderPoint ?? ""); setTaxPercent(String((product.taxRateBasisPoints ?? 0) / 100)); setCategoryId(product.category?.id ?? ""); setUnitId(product.unit.id); setKind(product.kind); setShowCategory(false); setError(""); setFormOpen(true); };
+  const openEdit = (product: Product) => { setEditing(product); setCreatedProductId(null); setName(product.name); setSku(product.sku ?? ""); setBarcode(product.barcode ?? ""); setPrice(fromRial(product.salePriceRial, currency)); setCost(product.defaultCostRial ? fromRial(product.defaultCostRial, currency) : ""); setInitialQuantity("0"); setCurrentQuantity(product.quantityOnHand); setQuantityBaseline(product.quantityOnHand); setReorder(product.reorderPoint ?? ""); setTaxPercent(String((product.taxRateBasisPoints ?? 0) / 100)); setCategoryId(product.category?.id ?? ""); setUnitId(product.unit.id); setKind(product.kind); setCategoryModalOpen(false); setPrimaryFile(null); setGalleryFiles([]); setMediaImages(product.images ?? []); setRemovedImageIds([]); setPrimaryImageId(product.images?.find((image) => image.position === 0)?.id ?? ""); setError(""); setCategoryError(""); setFormOpen(true); };
   const save = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
       if (!unitId) throw new Error("واحد کالا را انتخاب کنید.");
-      const rate = Number(taxPercent);
+      const rate = Number(toAsciiDigits(taxPercent).replace(/[٫٬,\s]/g, (separator) => separator === "٫" ? "." : ""));
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) throw new Error("نرخ مالیات باید بین صفر تا ۱۰۰ درصد باشد.");
       const salePriceRial = toRial(price, currency);
       const defaultCostRial = cost ? toRial(cost, currency) : null;
-      if (editing) await patch("/products/" + editing.id, { name, sku: sku || null, barcode: barcode || null, unitId, categoryId: categoryId || null, salePriceRial, defaultCostRial, reorderPoint: reorder || null, taxRateBasisPoints: Math.round(rate * 100) });
-      else await post("/products", { name, sku: sku || undefined, barcode: barcode || undefined, categoryId: categoryId || undefined, defaultCostRial: defaultCostRial || undefined, reorderPoint: reorder || undefined, taxRateBasisPoints: Math.round(rate * 100), kind, unitId: unitId || undefined, salePriceRial });
+      let productId = editing?.id ?? createdProductId;
+      if (productId) {
+        const values: Record<string, unknown> = { name, sku: sku || null, barcode: barcode || null, unitId, categoryId: categoryId || null, salePriceRial, defaultCostRial, reorderPoint: reorder || null, taxRateBasisPoints: Math.round(rate * 100) };
+        if (kind === "STOCK" && currentQuantity.trim() !== quantityBaseline) values.currentQuantity = currentQuantity;
+        await patch("/products/" + productId, values);
+        setQuantityBaseline(currentQuantity);
+      } else {
+        const created = await post<{ id: string }>("/products", { name, sku: sku || undefined, barcode: barcode || undefined, categoryId: categoryId || undefined, defaultCostRial: defaultCostRial || undefined, reorderPoint: reorder || undefined, taxRateBasisPoints: Math.round(rate * 100), kind, unitId: unitId || undefined, salePriceRial, ...(kind === "STOCK" ? { initialQuantity: initialQuantity || "0" } : {}) });
+        productId = created.id;
+        setCreatedProductId(created.id);
+        setCurrentQuantity(initialQuantity || "0");
+        setQuantityBaseline(initialQuantity || "0");
+      }
+      if (!productId) throw new Error("شناسهٔ کالا دریافت نشد؛ فرم را دوباره ذخیره کنید.");
+      for (const imageId of removedImageIds) {
+        await del(`/products/${productId}/images/${imageId}`);
+        setMediaImages((current) => current.filter((image) => image.id !== imageId).map((image, index) => ({ ...image, position: index })));
+        setRemovedImageIds((current) => current.filter((id) => id !== imageId));
+      }
+      if (primaryImageId && !primaryFile && primaryImageId !== mediaImages.find((image) => image.position === 0)?.id) {
+        await patch(`/products/${productId}/images/${primaryImageId}/primary`, {});
+        setMediaImages((current) => [current.find((image) => image.id === primaryImageId)!, ...current.filter((image) => image.id !== primaryImageId)].map((image, index) => ({ ...image, position: index })));
+      }
+      if (primaryFile) {
+        const file = primaryFile;
+        const uploaded = await uploadProductImage(productId, file, "PRIMARY");
+        setMediaImages((current) => [...current.filter((image) => image.position !== 0), { ...uploaded, position: 0 }]);
+        setPrimaryFile((current) => current?.id === file.id ? null : current);
+        setPrimaryImageId(uploaded.id);
+      }
+      for (const queued of galleryFiles) {
+        const uploaded = await uploadProductImage(productId, queued, "GALLERY");
+        setMediaImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded].sort((a, b) => a.position - b.position));
+        setGalleryFiles((current) => current.filter((image) => image.id !== queued.id));
+      }
       setFormOpen(false); await invalidate();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
-  const createCategory = async () => {
-    setError("");
-    try { const category = await post<{ id: string; name: string }>("/products/categories", { name: categoryName }); setCategoryId(category.id); setCategoryName(""); setShowCategory(false); await invalidate(); }
-    catch (cause) { setError(messageOf(cause)); }
+  const createCategory = async (event: FormEvent) => {
+    event.preventDefault(); setCategoryBusy(true); setCategoryError("");
+    try { const category = await post<{ id: string; name: string }>("/products/categories", { name: categoryName }); setCategoryId(category.id); setCategoryName(""); setCategoryModalOpen(false); await invalidate(); }
+    catch (cause) { setCategoryError(messageOf(cause)); }
+    finally { setCategoryBusy(false); }
   };
   const archive = async () => {
     if (!archiveTarget) return;
@@ -139,14 +186,18 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
     {products.isPending ? <div className="card"><span className="muted">در حال بارگیری کالاها…</span></div> : <><div className="card table-card"><div className="table-head product-table-head"><span>کالا یا خدمت</span><span>موجودی</span><span>قیمت فروش</span><span aria-hidden="true" /></div>{productRows.map((product) => <div className="table-row product-table-row" key={product.id}>
       <Link className="table-name" to={"/app/products/" + product.id}><span className="product-avatar"><Boxes size={17} /></span><span><strong>{product.name}</strong><small>{product.sku || product.barcode || product.category?.name || product.unit.labelFa}</small></span></Link><span className={Number(product.quantityOnHand) <= Number(product.reorderPoint ?? -1) ? "stock-warning" : ""}>{product.kind === "SERVICE" ? "—" : faNumber(product.quantityOnHand) + " " + product.unit.labelFa}</span><strong>{money(product.salePriceRial, currency)}</strong><span className="entity-row-actions"><button type="button" className="icon-button" title="ویرایش" aria-label={"ویرایش " + product.name} onClick={() => openEdit(product)}><Pencil size={16} /></button><button type="button" className="icon-button" title="بایگانی" aria-label={"بایگانی " + product.name} onClick={() => setArchiveTarget(product)}><Archive size={16} /></button></span>
     </div>)}{!productRows.length && <div className="empty-state"><Boxes size={22} /><strong>کالایی ثبت نشده</strong><p>کالاها و خدمات خود را اضافه کنید.</p><button type="button" className="button button-secondary" onClick={openCreate}>افزودن کالا یا خدمت</button></div>}</div><LoadMoreButton hasMore={Boolean(products.hasNextPage)} isLoading={products.isFetchingNextPage} onClick={() => void products.fetchNextPage()} /></>}
-    <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? "ویرایش کالا یا خدمت" : "تعریف کالا یا خدمت"} description="اطلاعات قیمت و مشخصات کالا را ثبت کنید." size="wide">
-      <form onSubmit={(event) => void save(event)}><div className="form-grid"><Field label="نام" value={name} onChange={setName} required /><Field label="کد کالا" value={sku} onChange={setSku} placeholder="اختیاری" /><Field label="بارکد" value={barcode} onChange={setBarcode} placeholder="اختیاری" dir="ltr" /><Field label={`قیمت فروش (${currency === "IRT" ? "تومان" : "ریال"})`} value={price} onChange={setPrice} inputMode="decimal" required /><Field label={`بهای خرید پیش‌فرض (${currency === "IRT" ? "تومان" : "ریال"})`} value={cost} onChange={setCost} inputMode="decimal" placeholder="اختیاری" /><Field label="حد هشدار موجودی" value={reorder} onChange={setReorder} inputMode="decimal" placeholder="اختیاری" />
-        <SelectField label="دسته‌بندی" value={categoryId} onChange={setCategoryId} options={(categories.data ?? []).map((category) => ({ value: category.id, label: category.name }))} placeholder="بدون دسته" onAdd={() => setShowCategory(true)} /><SelectField label="واحد" value={unitId} onChange={setUnitId} options={unitOptions} />{!editing && <SelectField label="نوع" value={kind} onChange={setKind} options={[{ value: "STOCK", label: "کالای انبارشونده" }, { value: "SERVICE", label: "خدمت" }]} />}
-        <Field label="نرخ مالیات (درصد)" value={taxPercent} onChange={setTaxPercent} inputMode="decimal" placeholder="۰" /></div>
-        {editing && <div className="detail-grid"><div className="detail-field"><small>نوع</small><strong>{editing.kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"}</strong></div></div>}
-        {showCategory && <div className="category-quick-form"><Field label="نام دستهٔ تازه" value={categoryName} onChange={setCategoryName} required /><button className="button button-secondary" type="button" disabled={!categoryName.trim()} onClick={() => void createCategory()}>افزودن و انتخاب دسته</button></div>}
-        {error && <InlineError error={error} />}{units.isError && <InlineError error={units.error} retry={() => void units.refetch()} />}{categories.isError && <InlineError error={categories.error} retry={() => void categories.refetch()} />}<div className="modal-form-actions"><SubmitButton busy={busy}>{editing ? "ذخیرهٔ تغییرات" : "ذخیرهٔ کالا"}</SubmitButton></div>
+    <Modal open={formOpen} onClose={() => { setFormOpen(false); setCategoryModalOpen(false); }} title={editing || createdProductId ? "ویرایش کالا یا خدمت" : "تعریف کالا یا خدمت"} description="مشخصات را به‌ترتیب ثبت کنید؛ فیلدهای لازم در هر بخش مشخص شده‌اند." size="wide">
+      <form className="product-editor" onSubmit={(event) => void save(event)}>
+        <section className="product-form-section product-kind-section"><div className="product-form-section-heading"><span>۱</span><div><h3>نوع مورد جدید</h3><p>نوع را ابتدا انتخاب کنید تا فرم متناسب با آن نمایش داده شود.</p></div></div>{editing || createdProductId ? <div className="product-kind-readonly">{kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"}</div> : <div className="product-kind-options"><label className={kind === "STOCK" ? "selected" : ""}><input type="radio" name="product-kind" value="STOCK" checked={kind === "STOCK"} onChange={() => setKind("STOCK")} /><span><Boxes size={20} /><strong>کالای انبارشونده</strong><small>قابل شمارش و پیگیری در موجودی شعبه</small></span></label><label className={kind === "SERVICE" ? "selected" : ""}><input type="radio" name="product-kind" value="SERVICE" checked={kind === "SERVICE"} onChange={() => setKind("SERVICE")} /><span><PackagePlus size={20} /><strong>خدمت</strong><small>بدون مقدار موجودی انبار</small></span></label></div>}</section>
+        <section className="product-form-section"><div className="product-form-section-heading"><span>۲</span><div><h3>مشخصات</h3><p>نامی روشن انتخاب کنید تا در اسناد و فروشگاه قابل تشخیص باشد.</p></div></div><div className="product-editor-grid"><Field label="نام کالا یا خدمت" value={name} onChange={setName} required placeholder="مثلاً: دفتر ۱۰۰ برگ" /><Field label="کد کالا" value={sku} onChange={setSku} placeholder="اختیاری" /><Field label="بارکد" value={barcode} onChange={setBarcode} placeholder="اختیاری" dir="ltr" /><SelectField label="واحد" value={unitId} onChange={setUnitId} options={unitOptions} /><SelectField label="دسته‌بندی" value={categoryId} onChange={setCategoryId} options={(categories.data ?? []).map((category) => ({ value: category.id, label: category.name }))} placeholder="بدون دسته‌بندی" onAdd={() => { setCategoryName(""); setCategoryError(""); setCategoryModalOpen(true); }} addLabel="ساخت دسته‌بندی" /></div></section>
+        <section className="product-form-section"><div className="product-form-section-heading"><span>۳</span><div><h3>قیمت‌گذاری</h3><p>قیمت‌ها هنگام تایپ جدا می‌شوند و مبلغ نهایی همین‌جا دیده می‌شود.</p></div></div><div className="product-editor-grid"><MoneyInput label={`قیمت فروش (${currency === "IRT" ? "تومان" : "ریال"})`} value={price} onChange={setPrice} currency={currency} required /><MoneyInput label={`بهای خرید پیش‌فرض (${currency === "IRT" ? "تومان" : "ریال"})`} value={cost} onChange={setCost} currency={currency} hint="برای ارزش‌گذاری موجودی اولیه استفاده می‌شود." /><Field label="نرخ مالیات (درصد)" value={taxPercent} onChange={setTaxPercent} inputMode="decimal" placeholder="۰" /></div></section>
+        {kind === "STOCK" && <section className="product-form-section"><div className="product-form-section-heading"><span>۴</span><div><h3>موجودی شعبه</h3><p>مقدار فعلی را وارد کنید؛ ثبت آن در گردش موجودی شعبه هم ثبت می‌شود.</p></div></div><div className="product-editor-grid"><Field label={editing || createdProductId ? "مقدار فعلی در انبار" : "مقدار فعلی اولیه در انبار"} value={editing || createdProductId ? currentQuantity : initialQuantity} onChange={editing || createdProductId ? setCurrentQuantity : setInitialQuantity} inputMode="decimal" required placeholder="۰" /><Field label="حد هشدار موجودی" value={reorder} onChange={setReorder} inputMode="decimal" placeholder="اختیاری" /><p className="product-stock-note">{editing || createdProductId ? "تغییر موجودی با سند شمارش و گردش حسابداری ثبت می‌شود." : cost ? "ارزش اولیه از مقدار × بهای خرید پیش‌فرض محاسبه می‌شود." : "اگر مقدار اولیه دارید، بهای خرید پیش‌فرض را هم برای ثبت ارزش موجودی وارد کنید."}</p></div></section>}
+        <ProductMediaEditor productId={editing?.id ?? createdProductId ?? undefined} images={mediaImages} primaryImageId={primaryImageId} onPrimaryImageIdChange={setPrimaryImageId} primaryFile={primaryFile} onPrimaryFileChange={setPrimaryFile} galleryFiles={galleryFiles} onGalleryFilesChange={setGalleryFiles} removedImageIds={removedImageIds} onRemovedImageIdsChange={setRemovedImageIds} />
+        {error && <InlineError error={error} />}{units.isError && <InlineError error={units.error} retry={() => void units.refetch()} />}{categories.isError && <InlineError error={categories.error} retry={() => void categories.refetch()} />}<div className="modal-form-actions"><SubmitButton busy={busy}>{busy ? "در حال ذخیره…" : editing || createdProductId ? "ذخیرهٔ تغییرات" : "ثبت کالا یا خدمت"}</SubmitButton></div>
       </form>
+    </Modal>
+    <Modal open={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title="دسته‌بندی تازه" description="پس از ثبت، این دسته‌بندی در فرم کالا انتخاب می‌شود.">
+      <form className="product-category-form" onSubmit={(event) => void createCategory(event)}><Field label="نام دسته‌بندی" value={categoryName} onChange={setCategoryName} required placeholder="مثلاً: لوازم تحریر" />{categoryError && <p className="form-error" role="alert">{categoryError}</p>}<div className="modal-form-actions"><SubmitButton busy={categoryBusy}>ثبت و انتخاب دسته</SubmitButton></div></form>
     </Modal>
     <Modal open={!!archiveTarget} onClose={() => setArchiveTarget(null)} title="بایگانی کالا یا خدمت" description="این مورد از فهرست انتخاب‌های تازه کنار گذاشته می‌شود؛ اسناد و سوابق قبلی باقی می‌مانند.">
       <p>«{archiveTarget?.name}» بایگانی شود؟</p>{error && <InlineError error={error} />}<div className="modal-form-actions"><button type="button" className="button button-danger" disabled={busy} onClick={() => void archive()}>{busy ? "در حال بایگانی…" : "تأیید بایگانی"}</button></div>
@@ -154,8 +205,122 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
   </PageHeader>;
 }
 
+function MoneyInput({ label, value, onChange, currency, hint, required = false }: { label: string; value: string; onChange: (value: string) => void; currency: MoneyCurrency; hint?: string; required?: boolean }) {
+  const preview = value.trim() ? (() => { try { return money(toRial(value, currency), currency); } catch { return "مبلغ را کامل کنید"; } })() : "—";
+  return <label className="field product-money-field">
+    <span className="field-label">{label}{required && <i> *</i>}</span>
+    <input type="text" inputMode={currency === "IRT" ? "decimal" : "numeric"} dir="ltr" value={formatMoneyDraft(value, currency)} onChange={(event) => onChange(normalizeMoneyDraft(event.target.value, currency))} placeholder="۰" required={required} />
+    <span className="product-money-preview"><small>{hint ?? "پیش‌نمایش مبلغ"}</small><strong>{preview}</strong></span>
+  </label>;
+}
+
+function ProductMediaEditor({ productId, images, primaryImageId, onPrimaryImageIdChange, primaryFile, onPrimaryFileChange, galleryFiles, onGalleryFilesChange, removedImageIds, onRemovedImageIdsChange }: {
+  productId?: string;
+  images: ProductImage[];
+  primaryImageId: string;
+  onPrimaryImageIdChange: (id: string) => void;
+  primaryFile: QueuedProductImage | null;
+  onPrimaryFileChange: (image: QueuedProductImage | null) => void;
+  galleryFiles: QueuedProductImage[];
+  onGalleryFilesChange: (images: QueuedProductImage[] | ((current: QueuedProductImage[]) => QueuedProductImage[])) => void;
+  removedImageIds: string[];
+  onRemovedImageIdsChange: (ids: string[] | ((current: string[]) => string[])) => void;
+}) {
+  const [storedUrls, setStoredUrls] = useState<Record<string, string>>({});
+  const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
+  const [imageError, setImageError] = useState("");
+  const visibleImages = images.filter((image) => !removedImageIds.includes(image.id));
+  const preferredPrimary = visibleImages.find((image) => image.id === primaryImageId) ?? visibleImages.find((image) => image.position === 0);
+  const galleryImages = visibleImages.filter((image) => image.id !== preferredPrimary?.id && !(primaryFile && image.position === 0));
+  const primaryUrl = primaryFile ? localUrls[primaryFile.id] : preferredPrimary ? storedUrls[preferredPrimary.id] : undefined;
+  const slotsLeft = Math.max(0, 8 - galleryImages.length - galleryFiles.length);
+
+  useEffect(() => {
+    let active = true;
+    const urls: string[] = [];
+    if (!productId || !images.length) { setStoredUrls({}); return () => { active = false; }; }
+    void Promise.all(images.map(async (image) => {
+      const blob = await downloadFile(image.path);
+      const url = URL.createObjectURL(blob);
+      urls.push(url);
+      return [image.id, url] as const;
+    })).then((entries) => { if (active) setStoredUrls(Object.fromEntries(entries)); })
+      .catch(() => { if (active) setImageError("بارگیری تصاویر قبلی انجام نشد. اتصال را بررسی و دوباره تلاش کنید."); });
+    return () => { active = false; urls.forEach((url) => URL.revokeObjectURL(url)); };
+  }, [productId, images]);
+
+  useEffect(() => {
+    const entries: Array<[string, string]> = [];
+    if (primaryFile) entries.push([primaryFile.id, URL.createObjectURL(primaryFile.file)]);
+    galleryFiles.forEach((image) => entries.push([image.id, URL.createObjectURL(image.file)]));
+    setLocalUrls(Object.fromEntries(entries));
+    return () => entries.forEach(([, url]) => URL.revokeObjectURL(url));
+  }, [primaryFile, galleryFiles]);
+
+  const acceptFile = (file: File) => {
+    const allowedType = ["image/jpeg", "image/png", "image/webp"].includes(file.type) || /\.(?:jpe?g|png|webp)$/i.test(file.name);
+    if (!allowedType) { setImageError("فقط تصویر JPEG، PNG یا WebP انتخاب کنید."); return false; }
+    if (file.size > 10 * 1024 * 1024) { setImageError("حجم هر تصویر نباید بیشتر از ۱۰ مگابایت باشد."); return false; }
+    return true;
+  };
+  const choosePrimary = (file?: File) => {
+    setImageError("");
+    if (!file) return;
+    if (!acceptFile(file)) return;
+    onPrimaryImageIdChange("");
+    onPrimaryFileChange({ id: crypto.randomUUID(), file });
+  };
+  const chooseGallery = (files: FileList | null) => {
+    setImageError("");
+    if (!files?.length) return;
+    const accepted = Array.from(files).filter(acceptFile);
+    if (accepted.length > slotsLeft) setImageError("گالری هر کالا حداکثر ۸ تصویر دارد؛ ابتدا از تصاویر فعلی کم کنید.");
+    onGalleryFilesChange((current) => [...current, ...accepted.slice(0, slotsLeft).map((file) => ({ id: crypto.randomUUID(), file }))]);
+  };
+  const removeExisting = (image: ProductImage) => {
+    onRemovedImageIdsChange((current) => current.includes(image.id) ? current : [...current, image.id]);
+    if (primaryImageId === image.id) onPrimaryImageIdChange("");
+  };
+
+  return <section className="product-form-section product-media-section"><div className="product-form-section-heading"><span>۵</span><div><h3>تصاویر کالا یا خدمت</h3><p>تصویر اصلی در کارت فروشگاه می‌آید؛ تصاویر دیگر در گالری همان کالا نمایش داده می‌شوند.</p></div></div>
+    <div className="product-media-editor">
+      <div className="product-primary-image"><div className="product-image-preview">{primaryUrl ? <img src={primaryUrl} alt="پیش‌نمایش تصویر اصلی" /> : <div className="product-image-placeholder"><ImagePlus size={25} /><span>تصویر اصلی انتخاب نشده</span></div>}<span className="product-image-role">تصویر اصلی</span></div><label className="button button-secondary product-image-pick"><ImagePlus size={16} />{primaryFile ? "تعویض تصویر اصلی" : preferredPrimary ? "تعویض تصویر اصلی" : "انتخاب تصویر اصلی"}<input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={(event) => { choosePrimary(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></label>{primaryFile && <button type="button" className="button button-text" onClick={() => onPrimaryFileChange(null)}>لغو تصویر تازه</button>}</div>
+      <div className="product-gallery-editor"><div className="product-gallery-heading"><div><strong>گالری تصاویر</strong><small>{galleryImages.length + galleryFiles.length} از ۸ تصویر</small></div><label className={`button button-secondary product-image-pick ${slotsLeft === 0 ? "disabled" : ""}`}><ImagePlus size={16} />افزودن به گالری<input type="file" multiple disabled={slotsLeft === 0} accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={(event) => { chooseGallery(event.currentTarget.files); event.currentTarget.value = ""; }} /></label></div>
+        <div className="product-gallery-grid">{galleryImages.map((image) => <article className="product-gallery-thumb" key={image.id}>{storedUrls[image.id] ? <img src={storedUrls[image.id]} alt="تصویر گالری کالا" /> : <span className="product-image-placeholder"><ImagePlus size={18} /></span>}<div><button type="button" title="تعیین به‌عنوان تصویر اصلی" onClick={() => { onPrimaryFileChange(null); onPrimaryImageIdChange(image.id); }}><Star size={15} />تصویر اصلی</button><button type="button" title="حذف تصویر" onClick={() => removeExisting(image)}><Trash2 size={15} />حذف</button></div></article>)}{galleryFiles.map((image) => <article className="product-gallery-thumb is-pending" key={image.id}>{localUrls[image.id] ? <img src={localUrls[image.id]} alt={image.file.name} /> : <span className="product-image-placeholder"><ImagePlus size={18} /></span>}<div><button type="button" title="استفاده به‌عنوان تصویر اصلی" onClick={() => { onGalleryFilesChange((current) => current.filter((item) => item.id !== image.id)); onPrimaryFileChange(image); onPrimaryImageIdChange(""); }}><Star size={15} />تصویر اصلی</button><button type="button" title="حذف تصویر انتخاب‌شده" onClick={() => onGalleryFilesChange((current) => current.filter((item) => item.id !== image.id))}><Trash2 size={15} />حذف</button></div></article>)}{galleryImages.length + galleryFiles.length === 0 && <div className="product-gallery-empty">پس از افزودن تصویر، پیش‌نمایش گالری اینجا دیده می‌شود.</div>}</div>
+      </div>
+    </div>
+    {imageError && <p className="form-error" role="alert">{imageError}</p>}
+    {removedImageIds.length > 0 && <p className="product-media-hint">{removedImageIds.length} تصویر پس از ذخیره حذف می‌شود.</p>}
+    {!productId && <p className="product-media-hint">تصاویر تا زمان ثبت کالا موقتاً در این صفحه نگه داشته می‌شوند.</p>}
+    <p className="product-media-hint">تصاویر بدون تغییر اندازه و با فشرده‌سازی WebP بدون افت کیفیت ذخیره می‌شوند؛ حداکثر حجم هر فایل ۱۰ مگابایت است.</p>
+  </section>;
+}
+
+async function uploadProductImage(productId: string, image: QueuedProductImage, placement: "PRIMARY" | "GALLERY") {
+  const body = new FormData();
+  body.append("file", image.file);
+  body.append("placement", placement);
+  return adminApi<ProductImage>(`/products/${productId}/images`, { method: "POST", body });
+}
+
+function normalizeMoneyDraft(value: string, currency: MoneyCurrency) {
+  const ascii = value.replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/[٬,\s]/g, "").replace(/٫/g, ".");
+  if (currency === "IRR") return ascii.replace(/\D/g, "");
+  const [whole = "", ...fractions] = ascii.split(".");
+  const digits = whole.replace(/\D/g, "");
+  return ascii.includes(".") ? `${digits}.${fractions.join("").replace(/\D/g, "").slice(0, 1)}` : digits;
+}
+
+function formatMoneyDraft(value: string, currency: MoneyCurrency) {
+  if (!value) return "";
+  const [whole = "", fraction] = value.split(".");
+  const formattedWhole = whole ? new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 }).format(BigInt(whole)) : "";
+  if (currency === "IRT" && fraction !== undefined) return `${formattedWhole}٫${fraction}`;
+  return formattedWhole;
+}
+
 function toRial(value: string, currency: MoneyCurrency) {
-  const normalized = value.replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).replace(/[٬,\s]/g, "").trim();
+  const normalized = value.replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit))).replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/[٬,\s]/g, "").trim();
   if (currency === "IRT") {
     const match = /^(\d+)(?:[.٫](\d))?$/.exec(normalized);
     if (!match) throw new Error("مبلغ تومان حداکثر یک رقم اعشار می‌پذیرد.");

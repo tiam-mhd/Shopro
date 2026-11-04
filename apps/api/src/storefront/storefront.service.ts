@@ -173,6 +173,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
           unit: { select: { labelFa: true, code: true, precision: true } },
           category: { select: { name: true } },
           balances: { where: { branchId: store.branchId }, select: { quantityOnHand: true } },
+          images: { where: { branchId: store.branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } },
         } },
       },
       orderBy: [{ displayOrder: "asc" }, { id: "asc" }], take: limit + 1,
@@ -190,9 +191,20 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         unitPriceRial: unitPrice.toString(), taxRateBasisPoints: product.taxRateBasisPoints,
         stockLabel: stock.stockLabel, available: stock.available, quantityOnHand: stock.quantityOnHand,
         minimumQuantity: row.minimumQuantity.toString(), maximumQuantity: row.maximumQuantity?.toString() ?? null,
+        images: product.images.map((image) => ({ id: image.id, position: image.position, url: `/api/v1/public/stores/${encodeURIComponent(store.slug)}/products/${product.id}/images/${image.id}` })),
       };
     });
     return cursorPage(products, limit, (row) => row.id);
+  }
+
+  async publicProductImage(slug: string, productId: string, imageId: string, ipAddress?: string) {
+    await this.checkPublicRateLimit("product-image", ipAddress, 120);
+    const store = await this.findPublicStore(slug, false);
+    const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId, isPublished: true, canOrder: true, product: { isActive: true, archivedAt: null } }, select: { id: true } });
+    if (!listing) throw new NotFoundException("تصویر کالا پیدا نشد.");
+    const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId, businessId: store.businessId, branchId: store.branchId }, select: { id: true } });
+    if (!image) throw new NotFoundException("تصویر کالا پیدا نشد.");
+    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId, imageId });
   }
 
   async settings(user: AuthenticatedUser) {

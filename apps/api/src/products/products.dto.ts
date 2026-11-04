@@ -28,6 +28,9 @@ export class CreateProductDto {
   @IsOptional() @IsString() @Length(1, 30)
   reorderPoint?: string;
 
+  @IsOptional() @IsString() @Length(1, 30)
+  initialQuantity?: string;
+
   @IsOptional() @IsInt() @Min(0) @Max(10000)
   taxRateBasisPoints?: number;
 }
@@ -49,6 +52,8 @@ export class UpdateProductDto {
   defaultCostRial?: string | null;
   @IsOptional() @IsString() @Length(1, 30)
   reorderPoint?: string | null;
+  @IsOptional() @IsString() @Length(1, 30)
+  currentQuantity?: string;
   @IsOptional() @IsInt() @Min(0) @Max(10000)
   taxRateBasisPoints?: number;
   @IsOptional() @IsBoolean()

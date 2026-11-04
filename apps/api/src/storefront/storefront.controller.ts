@@ -36,6 +36,17 @@ export class PublicStorefrontController {
   @Public() @Get("stores/:slug/products") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
   products(@Param("slug") slug: string, @Query("q") q: string | undefined, @Query("limit") limit: string | undefined, @Query("cursor") cursor: string | undefined, @Req() request: AppRequest) { return this.storefront.publicProducts(slug, q, limit, cursor, request.ip); }
 
+  @Public() @Get("stores/:slug/products/:productId/images/:imageId") @Header("Content-Type", "image/webp") @Header("Cache-Control", "public, max-age=3600, immutable") @Header("X-Content-Type-Options", "nosniff") @Header("Cross-Origin-Resource-Policy", "cross-origin")
+  async productImage(@Param("slug") slug: string, @Param("productId", UuidParamPipe) productId: string, @Param("imageId", UuidParamPipe) imageId: string, @Req() request: AppRequest, @Res() response: Response) {
+    const image = await this.storefront.publicProductImage(slug, productId, imageId, request.ip);
+    response.setHeader("Content-Type", "image/webp");
+    response.setHeader("Content-Length", String(image.byteLength));
+    response.setHeader("Cache-Control", "public, max-age=3600, immutable");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    response.send(image);
+  }
+
   @Public() @Post("stores/:slug/otp/request") @HttpCode(HttpStatus.OK) @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
   requestOtp(@Param("slug") slug: string, @Body() dto: StorefrontOtpDto, @Req() request: AppRequest) { return this.storefront.requestCheckoutOtp(slug, dto.phone, request); }
 
