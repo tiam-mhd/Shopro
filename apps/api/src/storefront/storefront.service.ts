@@ -322,7 +322,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
           subtotalRial: subtotal, taxRial: tax, deliveryFeeRial: deliveryFee, totalRial: subtotal + tax + deliveryFee,
           paymentStatus: "NOT_DUE", status: "SUBMITTED",
           items: { create: computed.map((item, index) => ({
-            businessId: store.businessId, branchId: store.branchId, listingId: item.listing.id,
+            listingId: item.listing.id,
             productId: item.listing.product.id, titleSnapshot: item.listing.publicTitle?.trim() || item.listing.product.name,
             skuSnapshot: item.listing.product.sku, unitCodeSnapshot: item.listing.product.unit.code,
             quantity: new Prisma.Decimal(quantityText(item.quantity)), unitPriceRial: item.unitPrice,

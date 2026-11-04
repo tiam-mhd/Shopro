@@ -9,6 +9,8 @@ import { AppModule } from "../apps/api/dist/app.module.js";
 import { ApiExceptionFilter } from "../apps/api/dist/common/api-exception.filter.js";
 import { PrismaService } from "../apps/api/dist/prisma/prisma.service.js";
 import { lockAttachmentMutationDuringBackup } from "../apps/api/dist/expenses/attachment-backup-lock.js";
+import { ParsgreenService } from "../apps/api/dist/auth/parsgreen.service.js";
+import { taxRial } from "../apps/api/dist/storefront/storefront-core.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL must target an isolated test database.");
@@ -20,11 +22,13 @@ if (!["localhost", "127.0.0.1", "::1"].includes(databaseUrl.hostname.replace(/^\
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const prisma = new PrismaService();
-const fixtures = { businesses: [], users: [], expenses: [], stockCounts: [] };
+const fixtures = { businesses: [], users: [], expenses: [], stockCounts: [], storefronts: [], storefrontOrders: [], storefrontOtpPhones: [] };
 const previousAttachmentStorageDir = process.env.ATTACHMENT_STORAGE_DIR;
 const previousSessionSecret = process.env.SESSION_SECRET;
+const previousOtpHashSecret = process.env.OTP_HASH_SECRET;
 let attachmentRoot;
 let auditFailureTriggerInstalled = false;
+let restoreSmsAdapter;
 let app;
 
 try {
@@ -105,6 +109,7 @@ try {
   attachmentRoot = await mkdtemp(join(realTempParent, "shopro-http-attachments-"));
   process.env.ATTACHMENT_STORAGE_DIR = attachmentRoot;
   process.env.SESSION_SECRET = "shopro-http-attachment-test-session-secret-32-characters";
+  process.env.OTP_HASH_SECRET = "shopro-http-storefront-test-otp-secret-32-characters";
 
   app = await NestFactory.create(AppModule, { logger: false });
   app.setGlobalPrefix("api/v1");
@@ -126,6 +131,12 @@ try {
     const payload = await response.json();
     return { status: response.status, payload };
   };
+
+  const parsgreen = app.get(ParsgreenService);
+  const originalSendOtp = parsgreen.sendOtp.bind(parsgreen);
+  const sentStorefrontOtpCodes = new Map();
+  parsgreen.sendOtp = async (phone, code) => { sentStorefrontOtpCodes.set(phone, code); };
+  restoreSmsAdapter = () => { parsgreen.sendOtp = originalSendOtp; };
 
   const onboardingOwner = await createSessionUser("Onboarding retry fixture");
   const creationKey = randomUUID();
@@ -169,6 +180,76 @@ try {
   const scopedList = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedList.status, 200);
   assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Countable A", "Private A"], "list results must not leak a different tenant's products");
+
+  const storefrontScope = { auth: owner, businessId: businessA.id, branchId: branchA1.id };
+  const missingStorefront = await request("/storefront", storefrontScope);
+  assert.equal(missingStorefront.status, 200, `storefront settings GET should work against the migrated schema: ${JSON.stringify(missingStorefront.payload)}`);
+  assert.equal(missingStorefront.payload.settings, null);
+  const storefrontSlug = `http-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const savedStorefront = await request("/storefront", {
+    ...storefrontScope, method: "PATCH",
+    body: {
+      publicName: "HTTP storefront fixture", slug: storefrontSlug, description: "HTTP public flow",
+      phone: owner.user.phone, address: "", showAddress: false, acceptsPickup: true, acceptsLocalDelivery: false,
+      deliveryFeeRial: "0", showExactStock: false, preparationMinutes: 10,
+      paymentInstructions: "پرداخت پس از پذیرش سفارش", cancellationPolicy: "لغو تا پیش از پذیرش",
+      status: "PUBLISHED",
+    },
+  });
+  assert.equal(savedStorefront.status, 200, `storefront settings should save: ${JSON.stringify(savedStorefront.payload)}`);
+  fixtures.storefronts.push(savedStorefront.payload.settings.id);
+  const storefrontListings = await request("/storefront/listings", storefrontScope);
+  assert.equal(storefrontListings.status, 200);
+  assert.ok(storefrontListings.payload.items.some(({ productId }) => productId === productA.id), "management should list the branch product");
+  const savedListing = await request(`/storefront/listings/${productA.id}`, {
+    ...storefrontScope, method: "PATCH",
+    body: { publicTitle: "HTTP public product", publicDescription: "Public catalog fixture", publicPriceRial: "1250", isPublished: true, canOrder: true, stockPolicy: "APPROXIMATE", minimumQuantity: "1", displayOrder: 0 },
+  });
+  assert.equal(savedListing.status, 200, `storefront listing should save: ${JSON.stringify(savedListing.payload)}`);
+  const publicStore = await request(`/public/stores/${storefrontSlug}`);
+  assert.equal(publicStore.status, 200, `public storefront should load: ${JSON.stringify(publicStore.payload)}`);
+  assert.equal(publicStore.payload.acceptingOrders, true);
+  const publicCatalog = await request(`/public/stores/${storefrontSlug}/products`);
+  assert.equal(publicCatalog.status, 200, `public catalog should load: ${JSON.stringify(publicCatalog.payload)}`);
+  const publicProduct = publicCatalog.payload.items.find(({ id }) => id === savedListing.payload.id);
+  assert.ok(publicProduct, "published listing should appear in the public catalog");
+
+  const storefrontPhone = `09${randomUUID().replace(/\D/g, "").padEnd(9, "0").slice(0, 9)}`;
+  fixtures.storefrontOtpPhones.push(storefrontPhone);
+  const otpRequest = await request(`/public/stores/${storefrontSlug}/otp/request`, { method: "POST", body: { phone: storefrontPhone } });
+  assert.equal(otpRequest.status, 200, `public checkout OTP request should succeed: ${JSON.stringify(otpRequest.payload)}`);
+  const otpCode = sentStorefrontOtpCodes.get(storefrontPhone);
+  assert.match(otpCode ?? "", /^\d{6}$/, "OTP delivery should use the configured adapter");
+  const otpVerification = await request(`/public/stores/${storefrontSlug}/otp/verify`, { method: "POST", body: { phone: storefrontPhone, code: otpCode } });
+  assert.equal(otpVerification.status, 200, `public checkout OTP verification should succeed: ${JSON.stringify(otpVerification.payload)}`);
+  const unitPrice = BigInt(publicProduct.unitPriceRial);
+  const expectedTotal = unitPrice + taxRial(unitPrice, publicProduct.taxRateBasisPoints);
+  const storefrontOrder = await request(`/public/stores/${storefrontSlug}/orders`, {
+    method: "POST", extraHeaders: { "idempotency-key": `http-storefront-${randomUUID()}` },
+    body: {
+      customerName: "HTTP checkout customer", customerPhone: storefrontPhone, checkoutToken: otpVerification.payload.checkoutToken,
+      deliveryMethod: "PICKUP", expectedTotalRial: expectedTotal.toString(),
+      lines: [{ listingId: publicProduct.id, quantity: "1", expectedUnitPriceRial: publicProduct.unitPriceRial, expectedTaxRateBasisPoints: publicProduct.taxRateBasisPoints }],
+    },
+  });
+  assert.equal(storefrontOrder.status, 201, `public checkout should create an order: ${JSON.stringify(storefrontOrder.payload)}`);
+  fixtures.storefrontOrders.push(storefrontOrder.payload.id);
+  const customerTracking = await request(`/public/orders/${storefrontOrder.payload.trackingToken}`);
+  assert.equal(customerTracking.status, 200, `customer tracking should load: ${JSON.stringify(customerTracking.payload)}`);
+  assert.equal(customerTracking.payload.status, "SUBMITTED");
+  const storefrontOrderQueue = await request("/storefront/orders?limit=20", storefrontScope);
+  assert.equal(storefrontOrderQueue.status, 200);
+  assert.ok(storefrontOrderQueue.payload.items.some(({ id }) => id === storefrontOrder.payload.id), "management should show the public order");
+  const storefrontOrderDetail = await request(`/storefront/orders/${storefrontOrder.payload.id}`, storefrontScope);
+  assert.equal(storefrontOrderDetail.status, 200);
+  const rejectedStorefrontOrder = await request(`/storefront/orders/${storefrontOrder.payload.id}/reject`, {
+    ...storefrontScope, method: "POST", body: { reason: "HTTP integration rejection" },
+  });
+  assert.equal(rejectedStorefrontOrder.status, 201, `owner should be able to reject a submitted order: ${JSON.stringify(rejectedStorefrontOrder.payload)}`);
+  const rejectedCustomerTracking = await request(`/public/orders/${storefrontOrder.payload.trackingToken}`);
+  assert.equal(rejectedCustomerTracking.status, 200);
+  assert.equal(rejectedCustomerTracking.payload.status, "REJECTED", "customer tracking should reflect management updates");
+
   const stockCountDraft = await request("/inventory/counts", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
     body: { txnDate: "2026-11-04", reason: "HTTP stock count regression", lines: [{ productId: stockProductA.id, countedQuantity: "15" }] },
@@ -459,8 +540,9 @@ try {
   await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_audit ON audit_events");
   await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = false;
-  console.log("HTTP authorization integration passed: tenant/branch isolation, suspended-membership and inactive-branch denial, manager business/branch/product allow paths, accountant product allow and business/branch denial, member PII masking, owner-only access, inventory stock-count draft create/update and audit, catalog-priced cashier sale posting, cashier price/discount and mixed product-field denial, viewer product/sale write denial, cashier report denial, CSRF rollback, UUID validation, owner write, private attachment upload/download/removal and audit, advisory attachment lock, and database-trigger rollback for product create/update, party create/update, expense category, and expense draft audits.");
+  console.log("HTTP integration passed: tenant/branch authorization, storefront settings GET/PATCH, listing management, public store and catalog, OTP verification, public checkout, customer tracking, staff order rejection, inventory counts, accounting, attachments, audit and rollback.");
 } finally {
+  restoreSmsAdapter?.();
   if (app) await app.close();
   try {
     if (auditFailureTriggerInstalled) {
@@ -476,6 +558,19 @@ try {
       await prisma.expense.deleteMany({ where: { id: expenseId } });
     }
     for (const stockCountId of fixtures.stockCounts) await prisma.stockCount.deleteMany({ where: { id: stockCountId } });
+    for (const orderId of fixtures.storefrontOrders) {
+      await prisma.storefrontReservation.deleteMany({ where: { orderId } });
+      await prisma.storefrontPaymentAttempt.deleteMany({ where: { orderId } });
+      await prisma.storefrontOrderEvent.deleteMany({ where: { orderId } });
+      await prisma.storefrontOrderItem.deleteMany({ where: { orderId } });
+      await prisma.storefrontOrder.deleteMany({ where: { id: orderId } });
+    }
+    for (const storefrontId of fixtures.storefronts) {
+      await prisma.storefrontOtpGrant.deleteMany({ where: { storefrontId } });
+      await prisma.storefrontListing.deleteMany({ where: { storefrontId } });
+      await prisma.storefront.deleteMany({ where: { id: storefrontId } });
+    }
+    for (const phone of fixtures.storefrontOtpPhones) await prisma.otpChallenge.deleteMany({ where: { phone, purpose: "STOREFRONT_CHECKOUT" } });
     for (const id of fixtures.businesses) await prisma.business.deleteMany({ where: { id } });
     for (const id of fixtures.users) await prisma.user.deleteMany({ where: { id } });
   } finally {
@@ -494,5 +589,7 @@ try {
     else process.env.ATTACHMENT_STORAGE_DIR = previousAttachmentStorageDir;
     if (previousSessionSecret === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = previousSessionSecret;
+    if (previousOtpHashSecret === undefined) delete process.env.OTP_HASH_SECRET;
+    else process.env.OTP_HASH_SECRET = previousOtpHashSecret;
   }
 }
