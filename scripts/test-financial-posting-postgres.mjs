@@ -20,6 +20,7 @@ const prisma = new PrismaService();
 const accounting = new AccountingService(prisma);
 let businessId;
 let userId;
+let auditFailureTriggerInstalled = false;
 try {
   await prisma.$connect();
   const user = await prisma.user.create({ data: { phone: `09${String(Date.now()).slice(-9)}`, displayName: "Financial integration test" } });
@@ -86,6 +87,74 @@ try {
   const purchases = new PurchasesService(prisma, accounting);
   const reports = new ReportsService(prisma);
   const expenses = new ExpensesService(prisma, accounting, new AttachmentStorageService());
+  const expenseCategory = await prisma.expenseCategory.create({ data: { businessId, name: "Test operating expense", expenseLedgerAccountId: accountId.get("cost_of_goods") } });
+
+  const saleDraftForCancellation = await sales.createDraft(userA, {
+    customerId: customer.id,
+    txnDate: "2026-11-02",
+    lines: [{ productId: product.id, quantity: "1" }],
+  }, `test-sale-cancel-draft-${randomUUID()}`, request);
+  const purchaseDraftForCancellation = await purchases.create(userB, {
+    supplierId: supplier.id,
+    txnDate: "2026-11-02",
+    lines: [{ productId: product.id, quantity: "1", unitCostRial: "900000" }],
+  }, request);
+  const expenseDraftForCancellation = await expenses.create(userA, { amountRial: "45000", categoryId: expenseCategory.id, txnDate: "2026-11-03", note: "Integration expense draft cancellation" }, request);
+
+  const salesAuditFailurePayload = { payments: [{ amountRial: "500000", financeAccountId: financeAccounts[0].id, method: "CASH" }] };
+  const salesAuditFailureKey = `test-sales-post-audit-failure-${randomUUID()}`;
+  const purchaseAuditFailurePayload = { payments: [{ amountRial: "900000", financeAccountId: financeAccounts[1].id, method: "CASH" }] };
+  const purchaseAuditFailureKey = `test-purchase-post-audit-failure-${randomUUID()}`;
+  const expenseAuditFailurePayload = { financeAccountId: financeAccounts[0].id };
+  const expenseAuditFailureKey = `test-expense-post-audit-failure-${randomUUID()}`;
+  await prisma.$executeRawUnsafe(`CREATE FUNCTION shopro_test_reject_post_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('sales.posted', 'purchase.posted', 'expense.posted') THEN RAISE EXCEPTION 'injected posting audit failure'; END IF; RETURN NEW; END $$`);
+  await prisma.$executeRawUnsafe("CREATE TRIGGER shopro_test_reject_post_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION shopro_test_reject_post_audit()");
+  auditFailureTriggerInstalled = true;
+  await assert.rejects(() => sales.post(userA, saleDraftForCancellation.id, salesAuditFailurePayload, salesAuditFailureKey, request), () => true, "a failed sale audit insert must abort posting");
+  await assert.rejects(() => purchases.post(userB, purchaseDraftForCancellation.id, purchaseAuditFailurePayload, purchaseAuditFailureKey, request), () => true, "a failed purchase audit insert must abort posting");
+  await assert.rejects(() => expenses.post(userA, expenseDraftForCancellation.id, expenseAuditFailurePayload, expenseAuditFailureKey, request), () => true, "a failed expense audit insert must abort posting");
+  assert.equal((await prisma.salesInvoice.findFirstOrThrow({ where: { id: saleDraftForCancellation.id, businessId } })).status, "DRAFT", "failed sale posting audit must leave the invoice draft");
+  assert.equal((await prisma.salesInvoice.findFirstOrThrow({ where: { id: saleDraftForCancellation.id, businessId } })).invoiceNo, null, "failed sale posting audit must roll back the invoice number");
+  assert.equal((await prisma.purchase.findFirstOrThrow({ where: { id: purchaseDraftForCancellation.id, businessId } })).status, "DRAFT", "failed purchase posting audit must leave the purchase draft");
+  assert.equal((await prisma.purchase.findFirstOrThrow({ where: { id: purchaseDraftForCancellation.id, businessId } })).purchaseNo, null, "failed purchase posting audit must roll back the purchase number");
+  assert.equal((await prisma.expense.findFirstOrThrow({ where: { id: expenseDraftForCancellation.id, businessId } })).status, "DRAFT", "failed expense posting audit must leave the expense draft");
+  assert.equal((await prisma.expense.findFirstOrThrow({ where: { id: expenseDraftForCancellation.id, businessId } })).expenseNo, null, "failed expense posting audit must roll back the expense number");
+  for (const id of [saleDraftForCancellation.id, purchaseDraftForCancellation.id, expenseDraftForCancellation.id]) {
+    assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceId: id } }), 0, "failed financial posting audits must roll back journal entries");
+  }
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId } }), 0, "failed financial posting audits must not leave any cash rows");
+  assert.equal(await prisma.inventoryMovement.count({ where: { businessId } }), 1, "failed financial posting audits must roll back stock movements");
+  assert.equal(await prisma.inventoryBalance.count({ where: { businessId, branchId: branchB.id } }), 0, "failed purchase audit must not create a branch inventory balance");
+  assert.equal(await prisma.documentSequence.count({ where: { businessId, type: { in: ["SALE", "PURCHASE", "EXPENSE"] } } }), 0, "failed financial posting audits must roll back document sequences");
+  assert.equal(await prisma.auditEvent.count({ where: { businessId, action: { in: ["sales.posted", "purchase.posted", "expense.posted"] } } }), 0, "failed audit inserts must leave no posted-action audit row");
+  const inventoryAfterAuditFailures = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchA.id, productId: product.id } } });
+  assert.equal(quantityMilli(inventoryAfterAuditFailures.quantityOnHand), 3_000n);
+  assert.equal(inventoryAfterAuditFailures.inventoryValueRial, 3_000_000n);
+  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).defaultCostRial, 1_000_000n, "failed purchase audit must roll back weighted-cost changes");
+  assert.equal(await accounting.existingIdempotent(userId, businessId, salesAuditFailureKey, accounting.idempotencyHash({ id: saleDraftForCancellation.id, payments: salesAuditFailurePayload.payments })), null, "failed sale audit must roll back its idempotency record");
+  assert.equal(await accounting.existingIdempotent(userId, businessId, purchaseAuditFailureKey, accounting.idempotencyHash({ id: purchaseDraftForCancellation.id, payments: purchaseAuditFailurePayload.payments })), null, "failed purchase audit must roll back its idempotency record");
+  assert.equal(await accounting.existingIdempotent(userId, businessId, expenseAuditFailureKey, accounting.idempotencyHash({ id: expenseDraftForCancellation.id, financeAccountId: expenseAuditFailurePayload.financeAccountId })), null, "failed expense audit must roll back its idempotency record");
+  await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_post_audit ON audit_events");
+  await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_post_audit()");
+  auditFailureTriggerInstalled = false;
+
+  const saleDraftCancellationKey = `test-sale-cancel-${randomUUID()}`;
+  const saleDraftCancellationPayload = { reason: "Integration draft cancellation" };
+  const cancelledSaleDraft = await sales.void(userA, saleDraftForCancellation.id, saleDraftCancellationPayload, saleDraftCancellationKey, request);
+  assert.equal(cancelledSaleDraft.status, "VOIDED");
+  assert.equal(cancelledSaleDraft.reversalJournalId, null, "cancelling an unposted sale must not create a reversal journal");
+  assert.deepEqual(
+    await sales.void(userA, saleDraftForCancellation.id, saleDraftCancellationPayload, saleDraftCancellationKey, request),
+    cancelledSaleDraft,
+    "retrying a draft cancellation with the same idempotency key must return the saved result",
+  );
+  assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceId: saleDraftForCancellation.id } }), 0, "cancelling a sale draft must not create journal entries");
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchA.id } }), 0, "cancelling a sale draft must not create cash transactions");
+  assert.equal(await prisma.inventoryMovement.count({ where: { businessId, branchId: branchA.id, sourceId: saleDraftForCancellation.id } }), 0, "cancelling a sale draft must not move stock");
+  const inventoryAfterSaleDraftCancellation = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchA.id, productId: product.id } } });
+  assert.equal(quantityMilli(inventoryAfterSaleDraftCancellation.quantityOnHand), 3_000n);
+  assert.equal(inventoryAfterSaleDraftCancellation.inventoryValueRial, 3_000_000n);
+  assert.equal(await prisma.auditEvent.count({ where: { businessId, entityId: saleDraftForCancellation.id, action: "sales.voided" } }), 1, "sale draft cancellation must be audited");
 
   const saleDraft = await sales.createDraft(userA, {
     customerId: customer.id,
@@ -122,6 +191,13 @@ try {
   assert.equal(purchase.balanceRial, "1200000");
   assert.deepEqual(concurrentPurchaseRetry, purchase, "concurrent retries must return the same saved purchase result");
   assert.deepEqual(await purchases.post(userB, purchaseDraft.id, purchasePayload, purchasePostKey, request), purchase, "retrying the same purchase posting key must return the saved result");
+  await assert.rejects(() => purchases.deleteDraft(userB, purchase.id, request), (error) => error?.getStatus?.() === 409, "a posted purchase must be corrected with a reversal, not draft deletion");
+  assert.equal((await prisma.purchase.findFirstOrThrow({ where: { id: purchase.id, businessId } })).status, "POSTED", "a failed draft deletion must retain the posted purchase");
+  assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceType: "PURCHASE", sourceId: purchase.id, status: "POSTED" } }), 1, "a failed draft deletion must preserve the posted purchase journal");
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }), 1, "a failed draft deletion must preserve purchase cash rows");
+  const inventoryAfterRejectedPurchaseDelete = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } });
+  assert.equal(quantityMilli(inventoryAfterRejectedPurchaseDelete.quantityOnHand), 2_000n);
+  assert.equal(inventoryAfterRejectedPurchaseDelete.inventoryValueRial, 2_400_000n);
 
   for (const [sourceType, sourceId] of [["SALE", sale.id], ["PURCHASE", purchase.id]]) {
     const journals = await prisma.journalEntry.findMany({ where: { businessId, sourceType, sourceId }, include: { lines: true } });
@@ -136,6 +212,21 @@ try {
   const purchaseCash = await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id, kind: "PAYMENT", journalEntryId: purchase.journalEntryId } });
   assert.equal(salesCash, 1, "sale idempotent retry must not create a duplicate receipt");
   assert.equal(purchaseCash, 1, "purchase idempotent retry must not create a duplicate payment");
+
+  const branchBFinancialBeforeDraftCancellation = {
+    cashTransactions: await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }),
+    inventory: await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } }),
+  };
+  const deletedPurchaseDraft = await purchases.deleteDraft(userB, purchaseDraftForCancellation.id, request);
+  assert.deepEqual(deletedPurchaseDraft, { id: purchaseDraftForCancellation.id, status: "DELETED" });
+  assert.equal(await prisma.purchase.findFirst({ where: { id: purchaseDraftForCancellation.id, businessId } }), null, "a cancelled purchase draft must be removed");
+  assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceId: purchaseDraftForCancellation.id } }), 0, "deleting a purchase draft must not create journal entries");
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }), branchBFinancialBeforeDraftCancellation.cashTransactions, "deleting a purchase draft must not create cash transactions");
+  assert.equal(await prisma.inventoryMovement.count({ where: { businessId, branchId: branchB.id, sourceId: purchaseDraftForCancellation.id } }), 0, "deleting a purchase draft must not move stock");
+  const branchBInventoryAfterDraftCancellation = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } });
+  assert.equal(branchBInventoryAfterDraftCancellation.quantityOnHand.toString(), branchBFinancialBeforeDraftCancellation.inventory.quantityOnHand.toString(), "deleting a purchase draft must not change stock quantity");
+  assert.equal(branchBInventoryAfterDraftCancellation.inventoryValueRial, branchBFinancialBeforeDraftCancellation.inventory.inventoryValueRial, "deleting a purchase draft must not change inventory value");
+  assert.equal(await prisma.auditEvent.count({ where: { businessId, entityId: purchaseDraftForCancellation.id, action: "purchase.draft.deleted" } }), 1, "purchase draft deletion must be audited");
 
   const purchaseVoidKey = `test-purchase-void-${randomUUID()}`;
   const purchaseVoidPayload = { reason: "Integration purchase reversal" };
@@ -302,9 +393,22 @@ try {
   const receivables = await reports.partyBalances(userA, "receivable");
   assert.deepEqual(receivables.items.map(({ id, balanceRial }) => ({ id, balanceRial })), [{ id: customer.id, balanceRial: "500000" }], "voided sale must be removed from receivables while the partial return remains applied");
 
-  const expenseCategory = await prisma.expenseCategory.create({ data: { businessId, name: "Test operating expense", expenseLedgerAccountId: accountId.get("cost_of_goods") } });
+  const dashboardBeforeExpenseDraftCancellation = await reports.dashboard(userA, "2026-11-01", "2026-11-03");
+  const cashTransactionsBeforeExpenseDraftCancellation = await prisma.cashTransaction.count({ where: { businessId, branchId: branchA.id } });
+  const deletedExpenseDraft = await expenses.deleteDraft(userA, expenseDraftForCancellation.id, request);
+  assert.deepEqual(deletedExpenseDraft, { id: expenseDraftForCancellation.id, status: "DELETED" });
+  assert.equal(await prisma.expense.findFirst({ where: { id: expenseDraftForCancellation.id, businessId } }), null, "a cancelled expense draft must be removed");
+  assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceId: expenseDraftForCancellation.id } }), 0, "deleting an expense draft must not create journal entries");
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchA.id } }), cashTransactionsBeforeExpenseDraftCancellation, "deleting an expense draft must not create a cash transaction");
+  assert.deepEqual(await reports.dashboard(userA, "2026-11-01", "2026-11-03"), dashboardBeforeExpenseDraftCancellation, "deleting an expense draft must not change financial reports");
+  assert.equal(await prisma.auditEvent.count({ where: { businessId, entityId: expenseDraftForCancellation.id, action: "expense.draft.deleted" } }), 1, "expense draft deletion must be audited");
   const expenseDraft = await expenses.create(userA, { amountRial: "300000", categoryId: expenseCategory.id, txnDate: "2026-11-03", note: "Integration expense reversal" }, request);
   const postedExpense = await expenses.post(userA, expenseDraft.id, { financeAccountId: financeAccounts[0].id }, `test-expense-post-${randomUUID()}`, request);
+  const cashTransactionsBeforeRejectedExpenseDelete = await prisma.cashTransaction.count({ where: { businessId, branchId: branchA.id } });
+  await assert.rejects(() => expenses.deleteDraft(userA, postedExpense.id, request), (error) => error?.getStatus?.() === 409, "a posted expense must be corrected with a reversal, not draft deletion");
+  assert.equal((await prisma.expense.findFirstOrThrow({ where: { id: postedExpense.id, businessId } })).status, "POSTED", "a failed draft deletion must retain the posted expense");
+  assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceType: "EXPENSE", sourceId: postedExpense.id, status: "POSTED" } }), 1, "a failed draft deletion must preserve the posted expense journal");
+  assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchA.id } }), cashTransactionsBeforeRejectedExpenseDelete, "a failed draft deletion must preserve expense cash rows");
   const expenseVoidKey = `test-expense-void-${randomUUID()}`;
   const expenseVoidPayload = { reason: "Integration expense void" };
   const expenseVoidAttempts = await Promise.all([
@@ -332,9 +436,14 @@ try {
   assert.equal(afterVoidValue, 2_500_000n, "sale and return voids must restore branch A inventory and purchase void must remove branch B value");
   const allJournalTotals = await prisma.journalLine.aggregate({ where: { businessId }, _sum: { debitRial: true, creditRial: true } });
   assert.equal(allJournalTotals._sum.debitRial, allJournalTotals._sum.creditRial, "all posted, reversed, and reversal journals must reconcile");
-  console.log("PostgreSQL financial posting passed: sale/purchase/expense posting, partial and full returns, concurrent return/refund limits, idempotent sale/purchase/expense voids, dashboard and cash-flow behavior, receivables, and inventory/ledger reconciliation across two branches.");
+  console.log("PostgreSQL financial posting passed: audit-trigger rollback of sale/purchase/expense posting, financially inert and audited cancellation of sale/purchase/expense drafts, protected posted purchase/expense records, sale/purchase/expense posting, partial and full returns, concurrent return/refund limits, idempotent sale/purchase/expense voids, dashboard and cash-flow behavior, receivables, and inventory/ledger reconciliation across two branches.");
 } finally {
   try {
+    if (auditFailureTriggerInstalled) {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS shopro_test_reject_post_audit ON audit_events");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS shopro_test_reject_post_audit()");
+      auditFailureTriggerInstalled = false;
+    }
     if (businessId) await prisma.$transaction(async (tx) => {
       await tx.paymentAllocation.deleteMany({ where: { businessId } });
       await tx.cashTransaction.deleteMany({ where: { businessId } });
