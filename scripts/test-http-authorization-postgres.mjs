@@ -41,9 +41,12 @@ try {
   };
 
   const owner = await createSessionUser("HTTP owner fixture");
+  const manager = await createSessionUser("HTTP manager fixture");
+  const accountant = await createSessionUser("HTTP accountant fixture");
   const cashier = await createSessionUser("HTTP cashier fixture");
   const viewer = await createSessionUser("HTTP viewer fixture");
   const outsider = await createSessionUser("HTTP other-tenant fixture");
+  const suspended = await createSessionUser("HTTP suspended fixture");
   const businessA = await prisma.business.create({
     data: { displayName: `HTTP scope A ${randomUUID()}`, businessType: "test", branches: { create: [{ name: "A1", code: "HTTP-A1" }, { name: "A2", code: "HTTP-A2" }] } },
     include: { branches: { select: { id: true } } },
@@ -57,14 +60,20 @@ try {
   const [branchB1] = businessB.branches;
 
   const ownerA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: owner.user.id, role: "OWNER" } });
+  const managerA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: manager.user.id, role: "MANAGER" } });
+  const accountantA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: accountant.user.id, role: "ACCOUNTANT" } });
   const cashierA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: cashier.user.id, role: "CASHIER" } });
   const viewerA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: viewer.user.id, role: "VIEWER" } });
+  const suspendedA = await prisma.businessMember.create({ data: { businessId: businessA.id, userId: suspended.user.id, role: "OWNER", status: "SUSPENDED" } });
   const memberB = await prisma.businessMember.create({ data: { businessId: businessB.id, userId: outsider.user.id, role: "OWNER" } });
   await prisma.memberBranch.createMany({ data: [
     { businessId: businessA.id, memberId: ownerA.id, branchId: branchA1.id },
     { businessId: businessA.id, memberId: ownerA.id, branchId: branchA2.id },
+    { businessId: businessA.id, memberId: managerA.id, branchId: branchA1.id },
+    { businessId: businessA.id, memberId: accountantA.id, branchId: branchA1.id },
     { businessId: businessA.id, memberId: cashierA.id, branchId: branchA1.id },
     { businessId: businessA.id, memberId: viewerA.id, branchId: branchA1.id },
+    { businessId: businessA.id, memberId: suspendedA.id, branchId: branchA1.id },
     { businessId: businessB.id, memberId: memberB.id, branchId: branchB1.id },
   ] });
 
@@ -72,7 +81,13 @@ try {
   const unitB = await prisma.unit.create({ data: { businessId: businessB.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
   const productA = await prisma.product.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n, trackInventory: false } });
   await prisma.product.create({ data: { businessId: businessB.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n, trackInventory: false } });
-  const expenseLedger = await prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-EXPENSE", name: "HTTP expense", type: "EXPENSE" } });
+  const auditParty = await prisma.party.create({ data: { businessId: businessA.id, type: "CUSTOMER", name: "Audit target", normalizedName: "audit target" } });
+  await Promise.all([
+    prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-CASH", name: "HTTP cash", type: "ASSET", systemKey: "cash" } }),
+    prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-AR", name: "HTTP receivable", type: "ASSET", systemKey: "accounts_receivable" } }),
+    prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-REV", name: "HTTP revenue", type: "REVENUE", systemKey: "sales_revenue" } }),
+  ]);
+  const expenseLedger = await prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-EXPENSE", name: "HTTP expense", type: "EXPENSE", systemKey: "general_expense" } });
   const expenseCategory = await prisma.expenseCategory.create({ data: { businessId: businessA.id, name: "HTTP expense", expenseLedgerAccountId: expenseLedger.id } });
   const expenseFixture = await prisma.expense.create({ data: { businessId: businessA.id, branchId: branchA1.id, categoryId: expenseCategory.id, txnDate: new Date("2026-11-03T00:00:00.000Z"), amountRial: 1200n, createdBy: owner.user.id } });
   fixtures.expenses.push(expenseFixture.id);
@@ -98,8 +113,8 @@ try {
   const address = app.getHttpServer().address();
   const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
 
-  const request = async (path, { auth, businessId, branchId, method = "GET", body, csrf = true } = {}) => {
-    const headers = {};
+  const request = async (path, { auth, businessId, branchId, method = "GET", body, csrf = true, extraHeaders = {} } = {}) => {
+    const headers = { ...extraHeaders };
     if (auth) headers.cookie = `shopro_session=${auth.rawSession}; shopro_csrf=${auth.csrf}`;
     if (businessId) headers["x-business-id"] = businessId;
     if (branchId) headers["x-branch-id"] = branchId;
@@ -118,10 +133,40 @@ try {
 
   const branchLeak = await request("/products", { auth: cashier, businessId: businessA.id, branchId: branchA2.id });
   assert.equal(branchLeak.status, 403, "a member must not select an unassigned branch");
+  const suspendedMemberAccess = await request("/products", { auth: suspended, businessId: businessA.id, branchId: branchA1.id });
+  assert.equal(suspendedMemberAccess.status, 403, "a suspended membership must not authorize API access");
 
   const scopedList = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedList.status, 200);
   assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Private A"], "list results must not leak a different tenant's products");
+
+  const managerBusinessUpdate = await request("/businesses/current", {
+    auth: manager, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { displayName: "Manager-updated fixture" },
+  });
+  assert.equal(managerBusinessUpdate.status, 200, "managers may update business settings");
+  const accountantBusinessUpdate = await request("/businesses/current", {
+    auth: accountant, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { displayCurrency: "IRR" },
+  });
+  assert.equal(accountantBusinessUpdate.status, 403, "accountants may not update business settings");
+  assert.equal((await prisma.business.findUniqueOrThrow({ where: { id: businessA.id } })).displayCurrency, "IRT", "denied business setting writes must not change the database");
+  const managerBranch = await request("/businesses/current/branches", {
+    auth: manager, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { name: "Manager branch", code: "MGR-1" },
+  });
+  assert.equal(managerBranch.status, 201, "managers may create branches");
+  const branchCountBeforeDeniedCreate = await prisma.branch.count({ where: { businessId: businessA.id } });
+  const accountantBranch = await request("/businesses/current/branches", {
+    auth: accountant, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { name: "Denied branch", code: "ACC-1" },
+  });
+  assert.equal(accountantBranch.status, 403, "accountants may not create branches");
+  assert.equal(await prisma.branch.count({ where: { businessId: businessA.id } }), branchCountBeforeDeniedCreate, "denied branch creation must not persist a branch");
+  for (const [auth, name] of [[manager, "Manager-created product"], [accountant, "Accountant-created product"]]) {
+    const productWrite = await request("/products", {
+      auth, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+      body: { name, kind: "SERVICE", salePriceRial: "500", unitId: unitA.id },
+    });
+    assert.equal(productWrite.status, 201, `${auth === manager ? "managers" : "accountants"} may create products`);
+    assert.equal(productWrite.payload.name, name);
+  }
 
   const ownerMembers = await request("/businesses/current/members", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(ownerMembers.status, 200);
@@ -146,6 +191,50 @@ try {
   });
   assert.equal(viewerProductWrite.status, 403, "viewers must not mutate product records");
   assert.equal(await prisma.product.count({ where: { businessId: businessA.id, name: "Viewer must not create" } }), 0);
+
+  const viewerSaleWrite = await request("/sales", {
+    auth: viewer, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    extraHeaders: { "idempotency-key": `viewer-sale-${randomUUID()}` },
+    body: { customerId: auditParty.id, txnDate: "2026-11-04", lines: [{ productId: productA.id, quantity: "1" }] },
+  });
+  assert.equal(viewerSaleWrite.status, 403, "viewers must not create sales through the API");
+  assert.equal(await prisma.salesInvoice.count({ where: { businessId: businessA.id, branchId: branchA1.id } }), 0, "denied viewer sales must not create invoices");
+
+  const cashierDraft = await request("/sales", {
+    auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    extraHeaders: { "idempotency-key": `cashier-sale-${randomUUID()}` },
+    body: { customerId: auditParty.id, txnDate: "2026-11-04", lines: [{ productId: productA.id, quantity: "1" }] },
+  });
+  assert.equal(cashierDraft.status, 201, `cashiers may create catalog-priced sale drafts; received ${JSON.stringify(cashierDraft.payload)}`);
+  const cashierDraftLine = await prisma.salesInvoiceLine.findFirstOrThrow({ where: { invoiceId: cashierDraft.payload.id } });
+  assert.equal(cashierDraftLine.unitPriceRial, 100n, "cashier drafts must snapshot the catalog price");
+  assert.equal(cashierDraftLine.discountRial, 0n, "cashier drafts must not apply a discount");
+  const invoiceCountBeforeRejectedSales = await prisma.salesInvoice.count({ where: { businessId: businessA.id, branchId: branchA1.id } });
+  const cashierChangedPrice = await request("/sales", {
+    auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    extraHeaders: { "idempotency-key": `cashier-price-${randomUUID()}` },
+    body: { customerId: auditParty.id, txnDate: "2026-11-04", lines: [{ productId: productA.id, quantity: "1", unitPriceRial: "99" }] },
+  });
+  assert.equal(cashierChangedPrice.status, 403, "cashiers must not override a product's catalog price");
+  const cashierDiscount = await request("/sales", {
+    auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    extraHeaders: { "idempotency-key": `cashier-discount-${randomUUID()}` },
+    body: { customerId: auditParty.id, txnDate: "2026-11-04", lines: [{ productId: productA.id, quantity: "1", discountRial: "1" }] },
+  });
+  assert.equal(cashierDiscount.status, 403, "cashiers must not apply a sale discount");
+  const cashierSensitiveProductFields = await request(`/products/${productA.id}`, {
+    auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
+    body: { salePriceRial: "999", defaultCostRial: "1", taxRateBasisPoints: 2500, sku: "HACKED", barcode: "1234", isActive: false },
+  });
+  assert.equal(cashierSensitiveProductFields.status, 403, "mixed cashier product payloads must be rejected as a whole");
+  assert.equal(await prisma.salesInvoice.count({ where: { businessId: businessA.id, branchId: branchA1.id } }), invoiceCountBeforeRejectedSales, "rejected cashier payloads must not create invoices");
+  const cashierPosted = await request(`/sales/${cashierDraft.payload.id}/post`, {
+    auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    extraHeaders: { "idempotency-key": `cashier-post-${randomUUID()}` }, body: {},
+  });
+  assert.equal(cashierPosted.status, 201, `cashiers may post authorized catalog-priced sales; received ${JSON.stringify(cashierPosted.payload)}`);
+  assert.equal(cashierPosted.payload.status, "POSTED");
+  assert.equal(await prisma.journalEntry.count({ where: { businessId: businessA.id, sourceType: "SALE", sourceId: cashierDraft.payload.id } }), 1, "cashier sale posting must create one accounting journal");
 
   const crossTenantId = await request(`/products/${productA.id}`, { auth: outsider, businessId: businessB.id, branchId: branchB1.id });
   assert.equal(crossTenantId.status, 404, "a valid user must not read another tenant's record by guessing its UUID");
@@ -243,9 +332,12 @@ try {
   await assert.rejects(readFile(storedFile), { code: "ENOENT" }, "removing the attachment must delete the private file after its database transaction");
   const removedDownloadToken = await request(`/expenses/${expenseFixture.id}/attachment/download-token`, { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST" });
   assert.equal(removedDownloadToken.status, 404);
+  await prisma.branch.update({ where: { id: branchA2.id }, data: { isActive: false } });
+  const inactiveBranchAccess = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA2.id });
+  assert.equal(inactiveBranchAccess.status, 403, "a branch that is no longer active must not authorize API access");
 
-  await prisma.$executeRawUnsafe(`CREATE FUNCTION shopro_test_reject_product_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'product.created' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`);
-  await prisma.$executeRawUnsafe("CREATE TRIGGER shopro_test_reject_product_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION shopro_test_reject_product_audit()");
+  await prisma.$executeRawUnsafe(`CREATE FUNCTION shopro_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('product.created', 'product.price.updated', 'party.created', 'party.updated', 'expense_category.created', 'expense.draft.created') THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`);
+  await prisma.$executeRawUnsafe("CREATE TRIGGER shopro_test_reject_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = true;
   const auditFailure = await request("/products", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
@@ -253,16 +345,46 @@ try {
   });
   assert.equal(auditFailure.status, 500, "an audit insert failure must fail the originating product mutation");
   assert.equal(await prisma.product.count({ where: { businessId: businessA.id, name: "Audit rollback fixture" } }), 0, "the product insert must roll back when its audit insert fails");
-  await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_product_audit ON audit_events");
-  await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_product_audit()");
+  const productUpdateAuditFailure = await request(`/products/${productA.id}`, {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
+    body: { salePriceRial: "999" },
+  });
+  assert.equal(productUpdateAuditFailure.status, 500, "a product-update audit failure must fail the price mutation");
+  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: productA.id } })).salePriceRial, 100n, "the product update must roll back when its audit insert fails");
+  const partyCreateAuditFailure = await request("/parties", {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    body: { type: "CUSTOMER", name: "Audit rollback party" },
+  });
+  assert.equal(partyCreateAuditFailure.status, 500, "a party-create audit failure must fail the party mutation");
+  assert.equal(await prisma.party.count({ where: { businessId: businessA.id, name: "Audit rollback party" } }), 0, "the party insert must roll back when its audit insert fails");
+  const partyUpdateAuditFailure = await request(`/parties/${auditParty.id}`, {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
+    body: { name: "Changed without audit" },
+  });
+  assert.equal(partyUpdateAuditFailure.status, 500, "a party-update audit failure must fail the party mutation");
+  assert.equal((await prisma.party.findUniqueOrThrow({ where: { id: auditParty.id } })).name, "Audit target", "the party update must roll back when its audit insert fails");
+  const categoryAuditFailure = await request("/expenses/categories", {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    body: { name: "Audit rollback category" },
+  });
+  assert.equal(categoryAuditFailure.status, 500, "an expense-category audit failure must fail the category mutation");
+  assert.equal(await prisma.expenseCategory.count({ where: { businessId: businessA.id, name: "Audit rollback category" } }), 0, "the category insert must roll back when its audit insert fails");
+  const expenseAuditFailure = await request("/expenses", {
+    auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
+    body: { amountRial: "3500", categoryId: expenseCategory.id, txnDate: "2026-11-04", note: "Audit rollback expense" },
+  });
+  assert.equal(expenseAuditFailure.status, 500, "an expense-draft audit failure must fail the draft mutation");
+  assert.equal(await prisma.expense.count({ where: { businessId: businessA.id, note: "Audit rollback expense" } }), 0, "the expense draft must roll back when its audit insert fails");
+  await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_audit ON audit_events");
+  await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = false;
-  console.log("HTTP authorization integration passed: tenant/branch and role isolation, member PII masking, owner-only access, cashier report denial, viewer write denial, CSRF rollback, UUID validation, owner write, private attachment upload/download/removal and audit, advisory attachment lock, and real audit-trigger rollback.");
+  console.log("HTTP authorization integration passed: tenant/branch isolation, suspended-membership and inactive-branch denial, manager business/branch/product allow paths, accountant product allow and business/branch denial, member PII masking, owner-only access, catalog-priced cashier sale posting, cashier price/discount and mixed product-field denial, viewer product/sale write denial, cashier report denial, CSRF rollback, UUID validation, owner write, private attachment upload/download/removal and audit, advisory attachment lock, and database-trigger rollback for product create/update, party create/update, expense category, and expense draft audits.");
 } finally {
   if (app) await app.close();
   try {
     if (auditFailureTriggerInstalled) {
-      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS shopro_test_reject_product_audit ON audit_events");
-      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS shopro_test_reject_product_audit()");
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS shopro_test_reject_audit ON audit_events");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS shopro_test_reject_audit()");
     }
     for (const expenseId of fixtures.expenses) {
       const expense = await prisma.expense.findUnique({ where: { id: expenseId }, select: { attachmentId: true } });

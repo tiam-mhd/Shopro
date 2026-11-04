@@ -127,9 +127,11 @@ export class ExpensesService {
     if (duplicate) throw new BadRequestException("دسته‌ای با این نام از قبل وجود دارد.");
     const ledger = await this.prisma.ledgerAccount.findFirst({ where: { businessId, systemKey: "general_expense", isActive: true }, select: { id: true } });
     if (!ledger) throw new BadRequestException("حساب دفتر هزینه‌های عمومی برای این کسب‌وکار پیدا نشد.");
-    const category = await this.prisma.expenseCategory.create({ data: { businessId, name, expenseLedgerAccountId: ledger.id } });
-    await this.prisma.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense_category.created", entityType: "expense_category", entityId: category.id, requestId: request.requestId ?? "unknown", afterJson: { name } } });
-    return { id: category.id, name: category.name };
+    return this.prisma.$transaction(async (tx) => {
+      const category = await tx.expenseCategory.create({ data: { businessId, name, expenseLedgerAccountId: ledger.id } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense_category.created", entityType: "expense_category", entityId: category.id, requestId: request.requestId ?? "unknown", afterJson: { name } } });
+      return { id: category.id, name: category.name };
+    });
   }
 
   async create(user: AuthenticatedUser, dto: CreateExpenseDto, request: AppRequest) {
@@ -143,9 +145,11 @@ export class ExpensesService {
     if (dto.payeeId && !payee) throw new BadRequestException("تأمین‌کننده انتخاب‌شده معتبر نیست.");
     const taxRate = dto.taxRateBasisPoints ?? 0;
     const tax = (amount * BigInt(taxRate) + 5000n) / 10000n;
-    const expense = await this.prisma.expense.create({ data: { businessId, branchId, categoryId: category.id, payeeId: payee?.id, txnDate: date, amountRial: amount, taxRateBasisPoints: taxRate, taxRial: tax, note: dto.note?.trim() || null, createdBy: user.id } });
-    await this.prisma.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.draft.created", entityType: "expense", entityId: expense.id, requestId: request.requestId ?? "unknown", afterJson: { amountRial: amount.toString(), categoryId: category.id, txnDate: date.toISOString().slice(0, 10) } } });
-    return { id: expense.id, amountRial: amount.toString(), taxRial: tax.toString(), status: expense.status };
+    return this.prisma.$transaction(async (tx) => {
+      const expense = await tx.expense.create({ data: { businessId, branchId, categoryId: category.id, payeeId: payee?.id, txnDate: date, amountRial: amount, taxRateBasisPoints: taxRate, taxRial: tax, note: dto.note?.trim() || null, createdBy: user.id } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense.draft.created", entityType: "expense", entityId: expense.id, requestId: request.requestId ?? "unknown", afterJson: { amountRial: amount.toString(), categoryId: category.id, txnDate: date.toISOString().slice(0, 10) } } });
+      return { id: expense.id, amountRial: amount.toString(), taxRial: tax.toString(), status: expense.status };
+    });
   }
 
   async updateDraft(user: AuthenticatedUser, id: string, dto: CreateExpenseDto, request: AppRequest) {
