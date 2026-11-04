@@ -10,7 +10,7 @@
 
 ## اجرای محلی
 
-1. فایل `.env.example` را به `.env` کپی و کلیدهای تصادفی را مقداردهی کنید. `SESSION_SECRET` و `OTP_HASH_SECRET` باید جداگانه و حداقل ۳۲ کاراکترٔ تصادفی باشند. `TRUST_PROXY_HOPS` در توسعه صفر است؛ پشت reverse proxy فقط تعداد hopهای مورداعتماد را وارد کنید.
+1. فایل `.env.example` را به `.env` کپی و کلیدهای تصادفی را مقداردهی کنید. `SESSION_SECRET` و `OTP_HASH_SECRET` باید جداگانه و حداقل ۳۲ کاراکترٔ تصادفی باشند. `STOREFRONT_CARD_ENCRYPTION_KEY` باید کلید مستقل ۳۲ بایتی (base64url یا ۶۴ رقم hex) باشد؛ آن را در secret manager نگه دارید و برای کلید رمزگذاری کارت مقصد از کلیدهای نشست/OTP استفاده نکنید. `TRUST_PROXY_HOPS` در توسعه صفر است؛ پشت reverse proxy فقط تعداد hopهای مورداعتماد را وارد کنید.
 2. PostgreSQL توسعه را با `docker compose -f infra/docker-compose.yml up -d` اجرا کنید.
 3. وابستگی‌ها را با `npm ci` نصب کنید.
 4. Prisma Client و طرح پایگاه داده را آماده کنید:
@@ -77,6 +77,14 @@ npm run admin:create -- --phone 09123456789 --name "نام مدیر"
 - `/inventory/levels`, `/inventory/movements`, `/inventory/counts`
 - `/finance/accounts`, `/finance/transactions`, `/finance/cash-closes`, `/cash-transactions/*`
 - `/finance/closed-periods` و مسیر بازگشایی ممیزی‌شده
+
+## فروشگاه عمومی شعبه
+
+صفحهٔ عمومی هر ویترین از `/s/{slug}` و پیگیری سفارش از `/order/{token}` باز می‌شود. مدیریت فروشگاه در `/app/storefront` در دسترس است. اجرای migration از مسیر عادی `npm run db:deploy` انجام می‌شود. کارت‌های مقصد با AES-256-GCM و کلید جداگانهٔ `STOREFRONT_CARD_ENCRYPTION_KEY` ذخیره می‌شوند؛ از این کلید نسخهٔ پشتیبان بگیرید و در زمان rotation، کارت‌ها باید با کلید قبلی رمزگشایی و دوباره رمزگذاری شوند. بدون کلید، ایجاد کارت یا نمایش شمارهٔ کارت فعال نمی‌شود.
+
+برای آپلود رسید، `ATTACHMENT_STORAGE_DIR` باید به volume خصوصی و پایدار اشاره کند؛ فایل رسید از route عمومی قابل دریافت نیست و دانلود آن با نشست و دسترسی همان شعبه کنترل می‌شود. OTP سفارش از adapter فعلی Parsgreen استفاده می‌کند. adapter فعلی فقط ارسال OTP دارد؛ پیامک‌های وضعیت سفارش هنوز به outbox و endpoint پیامک تراکنشی متصل نشده‌اند. فعلاً پیام‌های وضعیت در timeline سفارش ثبت می‌شوند.
+
+لغو مشتری فقط پیش از پذیرش ممکن است. فروشگاه نمی‌تواند سفارشی را که رسیدش هنوز در حال بررسی است لغو کند و لغو پس از ثبت وجه تأییدشده تا زمان اتصال گردش بازپرداخت مالی مسدود است. مالک می‌تواند اضافه‌پرداخت تطبیق‌شده را به‌عنوان اعتبار مشتری ثبت کند؛ این کار بازپرداخت وجه نیست.
 - `/reports/dashboard`, `/reports/profit-loss`, `/reports/cash-flow`, `/reports/inventory`, `/reports/trial-balance`
 - `/health/live`, `/health/ready`
 

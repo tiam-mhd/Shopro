@@ -5,7 +5,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ParsgreenService } from "./parsgreen.service.js";
 
-export type OtpAudience = "USER_LOGIN" | "ADMIN_LOGIN";
+export type OtpAudience = "USER_LOGIN" | "ADMIN_LOGIN" | "STOREFRONT_CHECKOUT";
 export interface SafeUser { id: string; phone: string; displayName: string | null }
 export interface SafeAdmin { id: string; phone: string; displayName: string }
 
@@ -79,6 +79,28 @@ export class AuthService {
       if (!admin?.isActive) throw new BadRequestException("این حساب مدیر سامانه فعال نیست.");
       const session = await this.createAdminSession(tx, admin.id);
       return { admin: { id: admin.id, phone: admin.phone, displayName: admin.displayName }, ...session };
+    });
+  }
+
+  async verifyStorefrontOtp(inputPhone: string, inputCode: string, slug: string) {
+    const phone = normalizePhone(inputPhone);
+    const result = await this.verifyChallenge(phone, inputCode, "STOREFRONT_CHECKOUT");
+    if (!result) throw new BadRequestException("کد واردشده درست نیست یا مهلت آن تمام شده است.");
+    const storefront = await this.prisma.storefront.findFirst({
+      where: { slug: slug.trim().toLowerCase(), status: "PUBLISHED", branch: { isActive: true } },
+      select: { id: true, businessId: true, branchId: true },
+    });
+    if (!storefront) throw new BadRequestException("این فروشگاه اکنون سفارش نمی‌پذیرد.");
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const consumed = await tx.otpChallenge.updateMany({ where: { id: result.id, consumedAt: null, expiresAt: { gt: now }, attempts: { lt: 5 } }, data: { consumedAt: now } });
+      if (consumed.count !== 1) throw new ConflictException("این کد پیش‌تر استفاده شده یا منقضی شده است.");
+      const rawToken = randomBytes(32).toString("base64url");
+      await tx.storefrontOtpGrant.create({ data: {
+        businessId: storefront.businessId, branchId: storefront.branchId, storefrontId: storefront.id,
+        phone, tokenHash: hash(rawToken), expiresAt: new Date(now.getTime() + 15 * 60 * 1000),
+      } });
+      return { checkoutToken: rawToken, phone, expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
     });
   }
 

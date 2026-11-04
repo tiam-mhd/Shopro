@@ -21,10 +21,32 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const declaredCode = typeof body === "object" && body && "code" in body ? (body as { code: unknown }).code : undefined;
     const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.join("؛ ") : status === HttpStatus.PAYLOAD_TOO_LARGE ? "حجم فایل پیوست نباید بیشتر از ۱۰ مگابایت باشد." : multerError && status === HttpStatus.BAD_REQUEST ? "ساختار فایل پیوست معتبر نیست." : messages[status] ?? "خطایی در پردازش درخواست رخ داد.";
     const stableCode = typeof declaredCode === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(declaredCode) ? declaredCode : undefined;
-    response.status(status).json({ code: status === 500 ? "INTERNAL_ERROR" : stableCode ?? `HTTP_${status}`, message, requestId: request.requestId ?? null });
+    const responseBody: Record<string, unknown> = { code: status === 500 ? "INTERNAL_ERROR" : stableCode ?? `HTTP_${status}`, message, requestId: request.requestId ?? null };
+    if (stableCode === "PRICE_CHANGED" && body && typeof body === "object") Object.assign(responseBody, safePriceChangeDetails(body as Record<string, unknown>));
+    response.status(status).json(responseBody);
     if (status >= 500) process.stderr.write(JSON.stringify({ level: "error", requestId: request.requestId, path: request.path, method: request.method, status, error: safeErrorChain(exception) }) + "\n");
   }
 }
+
+function safePriceChangeDetails(body: Record<string, unknown>) {
+  const safe: Record<string, unknown> = {};
+  if (Array.isArray(body.changes)) {
+    safe.changes = body.changes.slice(0, 100).flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const row = value as Record<string, unknown>;
+      if (typeof row.listingId !== "string" || !/^[0-9a-f-]{36}$/i.test(row.listingId) || typeof row.title !== "string" || !validRialString(row.expectedPriceRial) || !validRialString(row.currentPriceRial)) return [];
+      const change: Record<string, unknown> = { listingId: row.listingId, title: row.title.slice(0, 160), expectedPriceRial: row.expectedPriceRial, currentPriceRial: row.currentPriceRial };
+      if (Number.isInteger(row.expectedTaxRateBasisPoints) && Number(row.expectedTaxRateBasisPoints) >= 0 && Number(row.expectedTaxRateBasisPoints) <= 10_000) change.expectedTaxRateBasisPoints = row.expectedTaxRateBasisPoints;
+      if (Number.isInteger(row.currentTaxRateBasisPoints) && Number(row.currentTaxRateBasisPoints) >= 0 && Number(row.currentTaxRateBasisPoints) <= 10_000) change.currentTaxRateBasisPoints = row.currentTaxRateBasisPoints;
+      return [change];
+    });
+  }
+  if (validRialString(body.expectedTotalRial)) safe.expectedTotalRial = body.expectedTotalRial;
+  if (validRialString(body.currentTotalRial)) safe.currentTotalRial = body.currentTotalRial;
+  return safe;
+}
+
+function validRialString(value: unknown): value is string { return typeof value === "string" && /^\d{1,20}$/.test(value); }
 
 function safeErrorChain(value: unknown) {
   // Keep diagnostics actionable without logging exception text, SQL, or submitted values.

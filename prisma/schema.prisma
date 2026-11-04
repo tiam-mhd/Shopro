@@ -28,6 +28,58 @@ enum MembershipStatus {
 enum OtpPurpose {
   USER_LOGIN
   ADMIN_LOGIN
+  STOREFRONT_CHECKOUT
+}
+
+enum StorefrontStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+}
+
+enum StorefrontOrderStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  RETURNED
+}
+
+enum StorefrontPaymentStatus {
+  NOT_DUE
+  UNPAID
+  RECEIPT_SUBMITTED
+  UNDER_REVIEW
+  PARTIALLY_VERIFIED
+  OVERPAID_REVIEW
+  VERIFIED
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum StorefrontPaymentAttemptStatus {
+  UNDER_REVIEW
+  REJECTED
+  PARTIALLY_VERIFIED
+  OVERPAID_REVIEW
+  VERIFIED
+}
+
+enum StorefrontDeliveryMethod {
+  PICKUP
+  LOCAL_DELIVERY
+}
+
+enum StorefrontListingStockPolicy {
+  EXACT
+  APPROXIMATE
+  INQUIRY
 }
 
 enum ProductKind {
@@ -293,6 +345,15 @@ model Business {
   onboardingEvents     OnboardingEvent[]
   onboardingResultViews OnboardingResultView[]
   businessCreationRequests BusinessCreationRequest[]
+  storefronts            Storefront[]
+  storefrontListings     StorefrontListing[]
+  storefrontOrders       StorefrontOrder[]
+  storefrontPaymentCards StorePaymentCard[]
+  storefrontOtpGrants    StorefrontOtpGrant[]
+  storefrontReservations StorefrontReservation[]
+  storefrontOrderItems   StorefrontOrderItem[]
+  storefrontPaymentAttempts StorefrontPaymentAttempt[]
+  storefrontOrderEvents  StorefrontOrderEvent[]
 
   @@map("businesses")
 }
@@ -342,6 +403,12 @@ model Branch {
   onboardingEvents    OnboardingEvent[]
   onboardingResultViews OnboardingResultView[]
   businessCreationRequests BusinessCreationRequest[]
+  storefront               Storefront?
+  storefrontListings       StorefrontListing[]
+  storefrontOrders         StorefrontOrder[]
+  storefrontPaymentCards   StorePaymentCard[]
+  storefrontOtpGrants      StorefrontOtpGrant[]
+  storefrontReservations   StorefrontReservation[]
 
   @@unique([businessId, code])
   @@unique([id, businessId])
@@ -406,6 +473,279 @@ model OnboardingResultView {
   @@unique([businessId, branchId, userId])
   @@index([userId, viewedAt])
   @@map("onboarding_result_views")
+}
+
+model Storefront {
+  id                     String             @id @default(uuid()) @db.Uuid
+  businessId             String             @map("business_id") @db.Uuid
+  branchId               String             @unique @map("branch_id") @db.Uuid
+  slug                   String             @unique @db.VarChar(80)
+  status                 StorefrontStatus   @default(DRAFT)
+  publicName             String             @map("public_name") @db.VarChar(120)
+  description            String?            @db.VarChar(1000)
+  phone                  String?            @db.VarChar(20)
+  address                String?            @db.VarChar(500)
+  showAddress            Boolean            @default(false) @map("show_address")
+  acceptsPickup          Boolean            @default(true) @map("accepts_pickup")
+  acceptsLocalDelivery   Boolean            @default(false) @map("accepts_local_delivery")
+  deliveryFeeRial        BigInt             @default(0) @map("delivery_fee_rial")
+  showExactStock         Boolean            @default(false) @map("show_exact_stock")
+  preparationMinutes     Int?               @map("preparation_minutes")
+  paymentInstructions    String?            @map("payment_instructions") @db.VarChar(1000)
+  cancellationPolicy     String?            @map("cancellation_policy") @db.VarChar(1000)
+  createdBy              String             @map("created_by") @db.Uuid
+  updatedBy              String             @map("updated_by") @db.Uuid
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business               Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch                 Branch             @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  listings               StorefrontListing[]
+  orders                 StorefrontOrder[]
+  otpGrants              StorefrontOtpGrant[]
+
+  @@unique([id, branchId])
+  @@unique([id, businessId])
+  @@unique([branchId, businessId])
+  @@index([status, updatedAt])
+  @@map("storefronts")
+}
+
+model StorefrontListing {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  businessId         String                    @map("business_id") @db.Uuid
+  branchId           String                    @map("branch_id") @db.Uuid
+  storefrontId       String                    @map("storefront_id") @db.Uuid
+  productId          String                    @map("product_id") @db.Uuid
+  publicTitle        String?                   @map("public_title") @db.VarChar(160)
+  publicDescription  String?                   @map("public_description") @db.VarChar(1000)
+  publicPriceRial    BigInt?                   @map("public_price_rial")
+  isPublished        Boolean                   @default(false) @map("is_published")
+  canOrder           Boolean                   @default(true) @map("can_order")
+  stockPolicy        StorefrontListingStockPolicy @default(APPROXIMATE) @map("stock_policy")
+  minimumQuantity    Decimal                   @default(1) @map("minimum_quantity") @db.Decimal(18, 3)
+  maximumQuantity    Decimal?                  @map("maximum_quantity") @db.Decimal(18, 3)
+  displayOrder       Int                       @default(0) @map("display_order")
+  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business           Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch             Branch                    @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  storefront         Storefront                @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
+  product            Product                   @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  orderItems         StorefrontOrderItem[]
+
+  @@unique([branchId, productId])
+  @@unique([id, businessId, branchId])
+  @@unique([id, businessId])
+  @@index([storefrontId, isPublished, displayOrder])
+  @@map("storefront_listings")
+}
+
+model StorePaymentCard {
+  id                String         @id @default(uuid()) @db.Uuid
+  businessId        String         @map("business_id") @db.Uuid
+  branchId          String         @map("branch_id") @db.Uuid
+  financeAccountId  String         @map("finance_account_id") @db.Uuid
+  bankName          String         @map("bank_name") @db.VarChar(80)
+  holderName        String         @map("holder_name") @db.VarChar(120)
+  cardNumberEncrypted String       @map("card_number_encrypted") @db.VarChar(512)
+  cardLast4         String         @map("card_last4") @db.Char(4)
+  label             String?        @db.VarChar(80)
+  instructions      String?        @db.VarChar(500)
+  displayOrder      Int            @default(0) @map("display_order")
+  isActive          Boolean        @default(true) @map("is_active")
+  createdBy         String         @map("created_by") @db.Uuid
+  updatedBy         String         @map("updated_by") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business          Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch            Branch         @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  financeAccount    FinanceAccount @relation(fields: [financeAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  attempts          StorefrontPaymentAttempt[]
+
+  @@unique([id, businessId])
+  @@index([businessId, branchId, isActive, displayOrder])
+  @@map("store_payment_cards")
+}
+
+model StorefrontOtpGrant {
+  id          String      @id @default(uuid()) @db.Uuid
+  businessId  String      @map("business_id") @db.Uuid
+  branchId    String      @map("branch_id") @db.Uuid
+  storefrontId String     @map("storefront_id") @db.Uuid
+  phone       String      @db.VarChar(20)
+  tokenHash   String      @unique @map("token_hash") @db.Char(64)
+  expiresAt   DateTime    @map("expires_at") @db.Timestamptz(6)
+  consumedAt  DateTime?   @map("consumed_at") @db.Timestamptz(6)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  business    Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch      @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  storefront  Storefront  @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Cascade)
+
+  @@index([storefrontId, phone, expiresAt])
+  @@map("storefront_otp_grants")
+}
+
+model StorefrontRateLimitBucket {
+  fingerprint String   @db.Char(64)
+  bucketStart DateTime @map("bucket_start") @db.Timestamptz(6)
+  requestCount Int     @default(0) @map("request_count")
+
+  @@id([fingerprint, bucketStart])
+  @@index([bucketStart])
+  @@map("storefront_rate_limit_buckets")
+}
+
+model StorefrontOrder {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  businessId           String                    @map("business_id") @db.Uuid
+  branchId             String                    @map("branch_id") @db.Uuid
+  storefrontId         String                    @map("storefront_id") @db.Uuid
+  publicCode           String                    @unique @map("public_code") @db.VarChar(32)
+  trackingTokenHash    String                    @unique @map("tracking_token_hash") @db.Char(64)
+  idempotencyKey       String                    @map("idempotency_key") @db.VarChar(128)
+  requestHash          String                    @map("request_hash") @db.Char(64)
+  customerName         String                    @map("customer_name") @db.VarChar(120)
+  customerPhone        String                    @map("customer_phone") @db.VarChar(20)
+  customerPartyId      String?                   @map("customer_party_id") @db.Uuid
+  deliveryMethod       StorefrontDeliveryMethod  @map("delivery_method")
+  deliveryAddress      String?                   @map("delivery_address") @db.VarChar(500)
+  customerNote         String?                   @map("customer_note") @db.VarChar(500)
+  status               StorefrontOrderStatus     @default(SUBMITTED)
+  paymentStatus        StorefrontPaymentStatus   @default(NOT_DUE) @map("payment_status")
+  subtotalRial         BigInt                    @map("subtotal_rial")
+  taxRial              BigInt                    @map("tax_rial")
+  deliveryFeeRial      BigInt                    @map("delivery_fee_rial")
+  totalRial            BigInt                    @map("total_rial")
+  paymentDueAt         DateTime?                 @map("payment_due_at") @db.Timestamptz(6)
+  reservationExpiresAt DateTime?                 @map("reservation_expires_at") @db.Timestamptz(6)
+  acceptedAt           DateTime?                 @map("accepted_at") @db.Timestamptz(6)
+  completedAt          DateTime?                 @map("completed_at") @db.Timestamptz(6)
+  createdAt            DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business             Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch               Branch                    @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  storefront           Storefront                @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
+  customerParty        Party?                    @relation(fields: [customerPartyId, businessId], references: [id, businessId], onDelete: Restrict)
+  items                StorefrontOrderItem[]
+  paymentAttempts      StorefrontPaymentAttempt[]
+  events               StorefrontOrderEvent[]
+  reservations          StorefrontReservation[]
+  salesInvoice         SalesInvoice?
+
+  @@unique([businessId, branchId, idempotencyKey])
+  @@unique([id, businessId, branchId])
+  @@unique([id, businessId])
+  @@index([businessId, branchId, status, createdAt])
+  @@index([businessId, branchId, paymentStatus, createdAt])
+  @@map("storefront_orders")
+}
+
+model StorefrontOrderItem {
+  id                  String             @id @default(uuid()) @db.Uuid
+  businessId          String             @map("business_id") @db.Uuid
+  branchId            String             @map("branch_id") @db.Uuid
+  orderId             String             @map("order_id") @db.Uuid
+  listingId           String?            @map("listing_id") @db.Uuid
+  productId           String?            @map("product_id") @db.Uuid
+  titleSnapshot       String             @map("title_snapshot") @db.VarChar(160)
+  skuSnapshot         String?            @map("sku_snapshot") @db.VarChar(48)
+  unitCodeSnapshot    String             @map("unit_code_snapshot") @db.VarChar(20)
+  quantity            Decimal            @db.Decimal(18, 3)
+  unitPriceRial       BigInt             @map("unit_price_rial")
+  taxRateBasisPoints  Int                @map("tax_rate_basis_points")
+  taxRial             BigInt             @map("tax_rial")
+  lineTotalRial       BigInt             @map("line_total_rial")
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order               StorefrontOrder    @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  listing             StorefrontListing? @relation(fields: [listingId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  product             Product?           @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@index([businessId, orderId])
+  @@map("storefront_order_items")
+}
+
+model StorefrontPaymentAttempt {
+  id                    String                          @id @default(uuid()) @db.Uuid
+  businessId            String                          @map("business_id") @db.Uuid
+  branchId              String                          @map("branch_id") @db.Uuid
+  orderId               String                          @map("order_id") @db.Uuid
+  cardId                String?                         @map("card_id") @db.Uuid
+  cardSnapshot          Json                            @map("card_snapshot")
+  submittedAmountRial   BigInt                          @map("submitted_amount_rial")
+  customerTransactionReference String?                  @map("customer_transaction_reference") @db.VarChar(120)
+  submissionNote        String?                         @map("submission_note") @db.VarChar(300)
+  verifiedAmountRial    BigInt?                         @map("verified_amount_rial")
+  transactionReference String?                         @map("transaction_reference") @db.VarChar(120)
+  transferredAt        DateTime?                       @map("transferred_at") @db.Timestamptz(6)
+  status                StorefrontPaymentAttemptStatus @default(UNDER_REVIEW)
+  reviewerId            String?                         @map("reviewer_id") @db.Uuid
+  reviewedAt            DateTime?                       @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason       String?                         @map("rejection_reason") @db.VarChar(500)
+  cashTransactionId     String?                         @unique @map("cash_transaction_id") @db.Uuid
+  createdAt             DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  business              Business                        @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order                 StorefrontOrder                 @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  card                  StorePaymentCard?               @relation(fields: [cardId, businessId], references: [id, businessId], onDelete: Restrict)
+  cashTransaction       CashTransaction?                @relation(fields: [cashTransactionId, businessId], references: [id, businessId], onDelete: Restrict)
+  receipt               StorefrontReceipt?
+
+  @@unique([businessId, transactionReference])
+  @@unique([cashTransactionId, businessId])
+  @@index([businessId, branchId, status, createdAt])
+  @@index([orderId, createdAt])
+  @@map("storefront_payment_attempts")
+}
+
+model StorefrontReceipt {
+  id                String                   @id @default(uuid()) @db.Uuid
+  paymentAttemptId  String                   @unique @map("payment_attempt_id") @db.Uuid
+  storageKey        String                   @unique @map("storage_key") @db.VarChar(80)
+  mimeType          String                   @map("mime_type") @db.VarChar(80)
+  bytes             BigInt
+  checksum          String                   @unique @db.Char(64)
+  uploadedAt        DateTime                 @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+  paymentAttempt    StorefrontPaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+
+  @@map("storefront_receipts")
+}
+
+model StorefrontOrderEvent {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  businessId          String                 @map("business_id") @db.Uuid
+  branchId            String                 @map("branch_id") @db.Uuid
+  orderId             String                 @map("order_id") @db.Uuid
+  previousStatus      StorefrontOrderStatus? @map("previous_status")
+  newStatus           StorefrontOrderStatus  @map("new_status")
+  actorId             String?                @map("actor_id") @db.Uuid
+  actorType           String                 @map("actor_type") @db.VarChar(16)
+  reason              String?                @db.VarChar(500)
+  customerMessage     String?                @map("customer_message") @db.VarChar(500)
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  business            Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order               StorefrontOrder        @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+
+  @@index([businessId, branchId, orderId, createdAt])
+  @@map("storefront_order_events")
+}
+
+model StorefrontReservation {
+  id          String          @id @default(uuid()) @db.Uuid
+  businessId  String          @map("business_id") @db.Uuid
+  branchId    String          @map("branch_id") @db.Uuid
+  orderId     String          @map("order_id") @db.Uuid
+  productId   String          @map("product_id") @db.Uuid
+  quantity    Decimal         @db.Decimal(18, 3)
+  expiresAt   DateTime        @map("expires_at") @db.Timestamptz(6)
+  releasedAt  DateTime?       @map("released_at") @db.Timestamptz(6)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  business    Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch      Branch          @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  order       StorefrontOrder @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  product     Product         @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+
+  @@unique([orderId, productId])
+  @@index([businessId, branchId, productId, expiresAt, releasedAt])
+  @@map("storefront_reservations")
 }
 
 model OnboardingEvent {
@@ -486,6 +826,9 @@ model Product {
   movements          InventoryMovement[]
   balances           InventoryBalance[]
   stockCountLines    StockCountLine[]
+  storefrontListings StorefrontListing[]
+  storefrontOrderItems StorefrontOrderItem[]
+  storefrontReservations StorefrontReservation[]
 
   @@unique([id, businessId])
   @@unique([businessId, sku])
@@ -510,6 +853,7 @@ model Party {
   updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   salesInvoices    SalesInvoice[]    @relation("SalesCustomer")
+  storefrontOrders StorefrontOrder[]
   purchases        Purchase[]        @relation("PurchaseSupplier")
   cashTransactions CashTransaction[]
   journalLines     JournalLine[]
@@ -558,6 +902,7 @@ model FinanceAccount {
   outgoing        CashTransaction[]  @relation("CashFromAccount")
   incoming        CashTransaction[]  @relation("CashToAccount")
   cashCloses      CashClose[]
+  storefrontPaymentCards StorePaymentCard[]
 
   @@unique([id, businessId])
   @@index([businessId, branchId, isActive])
@@ -593,9 +938,12 @@ model SalesInvoice {
   returns      SalesInvoice[]      @relation("SalesInvoiceReturns")
   lines        SalesInvoiceLine[]
   allocations  PaymentAllocation[]
+  storefrontOrderId String?          @unique @map("storefront_order_id") @db.Uuid
+  storefrontOrder   StorefrontOrder? @relation(fields: [storefrontOrderId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([businessId, invoiceNo])
   @@unique([id, businessId])
+  @@unique([storefrontOrderId, businessId])
   @@index([businessId, branchId, txnDate, status])
   @@map("sales_invoices")
 }
@@ -763,6 +1111,7 @@ model CashTransaction {
   party          Party?              @relation(fields: [partyId, businessId], references: [id, businessId], onDelete: Restrict)
   journalEntry   JournalEntry?       @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
   allocations    PaymentAllocation[]
+  storefrontPaymentAttempt StorefrontPaymentAttempt?
 
   @@unique([id, businessId])
   @@unique([businessId, idempotencyKey])

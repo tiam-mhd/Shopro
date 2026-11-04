@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -73,5 +73,29 @@ export class AccountingService {
     const row = await tx.ledgerAccount.findUnique({ where: { businessId_systemKey: { businessId, systemKey } } });
     if (!row) throw new Error(`Missing system ledger account: ${systemKey}`);
     return row.id;
+  }
+
+  async postStorefrontReceipt(tx: Prisma.TransactionClient, input: { businessId: string; branchId: string; actorId: string; paymentAttemptId: string; orderCode: string; amountRial: bigint; financeAccountId: string; partyId: string; reference: string; date: Date }) {
+    if (input.amountRial <= 0n) throw new BadRequestException("مبلغ دریافت بانکی باید از صفر بیشتر باشد.");
+    const account = await tx.financeAccount.findFirst({ where: { id: input.financeAccountId, businessId: input.businessId, branchId: input.branchId, isActive: true, kind: "BANK" }, include: { ledgerAccount: { select: { id: true } } } });
+    if (!account) throw new NotFoundException("حساب بانکی مرتبط با کارت مقصد دیگر فعال نیست.");
+    await this.assertOpen(tx, input.businessId, input.date);
+    const cash = await tx.cashTransaction.create({ data: {
+      businessId: input.businessId, branchId: input.branchId, kind: "RECEIPT", txnDate: input.date,
+      amountRial: input.amountRial, toAccountId: account.id, partyId: input.partyId, method: "BANK",
+      reference: input.reference, status: "POSTED", idempotencyKey: `storefront-payment:${input.paymentAttemptId}`,
+      createdBy: input.actorId,
+    } });
+    const receivableAccountId = await this.account(tx, input.businessId, "accounts_receivable");
+    const journal = await this.createJournal(tx, {
+      businessId: input.businessId, branchId: input.branchId, date: input.date, sourceType: "STOREFRONT_PAYMENT",
+      sourceId: input.paymentAttemptId, memo: `پیش‌دریافت سفارش ${input.orderCode}`, actorId: input.actorId,
+      lines: [
+        { ledgerAccountId: account.ledgerAccount.id, debitRial: input.amountRial, description: `واریز بانکی سفارش ${input.orderCode}` },
+        { ledgerAccountId: receivableAccountId, creditRial: input.amountRial, partyId: input.partyId, description: `پیش‌دریافت مشتری سفارش ${input.orderCode}` },
+      ],
+    });
+    await tx.cashTransaction.update({ where: { id: cash.id }, data: { journalEntryId: journal.id } });
+    return { cashTransactionId: cash.id, journalEntryId: journal.id };
   }
 }

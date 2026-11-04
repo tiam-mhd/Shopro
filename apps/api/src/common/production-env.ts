@@ -24,6 +24,10 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv = process.env) {
     const value = env[name];
     if (!value || value.length < 32 || PLACEHOLDER_PATTERN.test(value)) fail(`${name} باید secret تصادفی و حداقل ۳۲ کاراکتری باشد.`);
   }
+  const cardKey = env.STOREFRONT_CARD_ENCRYPTION_KEY?.trim();
+  const cardKeyBytes = cardKey ? (/^[a-fA-F0-9]{64}$/.test(cardKey) ? Buffer.from(cardKey, "hex").byteLength : Buffer.from(cardKey, "base64url").byteLength) : 0;
+  if (cardKeyBytes !== 32 || PLACEHOLDER_PATTERN.test(cardKey ?? "")) fail("STOREFRONT_CARD_ENCRYPTION_KEY باید یک کلید تصادفی ۳۲ بایتی باشد.");
+  if (cardKey === env.SESSION_SECRET || cardKey === env.OTP_HASH_SECRET) fail("کلید رمزگذاری کارت باید از کلیدهای نشست و OTP جدا باشد.");
   if (env.SESSION_SECRET === env.OTP_HASH_SECRET) fail("SESSION_SECRET و OTP_HASH_SECRET باید متفاوت باشند.");
 
   const origins = webOrigins(env);

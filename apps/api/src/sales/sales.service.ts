@@ -20,6 +20,12 @@ const quantityMilli = (value: string) => {
   if (quantity <= 0n) throw new BadRequestException("تعداد باید بزرگ‌تر از صفر باشد.");
   return quantity;
 };
+const quantityMilliOrZero = (value: string) => {
+  const normalized = toAsciiDigits(value).replace(/,/g, "").trim();
+  if (!/^\d+(?:\.\d{1,3})?$/.test(normalized)) throw new BadRequestException("مقدار رزرو موجودی معتبر نیست.");
+  const [whole, fraction = ""] = normalized.split(".");
+  return BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, "0"));
+};
 const quantityText = (milli: bigint) => `${milli < 0n ? "-" : ""}${(milli < 0n ? -milli : milli) / 1000n}.${((milli < 0n ? -milli : milli) % 1000n).toString().padStart(3, "0")}`;
 const signedQuantityMilli = (value: string) => {
   const normalized = toAsciiDigits(value).replace(/,/g, "").trim();
@@ -314,6 +320,54 @@ export class SalesService {
     }, { isolationLevel: "Serializable" });
   }
 
+  async createStorefrontDraft(user: AuthenticatedUser, orderId: string, request: AppRequest) {
+    const { businessId, branchId } = this.scope(user);
+    if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException("ثبت فروش سفارش آنلاین برای نقش شما مجاز نیست.");
+    const existing = await this.prisma.salesInvoice.findFirst({ where: { businessId, branchId, storefrontOrderId: orderId }, select: { id: true, status: true, totalRial: true } });
+    if (existing) return { id: existing.id, status: existing.status, totalRial: existing.totalRial.toString() };
+    const order = await this.prisma.storefrontOrder.findFirst({
+      where: { id: orderId, businessId, branchId, paymentStatus: "VERIFIED", status: { in: ["READY_FOR_PICKUP", "OUT_FOR_DELIVERY"] } },
+      include: { items: true },
+    });
+    if (!order || !order.customerPartyId) throw new ConflictException("سفارش پرداخت‌شده یا مشتری سفارش برای ثبت فروش آماده نیست.");
+    const date = new Date(`${order.createdAt.toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const lines = order.items.map((item) => ({
+      productId: item.productId,
+      descriptionSnapshot: item.titleSnapshot,
+      skuSnapshot: item.skuSnapshot,
+      quantity: new Prisma.Decimal(item.quantity.toString()),
+      unitCodeSnapshot: item.unitCodeSnapshot,
+      unitPriceRial: item.unitPriceRial,
+      discountRial: 0n,
+      taxRateBasisPoints: item.taxRateBasisPoints,
+      taxRial: item.taxRial,
+      lineTotalRial: item.lineTotalRial,
+    }));
+    if (order.deliveryFeeRial > 0n) lines.push({
+      productId: null, descriptionSnapshot: "هزینهٔ ارسال", skuSnapshot: null,
+      quantity: new Prisma.Decimal("1"), unitCodeSnapshot: "service", unitPriceRial: order.deliveryFeeRial,
+      discountRial: 0n, taxRateBasisPoints: 0, taxRial: 0n, lineTotalRial: order.deliveryFeeRial,
+    });
+    const subtotal = order.subtotalRial + order.deliveryFeeRial;
+    if (lines.reduce((sum, line) => sum + line.lineTotalRial, 0n) !== order.totalRial) throw new ConflictException("جمع snapshot سفارش با اقلام آن سازگار نیست.");
+    try {
+      const invoice = await this.prisma.salesInvoice.create({ data: {
+        businessId, branchId, customerId: order.customerPartyId, storefrontOrderId: order.id, txnDate: date,
+        subtotalRial: subtotal, discountRial: 0n, taxRial: order.taxRial, totalRial: order.totalRial,
+        note: `سفارش فروشگاه ${order.publicCode}`,
+        lines: { create: lines },
+      } });
+      await this.prisma.auditEvent.create({ data: { businessId, actorId: user.id, action: "storefront.sale.draft_created", entityType: "sales_invoice", entityId: invoice.id, requestId: request.requestId ?? "unknown", afterJson: { sourceOrderId: order.id, orderCode: order.publicCode, totalRial: order.totalRial.toString() } } });
+      return { id: invoice.id, status: invoice.status, totalRial: invoice.totalRial.toString() };
+    } catch (error) {
+      if (this.isUnique(error)) {
+        const raced = await this.prisma.salesInvoice.findFirst({ where: { businessId, branchId, storefrontOrderId: order.id }, select: { id: true, status: true, totalRial: true } });
+        if (raced) return { id: raced.id, status: raced.status, totalRial: raced.totalRial.toString() };
+      }
+      throw error;
+    }
+  }
+
   async post(user: AuthenticatedUser, id: string, dto: PostSalesDto, key?: string, request?: AppRequest) {
     const { businessId, branchId } = this.scope(user);
     if (!["OWNER", "MANAGER", "ACCOUNTANT", "CASHIER"].includes(user.role ?? "")) throw new ForbiddenException();
@@ -352,7 +406,18 @@ export class SalesService {
           const onHandMilli = balance ? quantityMilli(balance.quantityOnHand.toString()) : 0n;
           if (!invoice.businessId || !product.trackInventory) continue;
           const business = await tx.business.findUniqueOrThrow({ where: { id: businessId }, select: { inventoryEnabled: true, negativeStockAllowed: true } });
-          if (business.inventoryEnabled && !business.negativeStockAllowed && onHandMilli < qtyMilli) throw new ConflictException(`موجودی «${product.name}» برای این فروش کافی نیست.`);
+          if (business.inventoryEnabled && !business.negativeStockAllowed) {
+            const now = new Date();
+            const reservationFilter = { businessId, branchId, productId: product.id, releasedAt: null, expiresAt: { gt: now } };
+            const [reserved, ownReservation] = await Promise.all([
+              tx.storefrontReservation.aggregate({ where: { ...reservationFilter, ...(invoice.storefrontOrderId ? { orderId: { not: invoice.storefrontOrderId } } : {}) }, _sum: { quantity: true } }),
+              invoice.storefrontOrderId ? tx.storefrontReservation.aggregate({ where: { ...reservationFilter, orderId: invoice.storefrontOrderId }, _sum: { quantity: true } }) : Promise.resolve({ _sum: { quantity: null } }),
+            ]);
+            const reservedMilli = quantityMilliOrZero(reserved._sum.quantity?.toString() ?? "0");
+            const ownReservedMilli = quantityMilliOrZero(ownReservation._sum.quantity?.toString() ?? "0");
+            const availableMilli = onHandMilli - reservedMilli + ownReservedMilli;
+            if (availableMilli < qtyMilli) throw new ConflictException(`موجودی آزاد «${product.name}» برای این فروش کافی نیست.`);
+          }
           if (business.inventoryEnabled) {
             const avgCost = balance?.averageCostRial ?? product.defaultCostRial ?? 0n;
             const lineCogs = saleCogsRial(onHandMilli, qtyMilli, balance?.inventoryValueRial ?? null, avgCost);
@@ -367,6 +432,7 @@ export class SalesService {
             });
             await tx.inventoryMovement.create({ data: { businessId, branchId, productId: product.id, txnDate: invoice.txnDate, sourceType: "SALE", sourceId: invoice.id, quantityDelta: new Prisma.Decimal(quantityText(-qtyMilli)), unitCostRial: avgCost, valueDeltaRial: -lineCogs, createdBy: user.id } });
             await tx.salesInvoiceLine.update({ where: { id: line.id }, data: { cogsRial: lineCogs } });
+            if (invoice.storefrontOrderId) await tx.storefrontReservation.updateMany({ where: { orderId: invoice.storefrontOrderId, businessId, branchId, productId: product.id, releasedAt: null }, data: { releasedAt: new Date() } });
           }
         }
 
