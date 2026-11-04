@@ -175,6 +175,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
   const businesses = useQuery({ queryKey: ["businesses"], queryFn: () => get<BusinessSummary[]>("/businesses") });
   const [businessId, setBusinessId] = useState(() => sessionStorage.getItem("shopro_business_id") ?? readRememberedScope(user.id)?.businessId ?? "");
   const [branchId, setBranchId] = useState(() => sessionStorage.getItem("shopro_branch_id") ?? readRememberedScope(user.id)?.branchId ?? "");
+  const [synchronizedScope, setSynchronizedScope] = useState("");
   const previousScope = useRef("");
   useLayoutEffect(() => {
     const scope = `${businessId}:${branchId}`;
@@ -186,17 +187,20 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
   const rows = businesses.data ?? [];
   const activeBusiness = rows.find((row) => row.id === businessId) ?? rows[0];
   const activeBranch = activeBusiness?.branches.find((branch) => branch.id === branchId) ?? activeBusiness?.branches[0];
-  const subscription = useQuery({ queryKey: ["subscription-current", activeBusiness?.id, activeBranch?.id], queryFn: () => get<{ status: string; period: { remainingDays: number } | null }>("/subscriptions/current"), enabled: Boolean(activeBusiness && activeBranch), staleTime: 60_000 });
+  const scopeKey = activeBusiness && activeBranch ? `${user.id}:${activeBusiness.id}:${activeBranch.id}` : "";
+  const scopeReady = Boolean(scopeKey && businessId === activeBusiness?.id && branchId === activeBranch?.id && synchronizedScope === scopeKey);
+  const subscription = useQuery({ queryKey: ["subscription-current", activeBusiness?.id, activeBranch?.id], queryFn: () => get<{ status: string; period: { remainingDays: number } | null }>("/subscriptions/current"), enabled: scopeReady, staleTime: 60_000 });
   const subscriptionNotice = subscription.data?.status === "EXPIRED" ? "اشتراک پایان یافته؛ تمدید" : subscription.data?.status === "REQUIRED" ? "اشتراک لازم است" : subscription.data?.status === "SUSPENDED" ? "اشتراک متوقف شده" : subscription.data?.status === "ACTIVE" && (subscription.data.period?.remainingDays ?? 99) <= 7 ? `${faNumber(subscription.data.period?.remainingDays ?? 0)} روز تا پایان اشتراک` : "";
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeBusiness || !activeBranch) return;
     if (businessId !== activeBusiness.id || branchId !== activeBranch.id) {
       setBusinessId(activeBusiness.id); setBranchId(activeBranch.id);
-      sessionStorage.setItem("shopro_business_id", activeBusiness.id); sessionStorage.setItem("shopro_branch_id", activeBranch.id);
     }
+    sessionStorage.setItem("shopro_business_id", activeBusiness.id); sessionStorage.setItem("shopro_branch_id", activeBranch.id);
     rememberScope(user.id, activeBusiness.id, activeBranch.id);
+    setSynchronizedScope(`${user.id}:${activeBusiness.id}:${activeBranch.id}`);
   }, [activeBusiness, activeBranch, businessId, branchId, user.id]);
-  useEffect(() => { if (online && pendingCount > 0) void syncPendingSales(user.id, setPendingCount, setPendingItems).then((result) => { setSyncError(result.error ? result.message : ""); setSyncNotice(result.error ? "" : result.message); }).catch((cause) => { setSyncError(messageOf(cause)); setSyncNotice(""); }); }, [online, pendingCount, user.id, activeBusiness?.id, activeBranch?.id, setPendingCount, setPendingItems, setSyncError, setSyncNotice]);
+  useEffect(() => { if (scopeReady && online && pendingCount > 0) void syncPendingSales(user.id, setPendingCount, setPendingItems).then((result) => { setSyncError(result.error ? result.message : ""); setSyncNotice(result.error ? "" : result.message); }).catch((cause) => { setSyncError(messageOf(cause)); setSyncNotice(""); }); }, [scopeReady, online, pendingCount, user.id, activeBusiness?.id, activeBranch?.id, setPendingCount, setPendingItems, setSyncError, setSyncNotice]);
   const sync = async (retryFailed = false, itemId?: string) => {
     setSyncError(""); setSyncNotice("");
     const result = await syncPendingSales(user.id, setPendingCount, setPendingItems, { retryFailed, itemId });
@@ -217,6 +221,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
   if (businesses.isPending) return <LoadingScreen />;
   if (businesses.isError) return <ErrorScreen message={messageOf(businesses.error)} onRetry={() => void businesses.refetch()} />;
   if (!rows.length) return <><Suspense fallback={<LoadingScreen />}><BusinessCreationWizard userId={user.id} online={online} /></Suspense><UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} /></>;
+  if (!scopeReady) return <LoadingScreen />;
   if (location.pathname === "/" || location.pathname === "/login") return <Navigate to="/app/onboarding" replace />;
   return <><div className="workspace" dir="rtl">
     <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMenuOpen(!menuOpen)} aria-label="باز کردن فهرست">{menuOpen ? <X /> : <Menu />}</button><Link className="top-brand" to="/app"><BrandLogo className="small" alt="" /><span>شاپرو</span></Link><div className="topbar-selectors"><label className="select-wrap"><span className="sr-only">کسب‌وکار جاری</span><BriefcaseBusiness size={15} /><select aria-label="کسب‌وکار جاری" value={activeBusiness?.id ?? ""} onChange={(event) => { const next = rows.find((row) => row.id === event.target.value); if (!next) return; setBusinessId(next.id); setBranchId(next.branches[0]?.id ?? ""); sessionStorage.setItem("shopro_business_id", next.id); sessionStorage.setItem("shopro_branch_id", next.branches[0]?.id ?? ""); rememberScope(user.id, next.id, next.branches[0]?.id ?? ""); }}>{rows.map((row) => <option key={row.id} value={row.id}>{row.displayName}</option>)}</select><ChevronDown size={14} /></label>{activeBusiness && <label className="select-wrap branch-select"><span className="sr-only">شعبه جاری</span><select aria-label="شعبه جاری" value={activeBranch?.id ?? ""} onChange={(event) => { setBranchId(event.target.value); sessionStorage.setItem("shopro_branch_id", event.target.value); rememberScope(user.id, activeBusiness.id, event.target.value); }}>{activeBusiness.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><ChevronDown size={14} /></label>}</div>{subscriptionNotice && <Link to="/app/subscription" className="subscription-topbar-pill"><CreditCard size={14} />{subscriptionNotice}</Link>}<span className={`connection-pill ${online ? "is-online" : "is-offline"}`}>{online ? <Wifi size={15} /> : <WifiOff size={15} />}<span>{online ? "متصل" : "آفلاین"}</span></span><button className="icon-button top-user" title="خروج" onClick={() => void onLogout()}><LogOut size={18} /></button></header>

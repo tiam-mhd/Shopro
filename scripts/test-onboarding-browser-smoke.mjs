@@ -35,6 +35,8 @@ function createScenario(role) {
     firstDocument: null,
     resultViewed: false,
     events: [],
+    onboardingScopeRequests: [],
+    missingOnboardingScopeRequests: 0,
   };
   scenarios.set(role, state);
   return state;
@@ -107,6 +109,11 @@ const injectedAutomation = `
 (() => {
   const scenario = new URLSearchParams(location.search).get("smoke") || sessionStorage.getItem("shopro_onboarding_smoke_scenario") || "login";
   if (scenario !== "login") sessionStorage.setItem("shopro_onboarding_smoke_scenario", scenario);
+  if (scenario === "CASHIER") {
+    sessionStorage.removeItem("shopro_business_id");
+    sessionStorage.removeItem("shopro_branch_id");
+    localStorage.setItem("shopro_last_scope_cashier-user", JSON.stringify({ businessId: "business-cashier", branchId: "branch-cashier" }));
+  }
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
     const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
@@ -239,6 +246,9 @@ const injectedAutomation = `
 
   async function invitedJourney() {
     await waitFor(() => location.pathname === "/app/onboarding" && document.querySelector(".onboarding-progress-card"), "invited user onboarding");
+    const scopeState = await getState();
+    if (scopeState.missingOnboardingScopeRequests !== 0) throw new Error("onboarding API was called before the saved business and branch scope was restored");
+    if (!scopeState.onboardingScopeRequests.length || scopeState.onboardingScopeRequests.some((scope) => scope.businessId !== "business-cashier" || scope.branchId !== "branch-cashier")) throw new Error("invited onboarding did not send the authorized business and branch headers");
     const page = document.querySelector(".page-wrap");
     if (!page?.textContent.includes("کسب‌وکار دعوت‌شده") || !page.textContent.includes("شعبهٔ انبار") || !page.textContent.includes("صندوقدار")) throw new Error("invited user scope and role were not shown");
     if (document.querySelector(".onboarding-wizard-card")) throw new Error("invited user entered business creation");
@@ -268,7 +278,7 @@ const server = createServer(async (request, response) => {
   const role = rawRole.toLowerCase() === "owner" ? "OWNER" : rawRole.toUpperCase();
   if (url.pathname === "/__smoke/state") {
     const state = scenarios.get(role);
-    sendJson(response, 200, state ? { createCalls: state.createCalls, businessRecords: state.business ? 1 : 0, createKeys: state.createKeys, product: state.product, firstDocument: state.firstDocument, resultViewed: state.resultViewed, events: state.events } : {});
+    sendJson(response, 200, state ? { createCalls: state.createCalls, businessRecords: state.business ? 1 : 0, createKeys: state.createKeys, product: state.product, firstDocument: state.firstDocument, resultViewed: state.resultViewed, events: state.events, onboardingScopeRequests: state.onboardingScopeRequests, missingOnboardingScopeRequests: state.missingOnboardingScopeRequests } : {});
     return;
   }
   if (url.pathname.startsWith("/api/v1/")) {
@@ -293,7 +303,22 @@ const server = createServer(async (request, response) => {
       sendJson(response, 201, { id: state.business.id, displayName: state.business.displayName, role: "OWNER", branch: state.business.branches[0], displayCurrency: state.business.displayCurrency });
       return;
     }
-    if (url.pathname === "/api/v1/onboarding" && method === "GET") { sendJson(response, 200, onboardingState(state)); return; }
+    if (url.pathname === "/api/v1/onboarding" && method === "GET") {
+      const businessId = request.headers["x-business-id"];
+      const branchId = request.headers["x-branch-id"];
+      state.onboardingScopeRequests.push({ businessId: businessId ?? null, branchId: branchId ?? null });
+      if (!businessId || !branchId) {
+        state.missingOnboardingScopeRequests++;
+        sendJson(response, 403, { code: "HTTP_403", message: "ابتدا یک کسب‌وکار و شعبهٔ مجاز را انتخاب کنید." });
+        return;
+      }
+      if (businessId !== state.business?.id || branchId !== state.business?.branches[0]?.id) {
+        sendJson(response, 403, { code: "HTTP_403", message: "به این کسب‌وکار یا شعبه دسترسی ندارید." });
+        return;
+      }
+      sendJson(response, 200, onboardingState(state));
+      return;
+    }
     if (url.pathname === "/api/v1/onboarding/progress" && method === "PATCH") {
       const body = await readBody(request);
       if (body.action === "select_financial_start_mode") state.financialStartMode = body.financialStartMode;
