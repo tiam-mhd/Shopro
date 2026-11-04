@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createReadStream, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -48,6 +48,22 @@ const server = createServer((request, response) => {
   if (!target.startsWith(webRoot + sep) && target !== join(webRoot, "index.html")) { response.writeHead(400).end(); return; }
   const file = existsSync(target) && statSync(target).isFile() ? target : join(webRoot, "index.html");
   response.writeHead(200, { "content-type": mimeTypes.get(extname(file)) ?? "application/octet-stream", "cache-control": "no-store" });
+  if (file === join(webRoot, "index.html")) {
+    const updateClickSmoke = `<script>
+      setTimeout(() => {
+        window.dispatchEvent(new Event("shopro:pwa-update"));
+        const deadline = Date.now() + 3000;
+        const clickUpdate = () => {
+          const button = document.querySelector(".pwa-update-actions .button-primary");
+          if (button) { button.click(); return; }
+          if (Date.now() < deadline) setTimeout(clickUpdate, 50);
+        };
+        setTimeout(clickUpdate, 50);
+      }, 1200);
+    </script>`;
+    response.end(readFileSync(file, "utf8").replace("</body>", `${updateClickSmoke}</body>`));
+    return;
+  }
   createReadStream(file).pipe(response);
 });
 
@@ -61,7 +77,7 @@ try {
   const url = `http://127.0.0.1:${address.port}/login`;
   const args = [
     "--headless=new", "--disable-gpu",
-    "--no-first-run", "--no-default-browser-check", "--virtual-time-budget=5000", `--user-data-dir=${profile}`, "--dump-dom", url,
+    "--no-first-run", "--no-default-browser-check", "--virtual-time-budget=7000", `--user-data-dir=${profile}`, "--dump-dom", url,
   ];
   child = spawn(browser, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   const stdout = [];
@@ -79,7 +95,10 @@ try {
   assert.match(dom, /شماره موبایل/, "the rendered login route should show the phone field label");
   assert.match(dom, /id="phone"/, "the rendered login route should include the phone input");
   assert.match(dom, /dir="rtl"/, "the rendered login screen should declare RTL direction");
-  console.log(`Chromium browser smoke passed: production bundle rendered the Persian RTL login page (${browser}).`);
+  assert.match(dom, /class="pwa-update-error"/, "the update action should show a recoverable message when no worker is waiting");
+  assert.match(dom, /تلاش دوباره/, "the update action should remain available after a recoverable error");
+  assert.match(dom, /بارگذاری دوباره/, "the update prompt should offer a reload recovery action");
+  console.log(`Chromium browser smoke passed: Persian RTL login rendered and stale PWA update click showed recovery actions (${browser}).`);
 } finally {
   if (child && child.exitCode === null) child.kill();
   await new Promise((resolveClose) => server.close(resolveClose));

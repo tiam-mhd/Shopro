@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
+import { activateWaitingPwaUpdate } from "./lib/pwa-update.js";
 import "@fontsource/vazirmatn/400.css";
 import "@fontsource/vazirmatn/500.css";
 import "@fontsource/vazirmatn/600.css";
@@ -14,7 +15,19 @@ let initialTheme = "auto";
 try { initialTheme = localStorage.getItem("shopro_theme") ?? "auto"; } catch { /* Theme storage is optional. */ }
 document.documentElement.dataset.theme = initialTheme === "dark" || (initialTheme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
 let updateReady = false;
-const updateSW = registerSW({ immediate: true, onNeedRefresh: () => { updateReady = true; window.dispatchEvent(new Event("shopro:pwa-update")); } });
+let updateReloadStarted = false;
+let serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
+const reloadAfterPwaUpdate = () => {
+  if (updateReloadStarted) return;
+  updateReloadStarted = true;
+  window.location.reload();
+};
+const updateSW = registerSW({
+  immediate: true,
+  onNeedRefresh: () => { updateReady = true; window.dispatchEvent(new Event("shopro:pwa-update")); },
+  onRegisteredSW: (_workerUrl, registration) => { serviceWorkerRegistration = registration ?? null; },
+  onNeedReload: reloadAfterPwaUpdate,
+});
 
 function PwaUpdatePrompt() {
   const [visible, setVisible] = useState(updateReady);
@@ -30,13 +43,25 @@ function PwaUpdatePrompt() {
     setUpdating(true);
     setUpdateError("");
     try {
-      await updateSW(true);
-    } catch {
+      await activateWaitingPwaUpdate({
+        registration: serviceWorkerRegistration,
+        serviceWorker: "serviceWorker" in navigator ? navigator.serviceWorker : null,
+        updateSW: () => updateSW(true),
+      });
+      reloadAfterPwaUpdate();
+    } catch (cause) {
       setUpdating(false);
-      setUpdateError("به‌روزرسانی انجام نشد. اتصال اینترنت را بررسی و دوباره تلاش کنید.");
+      setUpdateError(cause instanceof Error ? cause.message : "فعال‌سازی نسخهٔ تازه انجام نشد. دوباره تلاش کنید.");
     }
   };
-  return <aside className="pwa-update-prompt" role="status" aria-live="polite" aria-busy={updating} dir="rtl"><span>{updateError || (updating ? "در حال نصب نسخهٔ تازهٔ شاپرو…" : "نسخهٔ تازهٔ شاپرو آماده است.")}</span><button className="button button-primary" type="button" disabled={updating} onClick={() => void applyUpdate()}>{updating ? "در حال به‌روزرسانی…" : "به‌روزرسانی"}</button><button className="button button-text" type="button" aria-label="بعداً" disabled={updating} onClick={() => setVisible(false)}>بعداً</button></aside>;
+  return <aside className="pwa-update-prompt" role="status" aria-live="polite" aria-busy={updating} dir="rtl">
+    <span className={updateError ? "pwa-update-error" : ""}>{updateError || (updating ? "در حال نصب نسخهٔ تازهٔ شاپرو…" : "نسخهٔ تازهٔ شاپرو آماده است.")}</span>
+    <div className="pwa-update-actions">
+      <button className="button button-primary" type="button" disabled={updating} onClick={() => void applyUpdate()}>{updating ? "در حال به‌روزرسانی…" : updateError ? "تلاش دوباره" : "به‌روزرسانی"}</button>
+      {updateError && <button className="button button-secondary" type="button" onClick={() => window.location.reload()}>بارگذاری دوباره</button>}
+      <button className="button button-text" type="button" aria-label="بعداً" disabled={updating} onClick={() => setVisible(false)}>بعداً</button>
+    </div>
+  </aside>;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

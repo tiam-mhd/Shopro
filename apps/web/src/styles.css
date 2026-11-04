@@ -796,7 +796,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .pwa-update-prompt { position: fixed; z-index: 1200; inset-inline: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; gap: 10px; max-width: 560px; margin-inline: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); box-shadow: 0 16px 44px #0003; }
 .pwa-update-prompt > span { flex: 1; font-size: 12px; font-weight: 600; }
+.pwa-update-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .pwa-update-prompt .button { min-height: 37px; padding-inline: 12px; font-size: 11px; }
+.pwa-update-prompt .pwa-update-error { color: var(--danger-ink); }
+@media (max-width: 520px) { .pwa-update-prompt { align-items: flex-start; flex-direction: column; } .pwa-update-actions { width: 100%; } }
 @media (min-width: 760px) { .pwa-update-prompt { inset-inline-start: 24px; inset-inline-end: auto; bottom: 24px; margin-inline: 0; } }
 .pending-sync-panel { position: fixed; z-index: 1150; inset-inline: 12px; bottom: calc(74px + env(safe-area-inset-bottom)); max-width: 520px; max-height: min(52vh, 420px); overflow: auto; margin-inline: auto; padding: 13px; border: 1px solid var(--line); border-radius: 17px; color: var(--ink); background: var(--surface); box-shadow: 0 14px 42px #0003; }
 .pending-sync-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
