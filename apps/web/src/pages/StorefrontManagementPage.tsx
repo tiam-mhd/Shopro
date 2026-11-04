@@ -45,7 +45,20 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
   const loadProducts = async () => {
     const result = await get<{ items: ListingProduct[] }>("/storefront/listings");
     setProducts(result.items);
-    setListingEdits(Object.fromEntries(result.items.map((item) => [item.productId, item.listing ?? { publicTitle: item.name, publicDescription: "", publicPriceRial: "", isPublished: false, canOrder: false, stockPolicy: "EXACT", minimumQuantity: "1", maximumQuantity: "", displayOrder: 0 }])));
+    setListingEdits(Object.fromEntries(result.items.map((item) => {
+      const listing = item.listing;
+      return [item.productId, listing ? {
+        publicTitle: listing.publicTitle,
+        publicDescription: listing.publicDescription,
+        publicPriceRial: listing.publicPriceRial,
+        isPublished: listing.isPublished,
+        canOrder: listing.canOrder,
+        stockPolicy: listing.stockPolicy,
+        minimumQuantity: listing.minimumQuantity,
+        maximumQuantity: listing.maximumQuantity,
+        displayOrder: listing.displayOrder,
+      } : { publicTitle: item.name, publicDescription: "", publicPriceRial: "", isPublished: false, canOrder: false, stockPolicy: "EXACT", minimumQuantity: "1", maximumQuantity: "", displayOrder: 0 }];
+    })));
   };
   const loadCards = async () => {
     const [nextCards, nextAccounts] = await Promise.all([get<Card[]>("/storefront/cards"), get<Account[]>("/finance/accounts")]);
@@ -77,7 +90,25 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
 
   const saveSettings = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
-    try { const result = await patch<{ settings: Settings }>("/storefront", { ...settings, phone: settings.phone || undefined, preparationMinutes: settings.preparationMinutes ?? undefined }); setSettings(result.settings); setSettingsExists(true); setNotice("تنظیمات فروشگاه ذخیره شد."); }
+    try {
+      const result = await patch<{ settings: Settings }>("/storefront", {
+        publicName: settings.publicName,
+        slug: settings.slug,
+        description: settings.description,
+        phone: settings.phone || undefined,
+        address: settings.address,
+        showAddress: settings.showAddress,
+        acceptsPickup: settings.acceptsPickup,
+        acceptsLocalDelivery: settings.acceptsLocalDelivery,
+        deliveryFeeRial: settings.deliveryFeeRial,
+        showExactStock: settings.showExactStock,
+        preparationMinutes: settings.preparationMinutes ?? undefined,
+        paymentInstructions: settings.paymentInstructions,
+        cancellationPolicy: settings.cancellationPolicy,
+        status: settings.status,
+      });
+      setSettings(result.settings); setSettingsExists(true); setNotice("تنظیمات فروشگاه ذخیره شد.");
+    }
     catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
@@ -86,7 +117,17 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
     const value = listingEdits[item.productId]; if (!value) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await patch(`/storefront/listings/${item.productId}`, { ...value, publicPriceRial: value.publicPriceRial || undefined, maximumQuantity: value.maximumQuantity || undefined });
+      await patch(`/storefront/listings/${item.productId}`, {
+        publicTitle: value.publicTitle,
+        publicDescription: value.publicDescription,
+        publicPriceRial: value.publicPriceRial || undefined,
+        isPublished: value.isPublished,
+        canOrder: value.canOrder,
+        stockPolicy: value.stockPolicy,
+        minimumQuantity: value.minimumQuantity,
+        maximumQuantity: value.maximumQuantity || undefined,
+        displayOrder: value.displayOrder,
+      });
       setNotice(`تنظیم «${item.name}» ذخیره شد.`); await loadProducts();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
