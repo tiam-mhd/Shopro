@@ -29,6 +29,7 @@ enum OtpPurpose {
   USER_LOGIN
   ADMIN_LOGIN
   STOREFRONT_CHECKOUT
+  STOREFRONT_CUSTOMER
 }
 
 enum StorefrontStatus {
@@ -350,6 +351,7 @@ model Business {
   storefrontOrders       StorefrontOrder[]
   storefrontPaymentCards StorePaymentCard[]
   storefrontOtpGrants    StorefrontOtpGrant[]
+  storefrontCustomerSessions StorefrontCustomerSession[]
   storefrontReservations StorefrontReservation[]
   storefrontOrderItems   StorefrontOrderItem[]
   storefrontPaymentAttempts StorefrontPaymentAttempt[]
@@ -408,6 +410,7 @@ model Branch {
   storefrontOrders         StorefrontOrder[]
   storefrontPaymentCards   StorePaymentCard[]
   storefrontOtpGrants      StorefrontOtpGrant[]
+  storefrontCustomerSessions StorefrontCustomerSession[]
   storefrontReservations   StorefrontReservation[]
 
   @@unique([businessId, code])
@@ -502,6 +505,7 @@ model Storefront {
   listings               StorefrontListing[]
   orders                 StorefrontOrder[]
   otpGrants              StorefrontOtpGrant[]
+  customerSessions       StorefrontCustomerSession[]
 
   @@unique([id, branchId])
   @@unique([id, businessId])
@@ -583,6 +587,25 @@ model StorefrontOtpGrant {
 
   @@index([storefrontId, phone, expiresAt])
   @@map("storefront_otp_grants")
+}
+
+model StorefrontCustomerSession {
+  id           String     @id @default(uuid()) @db.Uuid
+  businessId   String     @map("business_id") @db.Uuid
+  branchId     String     @map("branch_id") @db.Uuid
+  storefrontId String     @map("storefront_id") @db.Uuid
+  phone        String     @db.VarChar(20)
+  tokenHash    String     @unique @map("token_hash") @db.Char(64)
+  expiresAt    DateTime   @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime?  @map("revoked_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  business     Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch       Branch     @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  storefront   Storefront @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Cascade)
+
+  @@index([storefrontId, phone, expiresAt])
+  @@index([expiresAt])
+  @@map("storefront_customer_sessions")
 }
 
 model StorefrontRateLimitBucket {

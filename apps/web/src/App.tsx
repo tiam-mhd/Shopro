@@ -36,6 +36,7 @@ const SystemAdminSubscriptionsApp = lazy(() => import("./pages/SystemAdminSubscr
 const BusinessCreationWizard = lazy(() => import("./pages/OnboardingPage.js").then((module) => ({ default: module.BusinessCreationWizard })));
 const OnboardingWorkspacePage = lazy(() => import("./pages/OnboardingPage.js").then((module) => ({ default: module.OnboardingWorkspacePage })));
 const StorefrontPublicPage = lazy(() => import("./pages/StorefrontPublicPage.js").then((module) => ({ default: module.StorefrontPublicPage })));
+const StorefrontCustomerAccountPage = lazy(() => import("./pages/StorefrontCustomerAccountPage.js").then((module) => ({ default: module.StorefrontCustomerAccountPage })));
 const StorefrontManagementPage = lazy(() => import("./pages/StorefrontManagementPage.js").then((module) => ({ default: module.StorefrontManagementPage })));
 
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
@@ -60,6 +61,7 @@ export function App() {
 function AppEntry() {
   return <Routes>
     <Route path="/system-admin/*" element={<Suspense fallback={<LoadingScreen />}><SystemAdminSubscriptionsApp /></Suspense>} />
+    <Route path="/s/:slug/account" element={<Suspense fallback={<LoadingScreen />}><StorefrontCustomerAccountPage /></Suspense>} />
     <Route path="/s/:slug" element={<Suspense fallback={<LoadingScreen />}><StorefrontPublicPage /></Suspense>} />
     <Route path="/order/:token" element={<Suspense fallback={<LoadingScreen />}><StorefrontPublicPage /></Suspense>} />
     <Route path="*" element={<AppContent />} />

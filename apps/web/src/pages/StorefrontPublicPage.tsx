@@ -1,9 +1,9 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, newOperationId, publicGet, publicPost, publicUpload } from "../lib/api.js";
 import { money } from "../lib/format.js";
+import { StorefrontPublicFrame } from "./StorefrontPublicFrame.js";
 import "../storefront.css";
 
 type Store = {
@@ -226,13 +226,13 @@ export function StorefrontPublicPage() {
     finally { setWorking(false); }
   };
 
-  if (loading) return <PublicFrame><div className="sf-state" role="status">در حال بارگذاری…</div></PublicFrame>;
-  if (error && !store && !order) return <PublicFrame><div className="sf-state sf-error" role="alert"><strong>فروشگاه در دسترس نیست</strong><p>{error}</p><button className="sf-button sf-secondary" onClick={() => window.location.reload()}>تلاش دوباره</button></div></PublicFrame>;
-  if (token) return <PublicFrame><main className="sf-track">
+  if (loading) return <StorefrontPublicFrame storeSlug={slug}><div className="sf-state" role="status">در حال بارگذاری…</div></StorefrontPublicFrame>;
+  if (error && !store && !order) return <StorefrontPublicFrame storeSlug={slug}><div className="sf-state sf-error" role="alert"><strong>فروشگاه در دسترس نیست</strong><p>{error}</p><button className="sf-button sf-secondary" onClick={() => window.location.reload()}>تلاش دوباره</button></div></StorefrontPublicFrame>;
+  if (token) return <StorefrontPublicFrame storeSlug={order?.storeSlug}><main className="sf-track">
     <header className="sf-track-heading"><Link to={order ? `/s/${order.storeSlug}` : "/"} className="sf-back">← بازگشت به فروشگاه</Link><span className="sf-eyebrow">پیگیری سفارش</span><h1>{order?.storeName ?? "وضعیت سفارش"}</h1>{order && <p>کد سفارش <b>{order.publicCode}</b></p>}</header>
     {error && <div className="sf-alert sf-alert-error" role="alert">{error}</div>}{success && <div className="sf-alert sf-alert-success" role="status">{success}</div>}
     {!order ? <div className="sf-card sf-state">سفارش یا پیوند پیگیری پیدا نشد. پیوند را از پیام ثبت سفارش باز کنید.</div> : <>
-      <section className="sf-card sf-order-status"><div><span className="sf-eyebrow">وضعیت سفارش</span><h2>{orderLabels[order.status] ?? order.status}</h2></div><span className={`sf-badge ${order.paymentStatus === "VERIFIED" ? "is-good" : ""}`}>{paymentLabels[order.paymentStatus] ?? order.paymentStatus}</span><p>{order.timeline.at(-1)?.message ?? "وضعیت سفارش در این صفحه به‌روزرسانی می‌شود."}</p></section>
+      <section className="sf-card sf-order-status"><div><span className="sf-eyebrow">وضعیت سفارش</span><h2>{orderLabels[order.status] ?? order.status}</h2></div><span className={`sf-badge ${order.paymentStatus === "VERIFIED" ? "is-good" : ""}`}>{paymentStatusLabel(order.paymentStatus, order.status)}</span><p>{order.timeline.at(-1)?.message ?? "وضعیت سفارش در این صفحه به‌روزرسانی می‌شود."}</p></section>
       {customerCredit > 0n && <div className="sf-alert sf-alert-neutral">{money(customerCredit.toString())} اضافه‌پرداخت در حساب مشتری به‌عنوان اعتبار ثبت شده است؛ بازپرداخت این مبلغ در این صفحه انجام نشده است.</div>}
        <div className="sf-track-grid"><section className="sf-card sf-section"><div className="sf-section-head"><h2>اقلام سفارش</h2><span>{new Date(order.createdAt).toLocaleString("fa-IR")}</span></div><div className="sf-lines">{order.items.map((item, index) => <div className="sf-line" key={`${item.title}-${index}`}><div><strong>{item.title}</strong><small>{item.quantity} {item.unitCode} × {money(item.unitPriceRial)}</small></div><b>{money(item.lineTotalRial)}</b></div>)}</div><Totals subtotal={order.subtotalRial} tax={order.taxRial} delivery={order.deliveryFeeRial} total={order.totalRial} /></section>
         <section className="sf-card sf-section"><div className="sf-section-head"><h2>مراحل سفارش</h2><button type="button" className="sf-link-button" disabled={working} onClick={() => void refreshOrder()}>به‌روزرسانی</button></div><ol className="sf-timeline">{order.timeline.map((event, index) => <li key={`${event.at}-${index}`}><i /><div><strong>{orderLabels[event.status] ?? event.status}</strong><p>{event.message}</p><small>{new Date(event.at).toLocaleString("fa-IR")}</small></div></li>)}</ol></section></div>
@@ -245,14 +245,14 @@ export function StorefrontPublicPage() {
       </section>}
       {order.status === "SUBMITTED" && <div className="sf-cancel-row"><span>تا پیش از پذیرش فروشگاه می‌توانید درخواست را لغو کنید.</span><button type="button" className="sf-button sf-danger" disabled={working} onClick={() => void cancelOrder()}>لغو درخواست</button></div>}
     </>}
-  </main></PublicFrame>;
+  </main></StorefrontPublicFrame>;
 
-  if (!store) return <PublicFrame><div className="sf-state">اطلاعات فروشگاه پیدا نشد.</div></PublicFrame>;
-  return <PublicFrame><main className="sf-store">
+  if (!store) return <StorefrontPublicFrame storeSlug={slug}><div className="sf-state">اطلاعات فروشگاه پیدا نشد.</div></StorefrontPublicFrame>;
+  return <StorefrontPublicFrame storeSlug={store.slug}><main className="sf-store">
     <header className="sf-store-hero"><div className="sf-brand-mark">ش</div><div className="sf-store-title"><span className="sf-eyebrow">فروشگاه شعبه‌ای شاپرو</span><h1>{store.name}</h1><p>{[store.businessName, store.branchName].filter(Boolean).join(" · ")}</p></div><span className={`sf-open-badge ${store.acceptingOrders ? "is-open" : "is-closed"}`}>{store.acceptingOrders ? "پذیرش سفارش فعال" : "پذیرش سفارش متوقف است"}</span>{store.description && <p className="sf-store-description">{store.description}</p>}{store.address && <p className="sf-address">نشانی: {store.address}</p>}{store.phone && <a className="sf-address" href={`tel:${store.phone}`}>تماس با فروشگاه: {store.phone}</a>}{store.preparationMinutes !== null && <p className="sf-address">زمان تقریبی آماده‌سازی: {store.preparationMinutes} دقیقه</p>}{store.cancellationPolicy && <p className="sf-store-description">قانون لغو سفارش: {store.cancellationPolicy}</p>}</header>
     {error && <div className="sf-alert sf-alert-error" role="alert">{error}</div>}{success && <div className="sf-alert sf-alert-success" role="status">{success}</div>}
     {!store.acceptingOrders && <div className="sf-alert sf-alert-neutral">{store.closedMessage}</div>}
-    {step === "checkout" && <p className="sf-footnote sf-privacy-note">شمارهٔ موبایل فقط برای تأیید شماره و هماهنگی همین سفارش با فروشگاه استفاده می‌شود.</p>}
+    {step === "checkout" && <p className="sf-footnote sf-privacy-note">شمارهٔ موبایل برای تأیید هویت، ثبت و پیگیری سفارش‌های همین فروشگاه استفاده می‌شود.</p>}
     {step === "browse" ? <div className="sf-shop-grid"><section className="sf-products-area"><div className="sf-catalog-head"><div><span className="sf-eyebrow">فهرست کالاها و خدمات</span><h2>از فروشگاه انتخاب کنید</h2></div><form className="sf-search" onSubmit={(event) => { event.preventDefault(); setSearch(searchInput.trim()); }}><input aria-label="جست‌وجوی کالا" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="نام کالا یا خدمت" /><button className="sf-button sf-secondary">جست‌وجو</button></form></div>
       {products.length === 0 ? <div className="sf-card sf-empty"><strong>کالایی برای نمایش نیست</strong><p>فروشگاه هنوز کالایی برای سفارش منتشر نکرده است.</p></div> : <div className="sf-product-grid">{products.map((product) => <article className="sf-product-card" key={product.id}><div className="sf-product-top"><span className="sf-product-icon">{product.kind === "SERVICE" ? "خ" : "ک"}</span><span className={`sf-stock ${product.available ? "" : "is-out"}`}>{product.stockLabel}</span></div><div className="sf-product-meta">{product.category ?? (product.kind === "SERVICE" ? "خدمت" : "کالا")}</div><h3>{product.title}</h3>{product.description && <p>{product.description}</p>}<div className="sf-product-buy"><div><strong>{money(product.unitPriceRial)}</strong><small>برای هر {product.unit}</small></div><div className="sf-quantity"><button type="button" aria-label={`افزایش ${product.title}`} disabled={!product.available || !store.acceptingOrders} onClick={() => changeQuantity(product, stepQuantity(cart[product.id]?.quantity ?? "0", product.unitPrecision, 1, product.minimumQuantity))}>+</button><span>{cart[product.id]?.quantity ?? "۰"}</span><button type="button" aria-label={`کاهش ${product.title}`} disabled={!cart[product.id]} onClick={() => changeQuantity(product, stepQuantity(cart[product.id]?.quantity ?? "0", product.unitPrecision, -1, product.minimumQuantity))}>−</button></div></div></article>)}</div>}
       {productHasMore && <div className="sf-more-products"><button type="button" className="sf-button sf-secondary" disabled={loadingMore} onClick={() => void loadMoreProducts()}>{loadingMore ? "در حال دریافت کالاها…" : "نمایش کالاهای بیشتر"}</button></div>}
@@ -260,11 +260,7 @@ export function StorefrontPublicPage() {
       <div className="sf-delivery-form"><label>روش دریافت<select value={deliveryMethod} onChange={(event) => { setPriceConfirmed(false); setPriceChanges([]); setTotalChange(null); setDeliveryMethod(event.target.value as "PICKUP" | "LOCAL_DELIVERY"); }}><>{store.acceptsPickup && <option value="PICKUP">تحویل حضوری</option>}{store.acceptsLocalDelivery && <option value="LOCAL_DELIVERY">ارسال محلی</option>}</></select></label>{deliveryMethod === "LOCAL_DELIVERY" && <label>نشانی دقیق تحویل<textarea required minLength={5} maxLength={500} value={address} onChange={(event) => setAddress(event.target.value)} rows={3} /></label>}<label>توضیحات سفارش (اختیاری)<textarea maxLength={500} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} rows={2} /></label></div>
       {(priceChanges.length > 0 || totalChange) && <div className="sf-alert sf-alert-error"><strong>مبلغ نهایی سفارش تغییر کرده است.</strong>{priceChanges.map((change) => <div key={change.listingId}>{change.title}: {change.expectedPriceRial !== change.currentPriceRial ? <>{money(change.expectedPriceRial)} ← {money(change.currentPriceRial)}</> : "نرخ مالیات کالا تغییر کرده است."}</div>)}{totalChange && <div>مبلغ قبلی: {money(totalChange.expected)} · مبلغ تازه: {money(totalChange.current)}</div>}<p>سبد، روش دریافت و مبلغ تازه را بررسی و دوباره تأیید کنید.</p></div>}
       {checkoutToken && <form onSubmit={(event) => void placeOrder(event)}><label className="sf-check sf-price-confirm"><input type="checkbox" checked={priceConfirmed} onChange={(event) => setPriceConfirmed(event.target.checked)} /><span>اقلام، روش دریافت و مبلغ نهایی را بررسی و تأیید کردم.</span></label><button className="sf-button sf-primary sf-wide" disabled={working || !priceConfirmed}>{working ? "در حال ثبت سفارش…" : "ثبت درخواست سفارش"}</button><p className="sf-footnote">پس از ثبت، فروشگاه درخواست را بررسی می‌کند. پرداخت بعد از پذیرش سفارش انجام می‌شود.</p></form>}</div><aside className="sf-checkout-summary"><span className="sf-eyebrow">خلاصهٔ سبد</span><h3>{cartLines.length} قلم</h3>{cartLines.map((line) => <div className="sf-summary-line" key={line.product.id}><span>{line.product.title} × {line.quantity}</span><b>{money(extendedRial(line.quantity, line.product.unitPriceRial).toString())}</b></div>)}<Totals subtotal={subtotal.toString()} tax={tax.toString()} delivery={deliveryFee.toString()} total={total.toString()} /></aside></div></section>}
-  </main></PublicFrame>;
-}
-
-function PublicFrame({ children }: { children: ReactNode }) {
-  return <div className="sf-page" dir="rtl"><div className="sf-topline"><div className="sf-topline-inner"><Link to="/" className="sf-logo"><span>ش</span> شاپرو</Link><span>فروش آنلاین شعبه</span></div></div>{children}<footer className="sf-footer">پرداخت به کارت مقصد فروشگاه انجام می‌شود. شاپرو اطلاعات کارت بانکی مشتری را دریافت نمی‌کند.</footer></div>;
+  </main></StorefrontPublicFrame>;
 }
 
 function Totals({ subtotal, tax, delivery, total }: { subtotal: string; tax: string; delivery: string; total: string }) {
@@ -291,3 +287,7 @@ function tomanToRial(value: string) {
 }
 function formatCard(value: string) { return value.replace(/\D/g, "").replace(/(.{4})/g, "$1 ").trim(); }
 function messageOf(error: unknown) { return error instanceof ApiError ? error.message : error instanceof Error ? error.message : "ارتباط با سرور انجام نشد. دوباره تلاش کنید."; }
+function paymentStatusLabel(paymentStatus: string, orderStatus: string) {
+  if (paymentStatus === "NOT_DUE" && orderStatus !== "SUBMITTED") return "نیازی به پرداخت نیست";
+  return paymentLabels[paymentStatus] ?? paymentStatus;
+}

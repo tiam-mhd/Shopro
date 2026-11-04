@@ -37,9 +37,24 @@ export async function publicApi<T>(path: string, options: RequestInit = {}): Pro
   return body as T;
 }
 
+/** Storefront account requests send only the scoped customer capability, never the app session. */
+export async function storefrontCustomerApi<T>(path: string, options: RequestInit = {}, customerToken?: string): Promise<T> {
+  const method = options.method ?? "GET";
+  const headers = new Headers(options.headers);
+  if (options.body && !(typeof FormData !== "undefined" && options.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (customerToken) headers.set("x-storefront-customer-token", customerToken);
+  const response = await fetch(`/api/v1${path}`, { ...options, method, headers, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" });
+  if (response.status === 204) return undefined as T;
+  const body = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+  if (!response.ok) throw new ApiError(response.status, body?.message ?? "ارتباط با سرور انجام نشد. دوباره تلاش کنید.", body?.code, body);
+  return body as T;
+}
+
 export const publicGet = <T,>(path: string, signal?: AbortSignal) => publicApi<T>(path, { signal });
 export const publicPost = <T,>(path: string, body?: unknown, headers?: Record<string, string>) => publicApi<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });
 export const publicUpload = <T,>(path: string, body: FormData) => publicApi<T>(path, { method: "POST", body });
+export const storefrontCustomerGet = <T,>(path: string, customerToken?: string) => storefrontCustomerApi<T>(path, {}, customerToken);
+export const storefrontCustomerPost = <T,>(path: string, body?: unknown, customerToken?: string) => storefrontCustomerApi<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, customerToken);
 
 export const get = <T,>(path: string, signal?: AbortSignal) => api<T>(path, { signal });
 export const post = <T,>(path: string, body?: unknown, headers?: Record<string, string>) => api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });

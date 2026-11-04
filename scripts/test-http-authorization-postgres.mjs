@@ -130,7 +130,7 @@ try {
     if (body !== undefined) headers["content-type"] = "application/json";
     if (auth && csrf && method !== "GET") headers["x-csrf-token"] = auth.csrf;
     const response = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    const payload = await response.json();
+    const payload = response.status === 204 ? null : await response.json();
     return { status: response.status, payload };
   };
 
@@ -260,6 +260,26 @@ try {
   assert.equal(rejectedCustomerTracking.status, 200);
   assert.equal(rejectedCustomerTracking.payload.status, "REJECTED", "customer tracking should reflect management updates");
 
+  const customerLoginOtpRequest = await request(`/public/stores/${storefrontSlug}/customer/otp/request`, { method: "POST", body: { phone: storefrontPhone } });
+  assert.equal(customerLoginOtpRequest.status, 200);
+  const customerLoginOtpCode = sentStorefrontOtpCodes.get(storefrontPhone);
+  assert.match(customerLoginOtpCode ?? "", /^\d{6}$/);
+  const customerLogin = await request(`/public/stores/${storefrontSlug}/customer/otp/verify`, { method: "POST", body: { phone: storefrontPhone, code: customerLoginOtpCode } });
+  assert.equal(customerLogin.status, 200, `storefront customer should be able to verify a login OTP: ${JSON.stringify(customerLogin.payload)}`);
+  const firstCustomerToken = customerLogin.payload.customerToken;
+  assert.match(firstCustomerToken ?? "", /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(await prisma.storefrontCustomerSession.count({ where: { storefrontId: savedStorefront.payload.settings.id, tokenHash: hash(firstCustomerToken), revokedAt: null } }), 1, "customer sessions should persist only the token hash and store scope");
+  const unauthenticatedCustomerAccount = await request(`/public/stores/${storefrontSlug}/customer`);
+  assert.equal(unauthenticatedCustomerAccount.status, 401, "customer profile must require OTP verification");
+  const firstCustomerProfile = await request(`/public/stores/${storefrontSlug}/customer`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.equal(firstCustomerProfile.status, 200);
+  assert.deepEqual(firstCustomerProfile.payload.customer, { name: "HTTP checkout customer", phone: storefrontPhone });
+  const firstCustomerOrders = await request(`/public/stores/${storefrontSlug}/customer/orders?limit=20`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.equal(firstCustomerOrders.status, 200);
+  assert.deepEqual(firstCustomerOrders.payload.items.map(({ id }) => id), [storefrontOrder.payload.id]);
+  assert.equal(firstCustomerOrders.payload.items[0].status, "REJECTED");
+  assert.equal(firstCustomerOrders.payload.items[0].trackingPath, `/order/${storefrontOrder.payload.trackingToken}`);
+
   const paymentPhone = `09${randomUUID().replace(/\D/g, "").padEnd(9, "0").slice(0, 9)}`;
   fixtures.storefrontOtpPhones.push(paymentPhone);
   const paymentOtpRequest = await request(`/public/stores/${storefrontSlug}/otp/request`, { method: "POST", body: { phone: paymentPhone } });
@@ -317,6 +337,23 @@ try {
   const readyTracking = await request(`/public/orders/${payableOrder.payload.trackingToken}`);
   assert.equal(readyTracking.status, 200);
   assert.equal(readyTracking.payload.status, "READY_FOR_PICKUP");
+
+  const accountOtpRequest = await request(`/public/stores/${storefrontSlug}/customer/otp/request`, { method: "POST", body: { phone: paymentPhone } });
+  assert.equal(accountOtpRequest.status, 200);
+  const accountOtpCode = sentStorefrontOtpCodes.get(paymentPhone);
+  const paymentCustomerLogin = await request(`/public/stores/${storefrontSlug}/customer/otp/verify`, { method: "POST", body: { phone: paymentPhone, code: accountOtpCode } });
+  assert.equal(paymentCustomerLogin.status, 200);
+  const paymentCustomerToken = paymentCustomerLogin.payload.customerToken;
+  const paymentCustomerOrders = await request(`/public/stores/${storefrontSlug}/customer/orders?limit=20`, { extraHeaders: { "x-storefront-customer-token": paymentCustomerToken } });
+  assert.equal(paymentCustomerOrders.status, 200);
+  assert.deepEqual(paymentCustomerOrders.payload.items.map(({ id }) => id), [payableOrder.payload.id], "customer order history must be restricted to the verified mobile number in this storefront");
+  assert.equal(paymentCustomerOrders.payload.items[0].paymentStatus, "VERIFIED");
+  const firstCustomerOrdersAfterOtherPhoneOrder = await request(`/public/stores/${storefrontSlug}/customer/orders?limit=20`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.deepEqual(firstCustomerOrdersAfterOtherPhoneOrder.payload.items.map(({ id }) => id), [storefrontOrder.payload.id], "one customer must not see another customer's order");
+  const customerLogout = await request(`/public/stores/${storefrontSlug}/customer/logout`, { method: "POST", extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.equal(customerLogout.status, 204);
+  const revokedCustomerAccount = await request(`/public/stores/${storefrontSlug}/customer`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.equal(revokedCustomerAccount.status, 401, "logout should revoke the customer session");
 
   const stockCountDraft = await request("/inventory/counts", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
@@ -608,7 +645,7 @@ try {
   await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_audit ON audit_events");
   await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = false;
-  console.log("HTTP integration passed: tenant/branch authorization, storefront settings and listings, public catalog, OTP checkout, order tracking, staff rejection and acceptance, destination-card encryption, receipt upload and payment verification, order preparation, inventory, accounting, attachments, audit and rollback.");
+  console.log("HTTP integration passed: tenant/branch authorization, storefront settings and listings, public catalog, checkout and customer-account OTP, phone-scoped order history, account logout, order tracking, staff rejection and acceptance, destination-card encryption, receipt upload and payment verification, order preparation, inventory, accounting, attachments, audit and rollback.");
 } finally {
   restoreSmsAdapter?.();
   if (app) await app.close();
@@ -643,11 +680,12 @@ try {
     }
     for (const storefrontId of fixtures.storefronts) {
       await prisma.storefrontOtpGrant.deleteMany({ where: { storefrontId } });
+      await prisma.storefrontCustomerSession.deleteMany({ where: { storefrontId } });
       await prisma.storefrontListing.deleteMany({ where: { storefrontId } });
       await prisma.storefront.deleteMany({ where: { id: storefrontId } });
     }
     for (const cardId of fixtures.storefrontCards) await prisma.storePaymentCard.deleteMany({ where: { id: cardId } });
-    for (const phone of fixtures.storefrontOtpPhones) await prisma.otpChallenge.deleteMany({ where: { phone, purpose: "STOREFRONT_CHECKOUT" } });
+    for (const phone of fixtures.storefrontOtpPhones) await prisma.otpChallenge.deleteMany({ where: { phone, purpose: { in: ["STOREFRONT_CHECKOUT", "STOREFRONT_CUSTOMER"] } } });
     for (const id of fixtures.businesses) await prisma.business.deleteMany({ where: { id } });
     for (const id of fixtures.users) await prisma.user.deleteMany({ where: { id } });
   } finally {

@@ -22,7 +22,7 @@ async function bootstrap() {
   app.getHttpAdapter().getInstance().set("trust proxy", trustProxyHops);
   app.use(helmet({ crossOriginResourcePolicy: { policy: "same-site" } }));
   app.use(cookieParser());
-  app.enableCors({ origin: webOrigins(), credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Business-Id", "X-Branch-Id", "X-Attachment-Download-Token", "Idempotency-Key"] });
+  app.enableCors({ origin: webOrigins(), credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Business-Id", "X-Branch-Id", "X-Attachment-Download-Token", "X-Storefront-Customer-Token", "Idempotency-Key"] });
   app.use((request: AppRequest, response: Response, next: NextFunction) => {
     const supplied = request.header("x-request-id");
     request.requestId = supplied && /^[\w.-]{1,80}$/.test(supplied) ? supplied : randomUUID();

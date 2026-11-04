@@ -5,7 +5,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ParsgreenService } from "./parsgreen.service.js";
 
-export type OtpAudience = "USER_LOGIN" | "ADMIN_LOGIN" | "STOREFRONT_CHECKOUT";
+export type OtpAudience = "USER_LOGIN" | "ADMIN_LOGIN" | "STOREFRONT_CHECKOUT" | "STOREFRONT_CUSTOMER";
 export interface SafeUser { id: string; phone: string; displayName: string | null }
 export interface SafeAdmin { id: string; phone: string; displayName: string }
 
@@ -101,6 +101,23 @@ export class AuthService {
         phone, tokenHash: hash(rawToken), expiresAt: new Date(now.getTime() + 15 * 60 * 1000),
       } });
       return { checkoutToken: rawToken, phone, expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
+    });
+  }
+
+  async verifyStorefrontCustomerOtp(inputPhone: string, inputCode: string, storefront: { storefrontId: string; businessId: string; branchId: string }) {
+    const phone = normalizePhone(inputPhone);
+    const result = await this.verifyChallenge(phone, inputCode, "STOREFRONT_CUSTOMER");
+    if (!result) throw new BadRequestException("کد واردشده درست نیست یا مهلت آن تمام شده است.");
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const consumed = await tx.otpChallenge.updateMany({ where: { id: result.id, consumedAt: null, expiresAt: { gt: now }, attempts: { lt: 5 } }, data: { consumedAt: now } });
+      if (consumed.count !== 1) throw new ConflictException("این کد قبلاً استفاده شده یا منقضی شده است.");
+      const customerToken = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      await tx.storefrontCustomerSession.create({ data: {
+        ...storefront, phone, tokenHash: hash(customerToken), expiresAt,
+      } });
+      return { customerToken, phone, expiresAt: expiresAt.toISOString() };
     });
   }
 

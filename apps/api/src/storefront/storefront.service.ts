@@ -45,15 +45,83 @@ type AdminOrder = Prisma.StorefrontOrderGetPayload<{ include: typeof adminOrderI
 @Injectable()
 export class StorefrontService implements OnModuleInit, OnModuleDestroy {
   private expiryTimer?: NodeJS.Timeout;
+  private lastCustomerSessionCleanupAt = 0;
 
   constructor(private readonly prisma: PrismaService, private readonly accounting: AccountingService, private readonly auth: AuthService, private readonly sales: SalesService, private readonly storage: AttachmentStorageService) {}
 
   onModuleInit() {
-    this.expiryTimer = setInterval(() => { void this.expireOverdueOrders().catch(() => undefined); }, 60_000);
+    this.expiryTimer = setInterval(() => {
+      void this.expireOverdueOrders().catch(() => undefined);
+      void this.cleanupExpiredCustomerSessions().catch(() => undefined);
+    }, 60_000);
     this.expiryTimer.unref();
   }
 
   onModuleDestroy() { if (this.expiryTimer) clearInterval(this.expiryTimer); }
+
+  async requestCustomerOtp(slug: string, phone: string, request: AppRequest) {
+    await this.checkPublicRateLimit("customer-otp", request.ip, 5);
+    const store = await this.findCustomerStore(slug);
+    await this.auth.requestOtp(phone, "STOREFRONT_CUSTOMER", request.ip, request.requestId);
+    return { ok: true, message: "اگر شماره معتبر باشد، کد ورود برای آن ارسال می‌شود." };
+  }
+
+  async verifyCustomerOtp(slug: string, phone: string, code: string, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-otp-verify", ipAddress, 10);
+    const store = await this.findCustomerStore(slug);
+    return this.auth.verifyStorefrontCustomerOtp(phone, code, { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId });
+  }
+
+  async customerAccount(slug: string, token: string | undefined, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-account", ipAddress, 120);
+    const store = await this.findCustomerStore(slug);
+    const session = await this.requireCustomerSession(store.id, token);
+    const latestOrder = await this.prisma.storefrontOrder.findFirst({
+      where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, customerPhone: session.phone },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { customerName: true },
+    });
+    return { customer: { name: latestOrder?.customerName ?? null, phone: session.phone } };
+  }
+
+  async customerOrders(slug: string, token: string | undefined, cursor?: string, requestedLimit?: string, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-orders", ipAddress, 120);
+    const store = await this.findCustomerStore(slug);
+    const session = await this.requireCustomerSession(store.id, token);
+    const limit = pageLimit(requestedLimit, 20, 50);
+    const where = { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, customerPhone: session.phone };
+    if (cursor && !await this.prisma.storefrontOrder.findFirst({ where: { ...where, id: cursor }, select: { id: true } })) {
+      throw new BadRequestException("نشانگر صفحهٔ سفارش‌های این فروشگاه معتبر نیست.");
+    }
+    const rows = await this.prisma.storefrontOrder.findMany({
+      where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit + 1,
+      include: {
+        items: { select: { titleSnapshot: true, quantity: true } },
+        paymentAttempts: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1, select: { status: true } },
+      },
+    });
+    const page = cursorPage(rows, limit, (row) => row.id);
+    return {
+      ...page,
+      items: page.items.map((row) => ({
+        id: row.id, publicCode: row.publicCode, status: row.status, paymentStatus: row.paymentStatus,
+        createdAt: row.createdAt.toISOString(), deliveryMethod: row.deliveryMethod,
+        totalRial: row.totalRial.toString(), items: row.items.map((item) => ({ title: item.titleSnapshot, quantity: item.quantity.toString() })),
+        latestPaymentAttemptStatus: row.paymentAttempts[0]?.status ?? null,
+        trackingPath: `/order/${trackingTokenForOrder(row.id, row.businessId)}`,
+      })),
+    };
+  }
+
+  async logoutCustomer(token: string | undefined, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-logout", ipAddress, 10);
+    if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) {
+      await this.prisma.storefrontCustomerSession.updateMany({
+        where: { tokenHash: hash(token), revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+  }
 
   async requestCheckoutOtp(slug: string, phone: string, request: AppRequest) {
     await this.checkPublicRateLimit("otp", request.ip, 5);
@@ -349,6 +417,10 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundException("سفارش پیدا نشد؛ پیوند پیگیری را بررسی کنید.");
     const order = await this.prisma.storefrontOrder.findFirst({ where: { trackingTokenHash: this.trackingHash(token) }, include: customerOrderInclude });
     if (!order) throw new NotFoundException("سفارش پیدا نشد؛ پیوند پیگیری را بررسی کنید.");
+    return this.customerOrderView(order);
+  }
+
+  private async customerOrderView(order: CustomerOrder) {
     const cards = order.status === "ACCEPTED" && !["VERIFIED", "OVERPAID_REVIEW"].includes(order.paymentStatus)
       ? await this.prisma.storePaymentCard.findMany({ where: { businessId: order.businessId, branchId: order.branchId, isActive: true, financeAccount: { isActive: true, kind: "BANK" } }, orderBy: [{ displayOrder: "asc" }, { createdAt: "asc" }], select: { id: true, bankName: true, holderName: true, cardNumberEncrypted: true, label: true, instructions: true } })
       : [];
@@ -364,6 +436,16 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
       cards: cards.map((card) => ({ id: card.id, bankName: card.bankName, holderName: card.holderName, cardNumber: decryptStoreCardNumber(card.cardNumberEncrypted), label: card.label, instructions: card.instructions })),
       timeline: order.events.map((event) => ({ status: event.newStatus, at: event.createdAt.toISOString(), message: event.customerMessage })),
     };
+  }
+
+  private async requireCustomerSession(storefrontId: string, token: string | undefined) {
+    if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new UnauthorizedException("برای دیدن سفارش‌ها دوباره با شمارهٔ موبایل وارد شوید.");
+    const session = await this.prisma.storefrontCustomerSession.findFirst({
+      where: { storefrontId, tokenHash: hash(token), revokedAt: null, expiresAt: { gt: new Date() } },
+      select: { id: true, phone: true },
+    });
+    if (!session) throw new UnauthorizedException("نشست مشتری پایان یافته است؛ دوباره با شمارهٔ موبایل وارد شوید.");
+    return session;
   }
 
   async cancelByCustomer(token: string, ipAddress?: string) {
@@ -720,6 +802,12 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     return row;
   }
 
+  private async findCustomerStore(slug: string) {
+    const row = await this.prisma.storefront.findUnique({ where: { slug: normalizeStoreSlug(slug) } });
+    if (!row) throw new NotFoundException("فروشگاه پیدا نشد.");
+    return row;
+  }
+
   private async newOrdersAllowed(businessId: string, branchId: string) {
     const now = new Date();
     const rows = await this.prisma.$queryRaw<Array<{ rollout_mode: string | null; grace_ends_at: Date | null; suspended_at: Date | null; active_period: boolean; has_history: boolean; latest_end: Date | null }>>`
@@ -867,5 +955,12 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
       await tx.storefrontReservation.updateMany({ where: { orderId, releasedAt: null }, data: { releasedAt: now } });
       await tx.storefrontOrderEvent.create({ data: { businessId, branchId, orderId, previousStatus: "ACCEPTED", newStatus: "EXPIRED", actorType: "SYSTEM", customerMessage: "مهلت پرداخت سفارش پایان یافت و رزرو موجودی آزاد شد." } });
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
+  }
+
+  private async cleanupExpiredCustomerSessions() {
+    const now = Date.now();
+    if (now - this.lastCustomerSessionCleanupAt < 60 * 60 * 1000) return;
+    this.lastCustomerSessionCleanupAt = now;
+    await this.prisma.storefrontCustomerSession.deleteMany({ where: { expiresAt: { lte: new Date(now) } } });
   }
 }

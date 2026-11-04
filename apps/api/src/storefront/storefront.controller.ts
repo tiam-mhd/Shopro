@@ -15,6 +15,21 @@ type UploadedReceipt = { originalname: string; buffer: Buffer; size: number };
 export class PublicStorefrontController {
   constructor(private readonly storefront: StorefrontService) {}
 
+  @Public() @Post("stores/:slug/customer/otp/request") @HttpCode(HttpStatus.OK) @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  requestCustomerOtp(@Param("slug") slug: string, @Body() dto: StorefrontOtpDto, @Req() request: AppRequest) { return this.storefront.requestCustomerOtp(slug, dto.phone, request); }
+
+  @Public() @Post("stores/:slug/customer/otp/verify") @HttpCode(HttpStatus.OK) @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  verifyCustomerOtp(@Param("slug") slug: string, @Body() dto: VerifyStorefrontOtpDto, @Req() request: AppRequest) { return this.storefront.verifyCustomerOtp(slug, dto.phone, dto.code, request.ip); }
+
+  @Public() @Get("stores/:slug/customer") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  customerAccount(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Req() request: AppRequest) { return this.storefront.customerAccount(slug, token, request.ip); }
+
+  @Public() @Get("stores/:slug/customer/orders") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  customerOrders(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Query("cursor") cursor: string | undefined, @Query("limit") limit: string | undefined, @Req() request: AppRequest) { return this.storefront.customerOrders(slug, token, cursor, limit, request.ip); }
+
+  @Public() @Post("stores/:slug/customer/logout") @HttpCode(HttpStatus.NO_CONTENT) @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  logoutCustomer(@Headers("x-storefront-customer-token") token: string | undefined, @Req() request: AppRequest) { return this.storefront.logoutCustomer(token, request.ip); }
+
   @Public() @Get("stores/:slug") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
   getStore(@Param("slug") slug: string, @Req() request: AppRequest) { return this.storefront.publicStore(slug, request.ip); }
 
