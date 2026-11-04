@@ -140,18 +140,20 @@ async function main() {
 
   const oldEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
-  const unavailable = await subscriptions.createOrder(user3, { planCode: `TEST_${suffix.slice(0, 8).toUpperCase()}`, durationMonths: 1 }, `prod-${randomUUID()}`);
-  assert.equal(unavailable.paymentMode, "unavailable");
-  assert.equal(unavailable.status, "FAILED");
-  assert.equal(unavailable.attempts[0].status, "UNAVAILABLE");
-  await assert.rejects(subscriptions.confirmFakeOrder(user3, unavailable.id), (error) => error instanceof ForbiddenException);
+  const productionOrder = await subscriptions.createOrder(user3, { planCode: `TEST_${suffix.slice(0, 8).toUpperCase()}`, durationMonths: 1 }, `prod-${randomUUID()}`);
+  assert.equal(productionOrder.paymentMode, "card_transfer");
+  assert.equal(productionOrder.status, "PENDING");
+  assert.equal(productionOrder.paymentInstructions?.method, "CARD_TO_CARD");
+  assert.ok(productionOrder.paymentInstructions?.cardNumber);
+  assert.equal(productionOrder.attempts.length, 0, "manual card transfer must not create a provider payment attempt");
+  await assert.rejects(subscriptions.confirmFakeOrder(user3, productionOrder.id), (error) => error instanceof ForbiddenException);
   if (oldEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = oldEnv;
   await denied(guard, user3, "SUBSCRIPTION_REQUIRED");
 
   const auditActions = await prisma.systemAdminAuditEvent.findMany({ where: { adminId: ids.admin }, select: { action: true } });
   assert.ok(auditActions.some(({ action }) => action === "subscription.branch.suspended"));
-  console.log("Subscription PostgreSQL integration passed: idempotency, verified amounts, concurrent replay, independent branches, grant/extend audit, suspension gate, tenant isolation, and production gateway block.");
+  console.log("Subscription PostgreSQL integration passed: idempotency, verified amounts, concurrent replay, independent branches, grant/extend audit, suspension gate, tenant isolation, production card-transfer checkout, and fake-payment rejection.");
 }
 
 try {

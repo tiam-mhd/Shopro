@@ -6,7 +6,8 @@ import { Activity, ArrowDownLeft, ArrowUpRight, BookOpen, BriefcaseBusiness, Box
 import type { BusinessSummary, MemberRole, SessionUser } from "@shopro/contracts";
 import { ApiError, get, post } from "./lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "./lib/format.js";
-import { countUnclaimedPendingSales, listPendingSales, removePendingSale, removeUnclaimedPendingSales, setPendingSaleError, type PendingSale } from "./lib/offline.js";
+import { countAwaitingServer, countUnclaimedPendingSales, listPendingSales, markPendingSaleFailed, markPendingSaleForRetry, markPendingSaleScopeConflict, markPendingSaleSucceeded, markPendingSaleSyncing, removePendingSale, removeUnclaimedPendingSales, type PendingSale } from "./lib/offline.js";
+import { classifyOfflineFailure, isQueueItemAutomaticallySyncable, isQueueItemManuallyRetryable } from "./lib/offline-state.js";
 import { OptionPicker } from "./components/OptionPicker.js";
 import type { PickerOptionLoader } from "./components/OptionPicker.js";
 import { BrandLogo } from "./components/BrandLogo.js";
@@ -54,6 +55,7 @@ function AppContent() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem("shopro_theme") ?? "auto");
   const [syncError, setSyncError] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
   const location = useLocation();
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -67,7 +69,7 @@ function AppContent() {
     void Promise.all([listPendingSales(), countUnclaimedPendingSales()]).then(([items, unclaimedCount]) => {
       if (!mounted) return;
       const owned = items.filter((item) => item.userId === userId);
-      setPendingItems(owned); setPendingCount(owned.length);
+      setPendingItems(owned); setPendingCount(countAwaitingServer(owned));
       setUnclaimedPendingCount(unclaimedCount);
     });
     return () => { mounted = false; };
@@ -90,7 +92,19 @@ function AppContent() {
     if (session.error instanceof ApiError && session.error.status !== 401) return <ErrorScreen message={session.error.message} onRetry={() => void session.refetch()} />;
     return <AuthScreen />;
   }
-  return <BusinessGate user={session.data.user} online={online} pendingCount={pendingCount} pendingItems={pendingItems} unclaimedPendingCount={unclaimedPendingCount} setUnclaimedPendingCount={setUnclaimedPendingCount} setPendingCount={setPendingCount} setPendingItems={setPendingItems} menuOpen={menuOpen} setMenuOpen={setMenuOpen} theme={theme} setTheme={setTheme} syncError={syncError} setSyncError={setSyncError} onLogout={async () => { await post("/auth/logout"); sessionStorage.removeItem("shopro_business_id"); sessionStorage.removeItem("shopro_branch_id"); await queryClient.clear(); window.location.assign("/login"); }} />;
+  const logout = async () => {
+    const owned = (await listPendingSales()).filter((item) => item.userId === session.data.user.id);
+    const awaitingServer = countAwaitingServer(owned);
+    setPendingItems(owned); setPendingCount(awaitingServer);
+    if (awaitingServer && !window.confirm("پیش‌نویس‌های ارسال‌نشده فقط روی این دستگاه باقی می‌مانند و به حساب دیگری نمایش داده نمی‌شوند. با خروج ادامه می‌دهید؟")) return;
+    if (!navigator.onLine) { setSyncError("برای خروج امن، ابتدا اتصال اینترنت را برقرار کنید تا نشست از سرور بسته شود."); setSyncNotice(""); return; }
+    try { await post("/auth/logout"); }
+    catch (cause) { setSyncError(`خروج امن انجام نشد: ${messageOf(cause)}`); setSyncNotice(""); return; }
+    setSyncError(""); setSyncNotice("");
+    sessionStorage.removeItem("shopro_business_id"); sessionStorage.removeItem("shopro_branch_id");
+    await queryClient.clear(); window.location.assign("/login");
+  };
+  return <BusinessGate user={session.data.user} online={online} pendingCount={pendingCount} pendingItems={pendingItems} unclaimedPendingCount={unclaimedPendingCount} setUnclaimedPendingCount={setUnclaimedPendingCount} setPendingCount={setPendingCount} setPendingItems={setPendingItems} menuOpen={menuOpen} setMenuOpen={setMenuOpen} theme={theme} setTheme={setTheme} syncError={syncError} setSyncError={setSyncError} syncNotice={syncNotice} setSyncNotice={setSyncNotice} onLogout={logout} />;
 }
 
 function AuthScreen() {
@@ -128,7 +142,7 @@ function AuthScreen() {
   </section><footer className="auth-footer">حساب‌های کسب‌وکار و مدیر سامانه مسیر ورود جداگانه دارند.</footer></main>;
 }
 
-function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendingCount, setUnclaimedPendingCount, setPendingCount, setPendingItems, menuOpen, setMenuOpen, theme, setTheme, syncError, setSyncError, onLogout }: { user: SessionResponse["user"]; online: boolean; pendingCount: number; pendingItems: PendingSale[]; unclaimedPendingCount: number; setUnclaimedPendingCount: (count: number) => void; setPendingCount: (count: number) => void; setPendingItems: (items: PendingSale[]) => void; menuOpen: boolean; setMenuOpen: (open: boolean) => void; theme: string; setTheme: (value: string) => void; syncError: string; setSyncError: (value: string) => void; onLogout: () => void }) {
+function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendingCount, setUnclaimedPendingCount, setPendingCount, setPendingItems, menuOpen, setMenuOpen, theme, setTheme, syncError, setSyncError, syncNotice, setSyncNotice, onLogout }: { user: SessionResponse["user"]; online: boolean; pendingCount: number; pendingItems: PendingSale[]; unclaimedPendingCount: number; setUnclaimedPendingCount: (count: number) => void; setPendingCount: (count: number) => void; setPendingItems: (items: PendingSale[]) => void; menuOpen: boolean; setMenuOpen: (open: boolean) => void; theme: string; setTheme: (value: string) => void; syncError: string; setSyncError: (value: string) => void; syncNotice: string; setSyncNotice: (value: string) => void; onLogout: () => void }) {
   const queryClient = useQueryClient();
   const businesses = useQuery({ queryKey: ["businesses"], queryFn: () => get<BusinessSummary[]>("/businesses") });
   const [businessId, setBusinessId] = useState(sessionStorage.getItem("shopro_business_id") ?? "");
@@ -153,18 +167,18 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
       sessionStorage.setItem("shopro_business_id", activeBusiness.id); sessionStorage.setItem("shopro_branch_id", activeBranch.id);
     }
   }, [activeBusiness, activeBranch, businessId, branchId]);
-  useEffect(() => { if (online && pendingCount > 0) void syncPendingSales(user.id, setPendingCount, setPendingItems).then((result) => setSyncError(result.message)).catch((cause) => setSyncError(messageOf(cause))); }, [online, pendingCount, user.id, activeBusiness?.id, activeBranch?.id, setPendingCount, setPendingItems, setSyncError]);
+  useEffect(() => { if (online && pendingCount > 0) void syncPendingSales(user.id, setPendingCount, setPendingItems).then((result) => { setSyncError(result.error ? result.message : ""); setSyncNotice(result.error ? "" : result.message); }).catch((cause) => { setSyncError(messageOf(cause)); setSyncNotice(""); }); }, [online, pendingCount, user.id, activeBusiness?.id, activeBranch?.id, setPendingCount, setPendingItems, setSyncError, setSyncNotice]);
   const sync = async (retryFailed = false, itemId?: string) => {
-    setSyncError("");
+    setSyncError(""); setSyncNotice("");
     const result = await syncPendingSales(user.id, setPendingCount, setPendingItems, { retryFailed, itemId });
-    setSyncError(result.message);
+    setSyncError(result.error ? result.message : ""); setSyncNotice(result.error ? "" : result.message);
   };
   const discardPending = async (id: string) => {
     const item = pendingItems.find((candidate) => candidate.id === id);
-    if (!item || !window.confirm("این پیش‌نویس فروش از این دستگاه حذف شود؟")) return;
+    if (!item || !window.confirm(item.status === "succeeded" ? "سابقهٔ همگام‌سازی این فروش فقط از این دستگاه پاک شود؟ سند سرور تغییر نمی‌کند." : "این پیش‌نویس فروش از این دستگاه حذف شود؟")) return;
     await removePendingSale(id);
     const remaining = (await listPendingSales()).filter((candidate) => candidate.userId === user.id);
-    setPendingItems(remaining); setPendingCount(remaining.length);
+    setPendingItems(remaining); setPendingCount(countAwaitingServer(remaining));
   };
   const discardUnclaimed = async () => {
     if (!unclaimedPendingCount || !window.confirm("پیش‌نویس‌های قدیمی که به حسابی وصل نیستند، فقط از همین دستگاه پاک شوند؟")) return;
@@ -179,7 +193,12 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
     <div className="workspace-body"><aside className={`side-nav ${menuOpen ? "open" : ""}`} aria-label="ناوبری"><div className="side-business"><span className="avatar">{activeBusiness?.displayName.slice(0, 1)}</span><div><strong>{activeBusiness?.displayName}</strong><span>{activeBranch?.name} · {roleLabel(activeBusiness?.role)}</span></div></div><nav>{navItems.map((item) => <NavLink to={item.to} key={item.to} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}><item.icon size={19} /><span>{item.label}</span></NavLink>)}</nav><div className="side-bottom"><button className="nav-item nav-plain" onClick={() => void onLogout()}><LogOut size={19} /><span>خروج از حساب</span></button><small>نسخهٔ آزمایشی · {user.displayName ?? user.phone}</small></div></aside>
       {menuOpen && <button className="nav-overlay" onClick={() => setMenuOpen(false)} aria-label="بستن فهرست" />}
       <main className="page-content"><Suspense fallback={<div className="card page-content-loading" role="status">در حال بارگذاری صفحه…</div>}><Routes><Route path="/app" element={<DashboardPage business={activeBusiness!} pendingCount={pendingCount} />} /><Route path="/app/subscription" element={<SubscriptionsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} setPendingCount={setPendingCount} />} /><Route path="/app/invoices" element={<InvoicesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/invoices/:id" element={<InvoiceDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/parties" element={<PartiesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/parties/:id" element={<PartyDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products" element={<ProductsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/products/:id" element={<ProductDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory" element={<InventoryPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/inventory/counts/:id" element={<StockCountDetailsPage />} /><Route path="/app/purchases" element={<PurchasesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/purchases/:id" element={<PurchaseDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/expenses" element={<ExpensesPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/expenses/:id" element={<ExpenseDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/finance" element={<FinancePage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/ledger" element={<LedgerPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/finance/:kind/:id" element={<FinanceDetailsPage currency={activeBusiness!.displayCurrency} />} /><Route path="/app/reports" element={<ReportsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} /><Route path="/app/settings" element={<SettingsPage business={activeBusiness!} theme={theme} setTheme={setTheme} />} /><Route path="*" element={<Navigate to="/app" replace />} /></Routes></Suspense></main></div>
-    {pendingCount > 0 && <section className="pending-sync-panel" dir="rtl"><div className="pending-sync-heading"><strong>{faNumber(pendingCount)} پیش‌نویس فروش ذخیره شده</strong><button className="button button-secondary" type="button" disabled={!online} onClick={() => void sync(true)}>{online ? "تلاش دوباره" : "پس از اتصال تلاش کنید"}</button></div>{syncError && <p className="pending-error" role="status">{syncError}</p>}<p className="pending-sync-hint">این پیش‌نویس‌ها فقط برای حساب فعلی نگه‌داری می‌شوند. برای ارسال، کسب‌وکار و شعبهٔ ثبت‌شده را انتخاب کنید.</p>{pendingItems.map((item) => <article className="pending-sync-item" key={item.id}><span>{jalaliDate(item.sale.txnDate)} · {faNumber(item.sale.lines.length)} ردیف</span>{item.lastError && <small role="alert">{item.lastError}</small>}<div><button className="button button-text" type="button" disabled={!online} onClick={() => void sync(true, item.id)}>ارسال دوباره</button><button className="button button-text" type="button" onClick={() => void discardPending(item.id)}>حذف پیش‌نویس</button></div></article>)}</section>}
+    {(pendingItems.length > 0 || syncError || syncNotice) && <section className="pending-sync-panel" dir="rtl" aria-label="وضعیت همگام‌سازی فروش">
+      <div className="pending-sync-heading"><strong>{pendingCount ? `${faNumber(pendingCount)} مورد هنوز به سرور نرسیده` : "وضعیت همگام‌سازی فروش"}</strong>{pendingCount > 0 && <button className="button button-secondary" type="button" disabled={!online} onClick={() => void sync(true)}>{online ? "ارسال و تلاش دوباره" : "پس از اتصال تلاش کنید"}</button>}</div>
+      {syncError && <p className="notice notice-error" role="alert">{syncError}</p>}{syncNotice && <p className="notice notice-success" role="status">{syncNotice}</p>}
+      {pendingItems.length > 0 && <p className="pending-sync-hint">پیش‌نویس‌ها فقط برای حساب فعلی نگه‌داری می‌شوند. محتوای هر فروش پس از تأیید سرور از دستگاه پاک می‌شود. برای موارد شعبهٔ دیگر، همان کسب‌وکار و شعبه را انتخاب کنید.</p>}
+      {pendingItems.map((item) => <PendingSaleQueueItem key={item.id} item={item} online={online} businessId={activeBusiness?.id ?? ""} branchId={activeBranch?.id ?? ""} onRetry={(id) => void sync(true, id)} onRemove={(id) => void discardPending(id)} />)}
+    </section>}
     {unclaimedPendingCount > 0 && <UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} />}
     <BottomNav />
   </div>;
@@ -188,6 +207,27 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
 function UnclaimedQueueNotice({ count, onClear }: { count: number; onClear: () => void }) {
   if (!count) return null;
   return <aside className="pending-sync-panel unclaimed-sync-panel" dir="rtl"><strong>{faNumber(count)} پیش‌نویس قدیمی به حسابی متصل نیست</strong><p className="pending-sync-hint">برای حفظ حریم خصوصی، جزئیات آن‌ها نمایش داده نمی‌شود و خودکار ارسال نخواهند شد.</p><button className="button button-text" type="button" onClick={onClear}>پاک‌کردن از این دستگاه</button></aside>;
+}
+
+function PendingSaleQueueItem({ item, online, businessId, branchId, onRetry, onRemove }: { item: PendingSale; online: boolean; businessId: string; branchId: string; onRetry: (id: string) => void; onRemove: (id: string) => void }) {
+  const scopeMatches = item.businessId === businessId && item.branchId === branchId;
+  const canRetry = scopeMatches && isQueueItemManuallyRetryable(item, scopeMatches);
+  const statusLabel = item.status === "pending" ? "در صف ارسال"
+    : item.status === "syncing" ? "در حال ارسال"
+      : item.status === "succeeded" ? "ثبت‌شده در سرور"
+        : item.status === "failed" ? "ارسال ناموفق"
+          : item.conflictType === "scope" ? scopeMatches ? "آمادهٔ ارسال در این شعبه" : "نیازمند انتخاب شعبهٔ درست"
+            : "نیازمند اصلاح اطلاعات";
+  const description = item.status === "succeeded"
+    ? `سرور ثبت فروش را تأیید کرد${item.serverInvoiceNo ? ` · فاکتور ${item.serverInvoiceNo}` : ""}.`
+    : item.sale ? `${jalaliDate(item.sale.txnDate)} · ${faNumber(item.sale.lines.length)} ردیف` : "";
+  return <article className={`pending-sync-item offline-queue-${item.status}`}>
+    <div className="pending-sync-item-title"><strong>{description}</strong><span className="pending-sync-status">{statusLabel}</span></div>
+    {item.lastError && <small className="pending-sync-item-error" role="alert">{item.lastError}</small>}
+    {item.status !== "succeeded" && item.attemptCount > 0 && <small className="pending-sync-attempt">تلاش {faNumber(item.attemptCount)}{item.lastAttemptAt ? ` · آخرین تلاش ${jalaliDate(item.lastAttemptAt)}` : ""}</small>}
+    {!scopeMatches && item.status !== "succeeded" && <small className="pending-sync-scope">کسب‌وکار و شعبهٔ ذخیره‌شده با انتخاب فعلی فرق دارد؛ برای جلوگیری از ثبت در محل اشتباه، ارسال متوقف است.</small>}
+    <div className="pending-sync-actions">{canRetry && <button className="button button-text" type="button" disabled={!online || item.status === "syncing"} onClick={() => onRetry(item.id)}>{item.status === "pending" ? "ارسال" : item.status === "conflict" ? "ارسال در این شعبه" : online ? "تلاش دوباره" : "پس از اتصال تلاش کنید"}</button>}<button className="button button-text" type="button" onClick={() => onRemove(item.id)}>{item.status === "succeeded" ? "پاک‌کردن سابقه از دستگاه" : "حذف پیش‌نویس"}</button></div>
+  </article>;
 }
 
 function OnboardingPage() {
@@ -234,25 +274,46 @@ async function syncPendingSales(userId: string, setCount: (count: number) => voi
   const scopeBusinessId = sessionStorage.getItem("shopro_business_id");
   const scopeBranchId = sessionStorage.getItem("shopro_branch_id");
   const items = (await listPendingSales()).filter((item) => item.userId === userId && (!options.itemId || item.id === options.itemId));
-  let failed = 0; let wrongScope = 0; let waitingForRetry = 0;
+  let failed = 0; let wrongScope = 0; let waitingForAction = 0; let succeeded = 0;
+  const refresh = async () => {
+    const owned = (await listPendingSales()).filter((item) => item.userId === userId);
+    setItems(owned); setCount(countAwaitingServer(owned));
+  };
   for (const item of items) {
-    if (item.businessId !== scopeBusinessId || item.branchId !== scopeBranchId) { wrongScope++; continue; }
-    if (item.lastError && !options.retryFailed) { waitingForRetry++; continue; }
-    if (item.lastError) await setPendingSaleError(item.id, null);
+    if (item.status === "succeeded" || item.status === "syncing") continue;
+    const scopeMatches = item.businessId === scopeBusinessId && item.branchId === scopeBranchId;
+    if (!scopeMatches) {
+      if (item.status !== "conflict" || item.conflictType !== "server") {
+        await markPendingSaleScopeConflict(item.id, "برای جلوگیری از ثبت اشتباه، کسب‌وکار و شعبهٔ ثبت‌شده را انتخاب کنید.");
+      }
+      wrongScope++;
+      continue;
+    }
+    if (item.status === "conflict" && item.conflictType !== "scope") { waitingForAction++; continue; }
+    if (item.status === "failed" && (!options.retryFailed || !isQueueItemManuallyRetryable(item, scopeMatches))) { waitingForAction++; continue; }
+    if (item.status === "conflict" && !options.retryFailed) { waitingForAction++; continue; }
+    if (!isQueueItemAutomaticallySyncable(item) && item.status !== "failed" && item.status !== "conflict") continue;
+    if (item.status === "failed" || item.status === "conflict") await markPendingSaleForRetry(item.id);
+    await markPendingSaleSyncing(item.id);
+    await refresh();
     try {
       const draft = await post<{ id: string }>("/sales", item.sale, { "Idempotency-Key": item.draftKey });
-      await post(`/sales/${draft.id}/post`, { payments: item.payment ? [item.payment] : [] }, { "Idempotency-Key": item.postKey });
-      await removePendingSale(item.id);
+      const posted = await post<{ status?: string; invoiceNo?: string }>(`/sales/${draft.id}/post`, { payments: item.payment ? [item.payment] : [] }, { "Idempotency-Key": item.postKey });
+      if (posted.status !== "POSTED") throw new ApiError(502, "پاسخ نهایی سرور برای ثبت فروش تأیید نشد.");
+      await markPendingSaleSucceeded(item.id, posted.invoiceNo);
+      succeeded++;
     } catch (cause) {
-      failed++;
-      await setPendingSaleError(item.id, messageOf(cause));
+      const result = classifyOfflineFailure(cause);
+      await markPendingSaleFailed(item.id, messageOf(cause), result.retryable);
+      if (result.retryable) failed++;
+      else waitingForAction++;
     }
   }
-  const owned = (await listPendingSales()).filter((item) => item.userId === userId);
-  setItems(owned); setCount(owned.length);
-  const message = failed ? `${faNumber(failed)} پیش‌نویس ارسال نشد؛ خطای هر مورد را بررسی و سپس دوباره تلاش کنید.`
-    : wrongScope ? "برای ارسال پیش‌نویس‌های باقی‌مانده، کسب‌وکار و شعبهٔ ثبت‌شده در هر مورد را انتخاب کنید."
-    : waitingForRetry ? "برای موارد ناموفق، دکمهٔ «تلاش دوباره» را بزنید."
-    : "";
-  return { message };
+  await refresh();
+  const message = wrongScope ? "برای ارسال موارد باقی‌مانده، کسب‌وکار و شعبهٔ ثبت‌شده در همان مورد را انتخاب کنید."
+    : failed ? `${faNumber(failed)} مورد به‌دلیل خطای موقت ارسال نشد؛ وضعیت هر مورد را بررسی و دستی دوباره تلاش کنید.`
+      : waitingForAction ? `${faNumber(waitingForAction)} مورد نیازمند اصلاح یا اقدام شماست؛ این موارد خودکار تکرار نمی‌شوند.`
+        : succeeded ? `${faNumber(succeeded)} فروش پس از تأیید سرور ثبت شد.`
+          : "";
+  return { message, error: wrongScope > 0 || failed > 0 || waitingForAction > 0 };
 }

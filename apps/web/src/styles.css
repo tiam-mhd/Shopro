@@ -804,10 +804,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .pending-sync-heading .button { min-height: 34px; font-size: 10px; }
 .pending-sync-hint { margin: 9px 0; color: var(--muted-strong); font-size: 10px; line-height: 1.8; }
 .pending-sync-item { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); font-size: 10px; }
-.pending-sync-item > small { grid-column: 1 / -1; color: var(--danger, #b64e41); line-height: 1.6; }
-.pending-sync-item > div { grid-column: 1 / -1; display: flex; gap: 8px; }
+.pending-sync-item-title { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pending-sync-item-title > strong { min-width: 0; font-size: 10px; line-height: 1.7; }
+.pending-sync-status { flex: none; padding: 3px 7px; border-radius: 999px; color: var(--muted-strong); background: var(--surface-soft); font-size: 9px; }
+.offline-queue-succeeded .pending-sync-status { color: var(--green-dark); background: var(--success-surface); }
+.offline-queue-failed .pending-sync-status, .offline-queue-conflict .pending-sync-status { color: var(--warning-ink); background: var(--warning-surface); }
+.pending-sync-item-error, .pending-sync-attempt, .pending-sync-scope { grid-column: 1 / -1; line-height: 1.7; }
+.pending-sync-item-error { color: var(--danger-ink); }
+.pending-sync-attempt { color: var(--muted-strong); }
+.pending-sync-scope { color: var(--warning-ink); }
+.pending-sync-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .pending-sync-item .button { min-height: 29px; padding-inline: 8px; font-size: 9px; }
-.pending-sync-panel .pending-error { margin: 8px 0 0; color: var(--danger, #b64e41); font-size: 10px; }
+.pending-sync-panel > .notice { margin: 8px 0 0; padding: 8px 10px; font-size: 10px; }
 @media (min-width: 760px) { .pending-sync-panel { inset-inline-start: 24px; inset-inline-end: auto; bottom: 24px; margin-inline: 0; } }
 .expense-attachment-card { display: grid; gap: 12px; }
 .attachment-file-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 13px; background: var(--surface-soft); }

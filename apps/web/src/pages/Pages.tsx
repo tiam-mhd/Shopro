@@ -7,7 +7,7 @@ import { parseQuantityMilli, toAsciiDigits } from "@shopro/contracts";
 import type { BusinessSummary, CursorPage } from "@shopro/contracts";
 import { del, get, newOperationId, patch, post } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
-import { listPendingSales, savePendingSale } from "../lib/offline.js";
+import { countAwaitingServer, listPendingSales, savePendingSale } from "../lib/offline.js";
 import { partyPicker, productPicker } from "../lib/picker-options.js";
 import { downloadCsv } from "../lib/csv.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
@@ -51,7 +51,7 @@ export function SalesPage({ currency, setPendingCount, userId }: { currency: Mon
       navigate("/app/invoices/" + draft.id, { state: { openPost: true, payment: amountRial ? { amountRial, financeAccountId: accountId, method } : null } });
     } catch (cause) {
       if (!navigator.onLine || cause instanceof TypeError) {
-        try { const businessId = sessionStorage.getItem("shopro_business_id") ?? ""; const branchId = sessionStorage.getItem("shopro_branch_id") ?? ""; const amountRial = displayToRial(paid, currency); const payment = amountRial && accountId ? { amountRial, financeAccountId: accountId, method } : undefined; await savePendingSale({ id: operationId, userId, draftKey: `${operationId}-draft`, postKey: `${operationId}-post`, businessId, branchId, sale, payment }); setPendingCount((await listPendingSales()).filter((item) => item.userId === userId).length); setSuccess("فروش به‌صورت پیش‌نویس روی این دستگاه و برای همین حساب ذخیره شد؛ پس از اتصال می‌توانید آن را ارسال کنید."); setCart([]); }
+        try { const businessId = sessionStorage.getItem("shopro_business_id") ?? ""; const branchId = sessionStorage.getItem("shopro_branch_id") ?? ""; const amountRial = displayToRial(paid, currency); const payment = amountRial && accountId ? { amountRial, financeAccountId: accountId, method } : undefined; await savePendingSale({ id: operationId, userId, draftKey: `${operationId}-draft`, postKey: `${operationId}-post`, businessId, branchId, sale, payment }); setPendingCount(countAwaitingServer((await listPendingSales()).filter((item) => item.userId === userId))); setSuccess("فروش به‌صورت پیش‌نویس روی این دستگاه و برای همین حساب ذخیره شد؛ پس از اتصال می‌توانید آن را ارسال کنید."); setCart([]); }
         catch { setError("این دستگاه نتوانست پیش‌نویس را ذخیره کند. اطلاعات فرم را نگه داشته‌ایم؛ دوباره تلاش کنید."); }
       } else setError(messageOf(cause));
     } finally { setBusy(false); }

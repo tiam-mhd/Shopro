@@ -17,8 +17,9 @@ const percentile = (values, ratio) => {
 export async function runHttpCapacityProfile({ prisma, businessId, branchId, customerId, statementPartyId, productId }) {
   const virtualUsers = Number(process.env.SHOPRO_PERF_VUS ?? 20);
   const durationMs = Number(process.env.SHOPRO_PERF_DURATION_MS ?? 300_000);
-  const readBudgetMs = Number(process.env.SHOPRO_PERF_READ_P95_BUDGET_MS ?? 2_500);
-  const postingBudgetMs = Number(process.env.SHOPRO_PERF_POST_P95_BUDGET_MS ?? 5_000);
+  const listBudgetMs = Number(process.env.SHOPRO_PERF_LIST_P95_BUDGET_MS ?? 800);
+  const reportBudgetMs = Number(process.env.SHOPRO_PERF_REPORT_P95_BUDGET_MS ?? 2_000);
+  const postingBudgetMs = Number(process.env.SHOPRO_PERF_POST_P95_BUDGET_MS ?? 1_500);
   if (!Number.isInteger(virtualUsers) || virtualUsers < 1 || virtualUsers > 100) throw new Error("SHOPRO_PERF_VUS must be an integer between 1 and 100.");
   if (!Number.isInteger(durationMs) || durationMs < 1_000 || durationMs > 3_600_000) throw new Error("SHOPRO_PERF_DURATION_MS must be between 1,000 and 3,600,000.");
   for (const [label, model, minimum] of [["products", prisma.product, 10_000], ["parties", prisma.party, 10_000], ["journal lines", prisma.journalLine, 100_000]]) {
@@ -72,20 +73,23 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
     const errors = [];
     let requests = 0;
     let successfulSales = 0;
+    let peakDatabaseConnections = 0;
+    let peakRssBytes = process.memoryUsage().rss;
+    let profileTimer;
+    let monitorQuery = Promise.resolve();
     const recordFailure = (name, detail) => {
       const row = stats.get(name);
       row.failed++;
       if (errors.length < 20) errors.push({ endpoint: name, detail });
-      throw new Error(`HTTP capacity operation failed for ${name}: ${detail}`);
     };
     const get = async (name, path) => {
       const started = performance.now();
       requests++;
       try {
         const response = await fetch(`${baseUrl}${path}`, { headers, signal: AbortSignal.timeout(10_000) });
-        await response.arrayBuffer();
+        const body = await response.text();
         stats.get(name).latencies.push(performance.now() - started);
-        if (!response.ok) recordFailure(name, `HTTP ${response.status}`);
+        if (!response.ok) recordFailure(name, `HTTP ${response.status}: ${body.slice(0, 160)}`);
       } catch (error) {
         stats.get(name).latencies.push(performance.now() - started);
         recordFailure(name, error instanceof Error ? error.name : "network error");
@@ -109,14 +113,24 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
         if (!post.ok || result.status !== "POSTED") throw new Error(`post HTTP ${post.status}`);
         successfulSales++;
       } catch (error) {
-        recordFailure(name, error instanceof Error ? error.message.slice(0, 100) : "request failed");
+        recordFailure(name, error instanceof Error ? error.message.slice(0, 160) : "request failed");
       } finally {
         stats.get(name).latencies.push(performance.now() - started);
       }
     };
 
     const endsAt = Date.now() + durationMs;
+    const profileStartedAt = performance.now();
+    const cpuStartedAt = process.cpuUsage();
+    const initialRssBytes = process.memoryUsage().rss;
     try {
+      profileTimer = setInterval(() => {
+        peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+        monitorQuery = monitorQuery.then(async () => {
+          const rows = await prisma.$queryRaw`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname = current_database()`;
+          peakDatabaseConnections = Math.max(peakDatabaseConnections, rows[0]?.count ?? 0);
+        }).catch(() => undefined);
+      }, 1_000);
       await Promise.all(Array.from({ length: virtualUsers }, async (_, virtualUser) => {
         let iteration = 0;
         do {
@@ -128,7 +142,11 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
     } catch (error) {
       console.error(`HTTP capacity profile stopped early: ${JSON.stringify(errors)}`);
       throw error;
+    } finally {
+      if (profileTimer) clearInterval(profileTimer);
+      await monitorQuery;
     }
+    peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
 
     const summary = Object.fromEntries([...stats].map(([name, row]) => [name, {
       count: row.latencies.length,
@@ -158,16 +176,31 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
       assert.equal(debit, credit, `journal ${journal.id} must balance`);
       assert.equal(receivable, invoiceById.get(journal.sourceId).totalRial, `journal ${journal.id} must reconcile to its invoice total`);
     }
-    console.log(`HTTP capacity profile (${virtualUsers} VUs, ${(durationMs / 1000).toFixed(0)}s, ${requests} reads, ${successfulSales} posted sales): ${JSON.stringify(summary)}`);
+    const elapsedSeconds = (performance.now() - profileStartedAt) / 1_000;
+    const cpuUsed = process.cpuUsage(cpuStartedAt);
+    const runtime = {
+      elapsedSeconds: Number(elapsedSeconds.toFixed(1)),
+      readsPerSecond: Number((requests / elapsedSeconds).toFixed(1)),
+      postingsPerSecond: Number((successfulSales / elapsedSeconds).toFixed(2)),
+      processCpuPercent: Number((((cpuUsed.user + cpuUsed.system) / 1_000_000 / elapsedSeconds) * 100).toFixed(1)),
+      processRssStartMiB: Number((initialRssBytes / 1024 / 1024).toFixed(1)),
+      processRssPeakMiB: Number((peakRssBytes / 1024 / 1024).toFixed(1)),
+      processRssEndMiB: Number((process.memoryUsage().rss / 1024 / 1024).toFixed(1)),
+      databaseConnectionsPeak: peakDatabaseConnections,
+    };
+    console.log(`HTTP capacity profile (${virtualUsers} VUs, ${(durationMs / 1000).toFixed(0)}s, ${requests} reads, ${successfulSales} posted sales): runtime=${JSON.stringify(runtime)} routes=${JSON.stringify(summary)}`);
     if (errors.length) console.error(`HTTP capacity errors (first ${errors.length}): ${JSON.stringify(errors)}`);
+    const totalErrors = [...stats.values()].reduce((sum, row) => sum + row.failed, 0);
+    assert.equal(totalErrors, 0, `capacity profile observed ${totalErrors} failed requests`);
     for (const [name, row] of stats) {
       assert.ok(row.latencies.length > 0, `capacity profile did not exercise ${name}`);
-      const budget = name === "financial sale posting" ? postingBudgetMs : readBudgetMs;
+      const listRoute = name === "product search" || name === "party search" || name === "sales list";
+      const budget = name === "financial sale posting" ? postingBudgetMs : listRoute ? listBudgetMs : reportBudgetMs;
       const p95 = percentile(row.latencies, 0.95);
       assert.ok(p95 <= budget, `${name} p95 ${p95}ms exceeds the local budget of ${budget}ms`);
     }
     assert.ok(successfulSales >= virtualUsers, "the profile must post repeated financial documents, not only read endpoints");
-    console.log(`HTTP capacity profile passed: all endpoints had zero errors; ${journals.length} posted journals balanced and matched their invoice totals; p95 budgets ${readBudgetMs}ms for reads and ${postingBudgetMs}ms for financial posting.`);
+    console.log(`HTTP capacity profile passed: all endpoints had zero errors; ${journals.length} posted journals balanced and matched their invoice totals; p95 budgets ${listBudgetMs}ms for list/search, ${reportBudgetMs}ms for reports, and ${postingBudgetMs}ms for posting.`);
   } finally {
     if (app) await app.close();
     await prisma.user.deleteMany({ where: { id: user.id } });
