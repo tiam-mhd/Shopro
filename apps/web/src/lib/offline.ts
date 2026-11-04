@@ -40,11 +40,22 @@ type StoredSale = Record<string, unknown> & { id?: unknown };
 const KEEP_SUCCEEDED_MS = 7 * 24 * 60 * 60 * 1000;
 const STALE_SYNC_MS = 5 * 60 * 1000;
 const validStatuses = new Set<OfflineQueueStatus>(["pending", "syncing", "succeeded", "failed", "conflict"]);
-const database = openDB("shopro-offline", 2, {
-  upgrade(db) {
+const database = openDB("shopro-offline", 3, {
+  upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains("sales")) db.createObjectStore("sales", { keyPath: "id" });
+    if (oldVersion < 3 && !db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
   },
 });
+
+export async function getOfflineDeviceId() {
+  const db = await database;
+  let deviceId = await db.get("meta", "device-id") as string | undefined;
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    await db.put("meta", deviceId, "device-id");
+  }
+  return deviceId;
+}
 
 export async function savePendingSale(sale: NewPendingSale) {
   const pending: PendingSale = {

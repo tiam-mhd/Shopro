@@ -1,4 +1,4 @@
-import { ArrayMinSize, IsArray, IsBoolean, IsOptional, IsString, IsUUID, Length, ValidateNested } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, Equals, IsArray, IsBoolean, IsDefined, IsIn, IsOptional, IsString, IsUUID, Length, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 
 export class SalesLineDto {
@@ -22,7 +22,7 @@ export class SalesPaymentDto {
   @IsString() @IsUUID()
   financeAccountId!: string;
 
-  @IsString() @Length(3, 8)
+  @IsString() @IsIn(["CASH", "POS", "BANK", "OTHER"])
   method!: "CASH" | "POS" | "BANK" | "OTHER";
 }
 
@@ -36,13 +36,33 @@ export class CreateSalesDto {
   @IsOptional() @IsString() @Length(0, 1000)
   note?: string;
 
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesLineDto)
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => SalesLineDto)
   lines!: SalesLineDto[];
 }
 
 export class PostSalesDto {
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SalesPaymentDto)
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => SalesPaymentDto)
   payments?: SalesPaymentDto[];
+}
+
+export class SyncSaleOperationDto {
+  @IsDefined() @IsUUID()
+  clientOperationId!: string;
+
+  @IsDefined() @IsUUID()
+  deviceId!: string;
+
+  @IsDefined() @Equals("SALE_CREATE_AND_POST")
+  operationType!: "SALE_CREATE_AND_POST";
+
+  @IsDefined() @ValidateNested() @Type(() => CreateSalesDto)
+  sale!: CreateSalesDto;
+
+  @IsOptional() @ValidateNested() @Type(() => SalesPaymentDto)
+  payment?: SalesPaymentDto;
+
+  @IsOptional() @IsBoolean()
+  retryFailed?: boolean;
 }
 
 export class VoidSalesDto {
@@ -77,6 +97,6 @@ export class CreateSalesReturnDto {
   @IsOptional() @IsString() @Length(3, 8)
   refundMethod?: "CASH" | "POS" | "BANK" | "OTHER";
 
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesReturnLineDto)
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => SalesReturnLineDto)
   lines!: SalesReturnLineDto[];
 }

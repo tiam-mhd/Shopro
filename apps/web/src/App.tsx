@@ -6,7 +6,7 @@ import { Activity, ArrowDownLeft, ArrowUpRight, BookOpen, BriefcaseBusiness, Box
 import type { BusinessSummary, MemberRole, SessionUser } from "@shopro/contracts";
 import { ApiError, get, post } from "./lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "./lib/format.js";
-import { countAwaitingServer, countUnclaimedPendingSales, listPendingSales, markPendingSaleFailed, markPendingSaleForRetry, markPendingSaleScopeConflict, markPendingSaleSucceeded, markPendingSaleSyncing, removePendingSale, removeUnclaimedPendingSales, type PendingSale } from "./lib/offline.js";
+import { countAwaitingServer, countUnclaimedPendingSales, getOfflineDeviceId, listPendingSales, markPendingSaleFailed, markPendingSaleForRetry, markPendingSaleScopeConflict, markPendingSaleSucceeded, markPendingSaleSyncing, removePendingSale, removeUnclaimedPendingSales, type PendingSale } from "./lib/offline.js";
 import { classifyOfflineFailure, isQueueItemAutomaticallySyncable, isQueueItemManuallyRetryable } from "./lib/offline-state.js";
 import { OptionPicker } from "./components/OptionPicker.js";
 import type { PickerOptionLoader } from "./components/OptionPicker.js";
@@ -297,11 +297,27 @@ async function syncPendingSales(userId: string, setCount: (count: number) => voi
     await markPendingSaleSyncing(item.id);
     await refresh();
     try {
-      const draft = await post<{ id: string }>("/sales", item.sale, { "Idempotency-Key": item.draftKey });
-      const posted = await post<{ status?: string; invoiceNo?: string }>(`/sales/${draft.id}/post`, { payments: item.payment ? [item.payment] : [] }, { "Idempotency-Key": item.postKey });
-      if (posted.status !== "POSTED") throw new ApiError(502, "پاسخ نهایی سرور برای ثبت فروش تأیید نشد.");
-      await markPendingSaleSucceeded(item.id, posted.invoiceNo);
-      succeeded++;
+      const result = await post<{ status: "PENDING" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "CONFLICT"; serverInvoiceNo?: string | null; message?: string | null }>("/sync/operations", {
+        deviceId: await getOfflineDeviceId(),
+        clientOperationId: item.id,
+        operationType: "SALE_CREATE_AND_POST",
+        sale: item.sale,
+        ...(item.payment ? { payment: item.payment } : {}),
+        retryFailed: options.retryFailed === true,
+      });
+      if (result.status === "SUCCEEDED") {
+        await markPendingSaleSucceeded(item.id, result.serverInvoiceNo ?? undefined);
+        succeeded++;
+      } else if (result.status === "CONFLICT") {
+        await markPendingSaleFailed(item.id, result.message ?? "اطلاعات فروش نیازمند بازبینی است.", false);
+        waitingForAction++;
+      } else if (result.status === "FAILED") {
+        await markPendingSaleFailed(item.id, result.message ?? "ارسال فروش موقتاً انجام نشد؛ دوباره تلاش کنید.", true);
+        failed++;
+      } else {
+        await markPendingSaleFailed(item.id, "همگام‌سازی این فروش هنوز در حال انجام است؛ کمی بعد وضعیت را بررسی و دوباره تلاش کنید.", true);
+        failed++;
+      }
     } catch (cause) {
       const result = classifyOfflineFailure(cause);
       await markPendingSaleFailed(item.id, messageOf(cause), result.retryable);
