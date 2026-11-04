@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ArrowLeft, BadgeCheck, LogOut, RefreshCw, ShoppingBag, UserRound } from "lucide-react";
 import { ApiError, storefrontCustomerGet, storefrontCustomerPost } from "../lib/api.js";
 import { money } from "../lib/format.js";
 import { StorefrontPublicFrame } from "./StorefrontPublicFrame.js";
@@ -129,38 +130,39 @@ function CustomerAccount({ slug }: { slug: string }) {
 
   return <StorefrontPublicFrame storeSlug={slug} accountPage>
     <main className="sf-customer-account">
-      <header className="sf-track-heading">
-        <span className="sf-eyebrow">حساب مشتری همین فروشگاه</span>
-        <h1>اطلاعات و سفارش‌های من</h1>
-        <p>برای دیدن سفارش‌های ثبت‌شده با شمارهٔ خودتان، کد یک‌بارمصرف را وارد کنید.</p>
+      <header className="sf-customer-hero">
+        <span className="sf-customer-hero-icon"><UserRound size={22} /></span>
+        <div><span className="sf-eyebrow">حساب مشتری همین فروشگاه</span><h1>حساب من</h1><p>اطلاعات و سفارش‌های این فروشگاه را یک‌جا ببینید و پیگیری کنید.</p></div>
       </header>
       {error && <div className="sf-alert sf-alert-error" role="alert">{error}</div>}
       {success && <div className="sf-alert sf-alert-success" role="status">{success}</div>}
 
       {!customerToken ? <section className="sf-card sf-section sf-customer-login">
-        <h2>ورود با شمارهٔ موبایل</h2>
+        <div className="sf-customer-login-heading"><span className="sf-customer-step">۱</span><div><h2>ورود امن با شمارهٔ موبایل</h2><p>کد تأیید فقط به شمارهٔ شما ارسال می‌شود.</p></div></div>
         <form className="sf-customer-login-form" onSubmit={(event) => void requestOtp(event)}>
           <label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" minLength={8} maxLength={16} value={phone} onChange={(event) => { setPhone(event.target.value); setOtpSent(false); setCode(""); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label>
-          <button className="sf-button sf-secondary" disabled={working}>{working ? "در حال ارسال…" : otpSent ? "ارسال دوبارهٔ کد" : "دریافت کد ورود"}</button>
+          <button className="sf-button sf-primary" disabled={working}>{working ? "در حال ارسال…" : otpSent ? "ارسال دوبارهٔ کد" : "دریافت کد ورود"}</button>
         </form>
         {otpSent && <form className="sf-customer-verify" onSubmit={(event) => void verifyOtp(event)}>
-          <label>کد پیامک‌شده<input required dir="ltr" inputMode="numeric" autoComplete="one-time-code" minLength={4} maxLength={8} value={code} onChange={(event) => setCode(event.target.value)} /></label>
+          <div className="sf-customer-login-heading"><span className="sf-customer-step">۲</span><div><h2>کد تأیید را وارد کنید</h2><p>کد ارسال‌شده به شمارهٔ {phone} را وارد کنید.</p></div></div>
+          <label>کد یک‌بارمصرف<input required dir="ltr" inputMode="numeric" autoComplete="one-time-code" minLength={4} maxLength={8} value={code} onChange={(event) => setCode(event.target.value)} /></label>
           <button className="sf-button sf-primary" disabled={working || code.length < 4}>{working ? "در حال بررسی…" : "تأیید و ورود"}</button>
         </form>}
-        <p className="sf-footnote">کد فقط برای تأیید شماره و دسترسی به اطلاعات سفارش‌های همین فروشگاه استفاده می‌شود.</p>
+        <p className="sf-customer-privacy"><BadgeCheck size={16} /> کد فقط برای تأیید شماره و دسترسی به سفارش‌های همین فروشگاه استفاده می‌شود.</p>
       </section> : loading ? <section className="sf-card sf-state" role="status">در حال دریافت اطلاعات حساب و سفارش‌ها…</section> : <>
         <section className="sf-card sf-section sf-customer-profile">
-          <div><span className="sf-eyebrow">اطلاعات مشتری</span><h2>{customer?.name ?? "مشتری فروشگاه"}</h2><p dir="ltr">{customer?.phone ?? phone}</p></div>
-          <button type="button" className="sf-button sf-secondary" disabled={working} onClick={() => void logout()}>خروج از حساب</button>
+          <span className="sf-customer-avatar">{(customer?.name ?? "م").slice(0, 1)}</span>
+          <div className="sf-customer-profile-copy"><span className="sf-eyebrow">اطلاعات مشتری</span><h2>{customer?.name ?? "مشتری فروشگاه"}</h2><p dir="ltr">{customer?.phone ?? phone}</p></div>
+          <div className="sf-customer-profile-actions"><Link to={`/s/${encodeURIComponent(slug)}`} className="sf-button sf-secondary"><ShoppingBag size={16} />ادامهٔ خرید</Link><button type="button" className="sf-button sf-quiet" disabled={working} onClick={() => void logout()}><LogOut size={16} />خروج</button></div>
         </section>
         <section className="sf-customer-orders">
-          <div className="sf-section-head"><div><span className="sf-eyebrow">فقط سفارش‌های همین فروشگاه</span><h2>سفارش‌های من</h2></div><div className="sf-customer-order-controls"><span>{orders.length} سفارش</span><button type="button" className="sf-link-button" disabled={loading || working} onClick={() => setRefreshKey((current) => current + 1)}>به‌روزرسانی</button></div></div>
-          {orders.length === 0 ? <div className="sf-card sf-customer-empty"><strong>هنوز سفارشی با این شماره ثبت نشده است.</strong><p>پس از ثبت سفارش، وضعیت و پیگیری آن را همین‌جا می‌بینید.</p><Link to={`/s/${encodeURIComponent(slug)}`} className="sf-button sf-primary">رفتن به فروشگاه</Link></div> : <div className="sf-customer-order-list">
+          <div className="sf-section-head"><div><span className="sf-eyebrow">سفارش‌های همین فروشگاه</span><h2>سفارش‌های من</h2></div><div className="sf-customer-order-controls"><span>{orders.length} سفارش در این صفحه</span><button type="button" className="sf-button sf-secondary sf-refresh-button" disabled={loading || working} onClick={() => setRefreshKey((current) => current + 1)}><RefreshCw size={15} />به‌روزرسانی</button></div></div>
+          {orders.length === 0 ? <div className="sf-card sf-customer-empty"><span className="sf-empty-icon"><ShoppingBag size={22} /></span><strong>هنوز سفارشی با این شماره ثبت نشده است.</strong><p>پس از ثبت سفارش، وضعیت و پیگیری آن را همین‌جا می‌بینید.</p><Link to={`/s/${encodeURIComponent(slug)}`} className="sf-button sf-primary"><span>رفتن به فروشگاه</span><ArrowLeft size={16} /></Link></div> : <div className="sf-customer-order-list">
             {orders.map((order) => <article className="sf-card sf-customer-order" key={order.id}>
-              <div className="sf-customer-order-head"><div><span className="sf-eyebrow">کد پیگیری</span><strong>{order.publicCode}</strong><small>{formatDate(order.createdAt)}</small></div><span className={`sf-badge ${order.paymentStatus === "VERIFIED" ? "is-good" : ""}`}>{orderLabels[order.status] ?? order.status}</span></div>
+              <div className="sf-customer-order-head"><div className="sf-order-code"><span className="sf-order-icon"><ShoppingBag size={17} /></span><div><span className="sf-eyebrow">کد پیگیری</span><strong>{order.publicCode}</strong><small>{formatDate(order.createdAt)}</small></div></div><span className={`sf-badge ${order.paymentStatus === "VERIFIED" ? "is-good" : ""}`}>{orderLabels[order.status] ?? order.status}</span></div>
               <div className="sf-customer-order-lines">{order.items.map((item, index) => <span key={`${item.title}-${index}`}>{item.title} × {item.quantity}</span>)}</div>
-              <div className="sf-customer-order-meta"><span>{order.deliveryMethod === "PICKUP" ? "تحویل حضوری" : "ارسال محلی"}</span><span>{paymentStatusLabel(order.paymentStatus, order.status)}</span>{order.latestPaymentAttemptStatus && <span>{attemptLabels[order.latestPaymentAttemptStatus] ?? order.latestPaymentAttemptStatus}</span>}<strong>{money(order.totalRial)}</strong></div>
-              <Link to={order.trackingPath} className="sf-button sf-secondary">مشاهدهٔ جزئیات و پیگیری سفارش</Link>
+              <div className="sf-customer-order-meta"><span>{order.deliveryMethod === "PICKUP" ? "تحویل حضوری" : "ارسال محلی"}</span><span>{paymentStatusLabel(order.paymentStatus, order.status)}</span>{order.latestPaymentAttemptStatus && <span>{attemptLabels[order.latestPaymentAttemptStatus] ?? order.latestPaymentAttemptStatus}</span>}</div>
+              <div className="sf-customer-order-footer"><strong>{money(order.totalRial)}</strong><Link to={order.trackingPath} className="sf-button sf-secondary">جزئیات و پیگیری<ArrowLeft size={15} /></Link></div>
             </article>)}
           </div>}
           {hasMore && <button type="button" className="sf-button sf-secondary sf-customer-more" disabled={working} onClick={() => void loadMore()}>{working ? "در حال دریافت…" : "نمایش سفارش‌های قدیمی‌تر"}</button>}
