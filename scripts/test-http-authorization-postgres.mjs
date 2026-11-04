@@ -22,10 +22,11 @@ if (!["localhost", "127.0.0.1", "::1"].includes(databaseUrl.hostname.replace(/^\
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const prisma = new PrismaService();
-const fixtures = { businesses: [], users: [], expenses: [], stockCounts: [], storefronts: [], storefrontOrders: [], storefrontOtpPhones: [] };
+const fixtures = { businesses: [], users: [], expenses: [], stockCounts: [], storefronts: [], storefrontCards: [], storefrontOrders: [], storefrontOtpPhones: [] };
 const previousAttachmentStorageDir = process.env.ATTACHMENT_STORAGE_DIR;
 const previousSessionSecret = process.env.SESSION_SECRET;
 const previousOtpHashSecret = process.env.OTP_HASH_SECRET;
+const previousStorefrontCardKey = process.env.STOREFRONT_CARD_ENCRYPTION_KEY;
 let attachmentRoot;
 let auditFailureTriggerInstalled = false;
 let restoreSmsAdapter;
@@ -110,6 +111,7 @@ try {
   process.env.ATTACHMENT_STORAGE_DIR = attachmentRoot;
   process.env.SESSION_SECRET = "shopro-http-attachment-test-session-secret-32-characters";
   process.env.OTP_HASH_SECRET = "shopro-http-storefront-test-otp-secret-32-characters";
+  process.env.STOREFRONT_CARD_ENCRYPTION_KEY = Buffer.alloc(32, 0x5a).toString("base64url");
 
   app = await NestFactory.create(AppModule, { logger: false });
   app.setGlobalPrefix("api/v1");
@@ -201,6 +203,14 @@ try {
   const storefrontListings = await request("/storefront/listings", storefrontScope);
   assert.equal(storefrontListings.status, 200);
   assert.ok(storefrontListings.payload.items.some(({ productId }) => productId === productA.id), "management should list the branch product");
+  const bankLedger = await prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-BANK", name: "HTTP storefront bank", type: "ASSET", systemKey: "http_storefront_bank" } });
+  const bankAccount = await prisma.financeAccount.create({ data: { businessId: businessA.id, branchId: branchA1.id, ledgerAccountId: bankLedger.id, name: "HTTP storefront bank", kind: "BANK" } });
+  const storefrontCard = await request("/storefront/cards", {
+    ...storefrontScope, method: "POST",
+    body: { financeAccountId: bankAccount.id, bankName: "Fixture Bank", holderName: "HTTP Store", cardNumber: "6037997512345670", displayOrder: 0 },
+  });
+  assert.equal(storefrontCard.status, 201, `owner should save an encrypted bank card: ${JSON.stringify(storefrontCard.payload)}`);
+  fixtures.storefrontCards.push(storefrontCard.payload.id);
   const savedListing = await request(`/storefront/listings/${productA.id}`, {
     ...storefrontScope, method: "PATCH",
     body: { publicTitle: "HTTP public product", publicDescription: "Public catalog fixture", publicPriceRial: "1250", isPublished: true, canOrder: true, stockPolicy: "APPROXIMATE", minimumQuantity: "1", displayOrder: 0 },
@@ -249,6 +259,64 @@ try {
   const rejectedCustomerTracking = await request(`/public/orders/${storefrontOrder.payload.trackingToken}`);
   assert.equal(rejectedCustomerTracking.status, 200);
   assert.equal(rejectedCustomerTracking.payload.status, "REJECTED", "customer tracking should reflect management updates");
+
+  const paymentPhone = `09${randomUUID().replace(/\D/g, "").padEnd(9, "0").slice(0, 9)}`;
+  fixtures.storefrontOtpPhones.push(paymentPhone);
+  const paymentOtpRequest = await request(`/public/stores/${storefrontSlug}/otp/request`, { method: "POST", body: { phone: paymentPhone } });
+  assert.equal(paymentOtpRequest.status, 200);
+  const paymentOtpCode = sentStorefrontOtpCodes.get(paymentPhone);
+  assert.match(paymentOtpCode ?? "", /^\d{6}$/);
+  const paymentOtpVerification = await request(`/public/stores/${storefrontSlug}/otp/verify`, { method: "POST", body: { phone: paymentPhone, code: paymentOtpCode } });
+  assert.equal(paymentOtpVerification.status, 200);
+  const payableOrder = await request(`/public/stores/${storefrontSlug}/orders`, {
+    method: "POST", extraHeaders: { "idempotency-key": `http-storefront-pay-${randomUUID()}` },
+    body: {
+      customerName: "HTTP payment customer", customerPhone: paymentPhone, checkoutToken: paymentOtpVerification.payload.checkoutToken,
+      deliveryMethod: "PICKUP", expectedTotalRial: expectedTotal.toString(),
+      lines: [{ listingId: publicProduct.id, quantity: "1", expectedUnitPriceRial: publicProduct.unitPriceRial, expectedTaxRateBasisPoints: publicProduct.taxRateBasisPoints }],
+    },
+  });
+  assert.equal(payableOrder.status, 201, `second public checkout should succeed: ${JSON.stringify(payableOrder.payload)}`);
+  fixtures.storefrontOrders.push(payableOrder.payload.id);
+  const acceptedOrder = await request(`/storefront/orders/${payableOrder.payload.id}/accept`, { ...storefrontScope, method: "POST", body: {} });
+  assert.equal(acceptedOrder.status, 201, `owner should accept an order with an active destination card: ${JSON.stringify(acceptedOrder.payload)}`);
+  assert.equal(acceptedOrder.payload.paymentStatus, "UNPAID");
+  const acceptedTracking = await request(`/public/orders/${payableOrder.payload.trackingToken}`);
+  assert.equal(acceptedTracking.status, 200);
+  assert.equal(acceptedTracking.payload.status, "ACCEPTED");
+  assert.equal(acceptedTracking.payload.cards[0]?.cardNumber, "6037997512345670", "accepted customer tracking should show the decrypted active destination card");
+  const receiptForm = new FormData();
+  receiptForm.append("cardId", storefrontCard.payload.id);
+  receiptForm.append("submittedAmountRial", expectedTotal.toString());
+  receiptForm.append("customerTransactionReference", `HTTP-${randomUUID().slice(0, 8)}`);
+  const storefrontReceiptBytes = Buffer.from("%PDF-1.7\nShopro storefront payment receipt\n");
+  receiptForm.append("file", new Blob([storefrontReceiptBytes], { type: "application/pdf" }), "payment-receipt.pdf");
+  const receiptResponse = await fetch(`${baseUrl}/public/orders/${payableOrder.payload.trackingToken}/receipts`, { method: "POST", body: receiptForm });
+  const receiptPayload = await receiptResponse.json();
+  assert.equal(receiptResponse.status, 201, `customer should submit a payment receipt: ${JSON.stringify(receiptPayload)}`);
+  const verifiedPayment = await request(`/storefront/orders/${payableOrder.payload.id}/payments/${receiptPayload.id}/verify`, {
+    ...storefrontScope, method: "POST", body: { verifiedAmountRial: expectedTotal.toString(), transactionReference: `HTTP-BANK-${randomUUID().slice(0, 8)}` },
+  });
+  assert.equal(verifiedPayment.status, 201, `owner should verify payment and post its accounting receipt: ${JSON.stringify(verifiedPayment.payload)}`);
+  assert.equal(verifiedPayment.payload.paymentStatus, "VERIFIED");
+  const paidTracking = await request(`/public/orders/${payableOrder.payload.trackingToken}`);
+  assert.equal(paidTracking.status, 200);
+  assert.equal(paidTracking.payload.paymentStatus, "VERIFIED");
+  assert.deepEqual(paidTracking.payload.cards, [], "verified orders should no longer expose a payment card");
+  assert.equal(paidTracking.payload.paymentAttempts[0]?.mimeType, "application/pdf", "customer tracking should expose receipt status without leaking storage details");
+  const storedStorefrontReceipt = await prisma.storefrontReceipt.findUniqueOrThrow({ where: { paymentAttemptId: receiptPayload.id } });
+  assert.deepEqual(await readFile(join(attachmentRoot, storedStorefrontReceipt.storageKey)), storefrontReceiptBytes, "receipt upload should persist the original bytes in private storage");
+  await rm(join(attachmentRoot, storedStorefrontReceipt.storageKey), { force: true });
+  await prisma.storefrontReceipt.delete({ where: { paymentAttemptId: receiptPayload.id } });
+  const preparingOrder = await request(`/storefront/orders/${payableOrder.payload.id}/transition`, { ...storefrontScope, method: "POST", body: { status: "PREPARING" } });
+  assert.equal(preparingOrder.status, 201);
+  const preparedOrder = await request(`/storefront/orders/${payableOrder.payload.id}/transition`, { ...storefrontScope, method: "POST", body: { status: "READY" } });
+  assert.equal(preparedOrder.status, 201);
+  const readyForPickup = await request(`/storefront/orders/${payableOrder.payload.id}/transition`, { ...storefrontScope, method: "POST", body: { status: "READY_FOR_PICKUP" } });
+  assert.equal(readyForPickup.status, 201);
+  const readyTracking = await request(`/public/orders/${payableOrder.payload.trackingToken}`);
+  assert.equal(readyTracking.status, 200);
+  assert.equal(readyTracking.payload.status, "READY_FOR_PICKUP");
 
   const stockCountDraft = await request("/inventory/counts", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
@@ -540,7 +608,7 @@ try {
   await prisma.$executeRawUnsafe("DROP TRIGGER shopro_test_reject_audit ON audit_events");
   await prisma.$executeRawUnsafe("DROP FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = false;
-  console.log("HTTP integration passed: tenant/branch authorization, storefront settings GET/PATCH, listing management, public store and catalog, OTP verification, public checkout, customer tracking, staff order rejection, inventory counts, accounting, attachments, audit and rollback.");
+  console.log("HTTP integration passed: tenant/branch authorization, storefront settings and listings, public catalog, OTP checkout, order tracking, staff rejection and acceptance, destination-card encryption, receipt upload and payment verification, order preparation, inventory, accounting, attachments, audit and rollback.");
 } finally {
   restoreSmsAdapter?.();
   if (app) await app.close();
@@ -560,6 +628,14 @@ try {
     for (const stockCountId of fixtures.stockCounts) await prisma.stockCount.deleteMany({ where: { id: stockCountId } });
     for (const orderId of fixtures.storefrontOrders) {
       await prisma.storefrontReservation.deleteMany({ where: { orderId } });
+      const attempts = await prisma.storefrontPaymentAttempt.findMany({ where: { orderId }, select: { id: true } });
+      const attemptIds = attempts.map(({ id }) => id);
+      const receipts = attemptIds.length ? await prisma.storefrontReceipt.findMany({ where: { paymentAttemptId: { in: attemptIds } }, select: { storageKey: true, paymentAttemptId: true } }) : [];
+      for (const receipt of receipts) {
+        if (!/^[0-9a-f-]{36}\.[a-z0-9]+$/i.test(receipt.storageKey)) throw new Error("Refusing cleanup of an unexpected storefront receipt path.");
+        if (attachmentRoot) await rm(join(attachmentRoot, receipt.storageKey), { force: true });
+      }
+      if (attemptIds.length) await prisma.storefrontReceipt.deleteMany({ where: { paymentAttemptId: { in: attemptIds } } });
       await prisma.storefrontPaymentAttempt.deleteMany({ where: { orderId } });
       await prisma.storefrontOrderEvent.deleteMany({ where: { orderId } });
       await prisma.storefrontOrderItem.deleteMany({ where: { orderId } });
@@ -570,6 +646,7 @@ try {
       await prisma.storefrontListing.deleteMany({ where: { storefrontId } });
       await prisma.storefront.deleteMany({ where: { id: storefrontId } });
     }
+    for (const cardId of fixtures.storefrontCards) await prisma.storePaymentCard.deleteMany({ where: { id: cardId } });
     for (const phone of fixtures.storefrontOtpPhones) await prisma.otpChallenge.deleteMany({ where: { phone, purpose: "STOREFRONT_CHECKOUT" } });
     for (const id of fixtures.businesses) await prisma.business.deleteMany({ where: { id } });
     for (const id of fixtures.users) await prisma.user.deleteMany({ where: { id } });
@@ -591,5 +668,7 @@ try {
     else process.env.SESSION_SECRET = previousSessionSecret;
     if (previousOtpHashSecret === undefined) delete process.env.OTP_HASH_SECRET;
     else process.env.OTP_HASH_SECRET = previousOtpHashSecret;
+    if (previousStorefrontCardKey === undefined) delete process.env.STOREFRONT_CARD_ENCRYPTION_KEY;
+    else process.env.STOREFRONT_CARD_ENCRYPTION_KEY = previousStorefrontCardKey;
   }
 }
