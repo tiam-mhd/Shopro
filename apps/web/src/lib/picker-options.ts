@@ -5,9 +5,10 @@ import type { PickerOptionLoader } from "../components/OptionPicker.js";
 export function partyPicker(type: "CUSTOMER" | "SUPPLIER" | "BOTH") {
   const businessId = sessionStorage.getItem("shopro_business_id") ?? "none";
   const load: PickerOptionLoader = async (search, cursor) => {
-    const query = new URLSearchParams({ type, limit: "40", q: search });
+    const query = new URLSearchParams({ limit: "40", q: search });
     if (cursor) query.set("cursor", cursor);
-    const page = await get<CursorPage<{ id: string; name: string }>>(`/parties?${query.toString()}`);
+    const endpoint = type === "CUSTOMER" ? "/customers" : type === "SUPPLIER" ? "/suppliers" : "/parties?type=BOTH";
+    const page = await get<CursorPage<{ id: string; name: string }>>(`${endpoint}${endpoint.includes("?") ? "&" : "?"}${query.toString()}`);
     return { ...page, items: page.items.map((row) => ({ value: row.id, label: row.name })) };
   };
   return { key: `party:${businessId}:${type}`, load };
@@ -19,7 +20,7 @@ export function productPicker(kind?: "STOCK" | "SERVICE") {
     const query = new URLSearchParams({ limit: "40", q: search });
     if (kind) query.set("kind", kind);
     if (cursor) query.set("cursor", cursor);
-    const page = await get<CursorPage<{ id: string; name: string }>>(`/products?${query.toString()}`);
+    const page = await get<CursorPage<{ id: string; name: string }>>((kind ? "/products?" : "/catalog?") + query.toString());
     return { ...page, items: page.items.map((row) => ({ value: row.id, label: row.name })) };
   };
   return { key: `product:${businessId}:${kind ?? "all"}`, load };

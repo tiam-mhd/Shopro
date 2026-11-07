@@ -16,7 +16,8 @@ export function QuickPartyModal({ open, type, onClose, onCreated }: { open: bool
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const party = await post<CreatedOption>("/parties", { name, phone: phone || undefined, type });
+      const endpoint = type === "CUSTOMER" ? "/customers" : type === "SUPPLIER" ? "/suppliers" : "/parties";
+      const party = await post<CreatedOption>(endpoint, { name, phone: phone || undefined, ...(endpoint === "/parties" ? { type } : {}) });
       onCreated(party); setName(""); setPhone(""); onClose();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
