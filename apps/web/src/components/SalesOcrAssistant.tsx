@@ -12,6 +12,9 @@ export type SalesOcrLine = { name: string | null; sku: string | null; barcode: s
 export type SalesOcrCatalogMatch = { id: string; name: string; sku: string | null; barcode: string | null; kind: "STOCK" | "SERVICE"; unit: { id: string; code: string; labelFa: string; precision: number }; salePriceRial: string; taxRateBasisPoints: number; trackInventory: boolean; matchedBy: "barcode" | "sku" | "name" };
 export type SalesOcrPartyMatch = { id: string; name: string; phone: string | null; matchedBy: "phone" | "name" };
 export type SalesOcrAnalysis = {
+  documentText: string;
+  confidence: number;
+  recognizedLineCount: number;
   extraction: { customer: SalesOcrCustomer | null; invoiceDate: string | null; invoiceNumber: string | null; note: string | null; paidAmountRial: string | null; paymentMethod: "CASH" | "POS" | "BANK" | "OTHER" | null; paymentAccountName: string | null; totals: { subtotalRial: string | null; discountRial: string | null; taxRial: string | null; totalRial: string | null }; items: SalesOcrLine[]; warnings: string[] };
   customerMatches: SalesOcrPartyMatch[];
   items: Array<SalesOcrLine & { matches: SalesOcrCatalogMatch[] }>;
@@ -75,7 +78,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
 
   return <Modal open={open} onClose={onClose} title="خواندن فاکتور از تصویر" description="تصویر برگه یا اسکرین‌شات بررسی می‌شود؛ پیش از ثبت، همهٔ موارد را در فرم بازبینی می‌کنید." size="wide">
     <div className="sales-ocr-flow">
-      <div className="sales-ocr-privacy"><Sparkles size={17} /><span>پس از فشردن «خواندن تصویر»، عکس برای تحلیل به سرویس هوش مصنوعی OpenAI فرستاده می‌شود؛ شاپرو تصویر را ذخیره نمی‌کند.</span></div>
+      <div className="sales-ocr-privacy"><Sparkles size={17} /><span>تحلیل با موتور OCR فارسی و انگلیسی روی سرور شاپرو انجام می‌شود؛ تصویر به سرویس هوش مصنوعی ثالث فرستاده یا در شاپرو ذخیره نمی‌شود. موارد خوانده‌شده پیش از ثبت قابل بازبینی هستند.</span></div>
       {!analysis && (cameraOpen ? <SalesOcrCameraCapture onCancel={() => setCameraOpen(false)} onCapture={(image) => { chooseFile(image); setCameraOpen(false); }} /> : <>
         <div className={`sales-ocr-dropzone ${dragging ? "is-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files[0]); }}>
           {preview ? <img className="sales-ocr-preview" src={preview} alt="پیش‌نمایش فاکتور انتخاب‌شده" /> : <span className="sales-ocr-placeholder"><FileImage size={26} /><strong>تصویر فاکتور را اینجا رها کنید</strong><small>یا از دستگاه انتخاب کنید؛ تصویر کاغذ و صفحه‌نمایش پذیرفته می‌شود.</small></span>}
@@ -89,7 +92,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
         <div className="sales-ocr-actions"><button type="button" className="button button-primary" disabled={!file || busy} onClick={() => void analyze()}>{busy ? <><LoaderCircle className="spin" size={17} />در حال خواندن تصویر…</> : <><ScanLine size={17} />خواندن تصویر</>}</button></div>
       </>)}
       {analysis && <>
-        <div className="sales-ocr-result-heading"><span className="sales-ocr-success-icon"><Check size={18} /></span><span><strong>استخراج آمادهٔ بازبینی است</strong><small>اطلاعات با اطمینان کامل فرض نشده‌اند؛ موارد انتخاب‌شده وارد فرم می‌شوند.</small></span><button className="button button-text" type="button" onClick={() => setAnalysis(null)}>انتخاب تصویر دیگر</button></div>
+        <div className="sales-ocr-result-heading"><span className="sales-ocr-success-icon"><Check size={18} /></span><span><strong>خواندن محلی تصویر آمادهٔ بازبینی است</strong><small>{faNumber(analysis.recognizedLineCount)} خط · اطمینان کلی OCR {faNumber(analysis.confidence)}٪ · اطلاعات انتخاب‌شده وارد فرم می‌شوند.</small></span><button className="button button-text" type="button" onClick={() => setAnalysis(null)}>انتخاب تصویر دیگر</button></div>
         <section className="sales-ocr-review-section">
           <div className="sales-ocr-section-title"><strong>مشتری</strong>{analysis.extraction.customer?.name && <span>{analysis.extraction.customer.name}</span>}</div>
           {analysis.extraction.customer ? <div className="sales-ocr-customer-review">
@@ -118,6 +121,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
         </section>
         <section className="sales-ocr-totals"><strong>مبالغ و پرداخت خوانده‌شده</strong><span>جمع اقلام: {formatMaybe(analysis.extraction.totals.subtotalRial, currency)}</span><span>تخفیف: {formatMaybe(analysis.extraction.totals.discountRial, currency)}</span><span>مالیات: {formatMaybe(analysis.extraction.totals.taxRial, currency)}</span><span>جمع نهایی: {formatMaybe(analysis.extraction.totals.totalRial, currency)}</span><span>دریافتی: {formatMaybe(analysis.extraction.paidAmountRial, currency)}</span>{analysis.extraction.paymentMethod && <span>روش: {paymentMethodLabel(analysis.extraction.paymentMethod)}</span>}{analysis.extraction.paymentAccountName && <span>حساب: {analysis.extraction.paymentAccountName}</span>}{analysis.extraction.invoiceDate && <span>تاریخ: {analysis.extraction.invoiceDate}</span>}</section>
         {analysis.extraction.warnings.length > 0 && <div className="sales-ocr-warnings"><AlertTriangle size={17} /><ul>{analysis.extraction.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
+        <details className="sales-ocr-source-text"><summary>متن خام خوانده‌شده از تصویر</summary><pre dir="auto">{analysis.documentText || "متنی از تصویر تشخیص داده نشد."}</pre></details>
         {error && <InlineError error={error} />}
         <div className="sales-ocr-actions"><button type="button" className="button button-primary" onClick={apply}>اعمال اطلاعات انتخاب‌شده در فرم</button></div>
       </>}

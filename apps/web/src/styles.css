@@ -2196,3 +2196,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .camera-capture-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
   .camera-capture-actions .button { min-width: 0; }
 }
+.sales-ocr-source-text { border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--surface-2, var(--surface)) 55%, transparent); }
+.sales-ocr-source-text summary { padding: 11px 13px; color: var(--muted); cursor: pointer; font-size: 10px; }
+.sales-ocr-source-text pre { max-height: 260px; overflow: auto; margin: 0; padding: 0 13px 13px; color: var(--ink); direction: auto; font: inherit; font-size: 10px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }

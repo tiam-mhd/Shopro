@@ -34,7 +34,7 @@ test("business-wide document numbering allocates unique sequential numbers acros
 test("cashiers cannot mutate a product through the general product update route", async () => {
   const service = new ProductsService({});
   await assert.rejects(
-    service.update({ id: "user-a", businessId: "business-a", role: "CASHIER" }, "product-a", { defaultCostRial: "1" }, { requestId: "test" }),
+    service.update({ id: "user-a", businessId: "business-a", branchId: "branch-a", role: "CASHIER" }, "product-a", { defaultCostRial: "1" }, { requestId: "test" }),
     (error) => error instanceof ForbiddenException,
   );
 });
@@ -466,17 +466,18 @@ test("cursor pagination clamps page size and returns a stable continuation curso
   assert.deepEqual(page, { items: [{ id: "one" }, { id: "two" }], nextCursor: "two", hasMore: true });
 });
 
-test("product list pages stay tenant-scoped and do not skip records with identical sort keys", async () => {
+test("product list pages stay tenant and branch scoped and do not skip records with identical sort keys", async () => {
   let listQuery;
   const product = (id) => ({ id, sku: null, barcode: null, category: null, defaultCostRial: null, reorderPoint: null, trackInventory: true, balances: [], images: [], catalogItem: { name: "کالای هم‌نام", normalizedName: "کالای هم‌نام", kind: "STOCK", unit: { id: "unit-a", code: "pcs", labelFa: "عدد", precision: 0 }, salePriceRial: 100n, taxRateBasisPoints: 0 } });
   const service = new ProductsService({
     product: {
-      findFirst: async (query) => { assert.deepEqual(query.where, { businessId: "business-a", catalogItem: { isActive: true }, id: "00000000-0000-4000-8000-000000000014" }); return { id: "00000000-0000-4000-8000-000000000014" }; },
+      findFirst: async (query) => { assert.deepEqual(query.where, { businessId: "business-a", branchId: "branch-a", catalogItem: { isActive: true }, id: "00000000-0000-4000-8000-000000000014" }); return { id: "00000000-0000-4000-8000-000000000014" }; },
       findMany: async (query) => { listQuery = query; return [product("item-1"), product("item-2"), product("item-3")]; },
     },
   });
   const page = await service.list({ businessId: "business-a", branchId: "branch-a" }, undefined, undefined, "00000000-0000-4000-8000-000000000014", "2");
   assert.equal(listQuery.where.businessId, "business-a");
+  assert.equal(listQuery.where.branchId, "branch-a");
   assert.deepEqual(listQuery.cursor, { id: "00000000-0000-4000-8000-000000000014" });
   assert.equal(listQuery.skip, 1);
   assert.deepEqual(listQuery.orderBy, [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }]);
