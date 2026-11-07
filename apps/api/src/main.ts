@@ -20,7 +20,7 @@ async function bootstrap() {
   const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
   if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 10) throw new Error("TRUST_PROXY_HOPS باید عددی بین صفر تا ده باشد.");
   app.getHttpAdapter().getInstance().set("trust proxy", trustProxyHops);
-  app.use(helmet({ crossOriginResourcePolicy: { policy: "same-site" } }));
+  app.use(helmet({ contentSecurityPolicy: { directives: { "img-src": ["'self'", "data:", "blob:"] } }, crossOriginResourcePolicy: { policy: "same-site" } }));
   app.use(cookieParser());
   app.enableCors({ origin: webOrigins(), credentials: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Business-Id", "X-Branch-Id", "X-Attachment-Download-Token", "X-Storefront-Customer-Token", "Idempotency-Key"] });
   app.use((request: AppRequest, response: Response, next: NextFunction) => {
