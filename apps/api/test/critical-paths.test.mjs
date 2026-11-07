@@ -506,7 +506,7 @@ test("inventory cursor cannot be reused across a different business or branch", 
   let rowsQuery;
   const service = new InventoryService({
     product: {
-      findFirst: async ({ where }) => { assert.deepEqual(where, { businessId: "business-a", catalogItem: { is: { isActive: true } }, trackInventory: true, id: "00000000-0000-4000-8000-000000000016" }); return { id: "00000000-0000-4000-8000-000000000016" }; },
+      findFirst: async ({ where }) => { assert.deepEqual(where, { businessId: "business-a", branchId: "branch-a", catalogItem: { is: { isActive: true } }, trackInventory: true, id: "00000000-0000-4000-8000-000000000016" }); return { id: "00000000-0000-4000-8000-000000000016" }; },
       findMany: async (query) => { rowsQuery = query; return []; },
     },
   }, {});
@@ -532,7 +532,7 @@ test("product creation propagates audit failure from the same transaction", asyn
     },
   });
   await assert.rejects(
-    service.create({ id: "owner-a", businessId: "business-a", role: "OWNER" }, { name: "کالا", unitId: "unit-a", kind: "STOCK", salePriceRial: "100" }, { requestId: "test" }),
+    service.create({ id: "owner-a", businessId: "business-a", branchId: "branch-a", role: "OWNER" }, { name: "کالا", unitId: "unit-a", kind: "STOCK", salePriceRial: "100" }, { requestId: "test" }),
     /synthetic audit insert failure/,
   );
   assert.equal(transactionStarted, true);

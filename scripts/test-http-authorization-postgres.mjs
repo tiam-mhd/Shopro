@@ -84,13 +84,13 @@ try {
 
   const unitA = await prisma.unit.create({ data: { businessId: businessA.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
   const unitB = await prisma.unit.create({ data: { businessId: businessB.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
-  const serviceItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n } });
-  const productA = await prisma.service.create({ data: { id: serviceItemA.id, businessId: businessA.id } });
-  const stockItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Countable A", normalizedName: "countable a", kind: "STOCK", salePriceRial: 100n } });
-  const stockProductA = await prisma.product.create({ data: { id: stockItemA.id, businessId: businessA.id, defaultCostRial: 100n, trackInventory: true } });
+  const serviceItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, branchId: branchA1.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n } });
+  const productA = await prisma.service.create({ data: { id: serviceItemA.id, businessId: businessA.id, branchId: branchA1.id } });
+  const stockItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, branchId: branchA1.id, unitId: unitA.id, name: "Countable A", normalizedName: "countable a", kind: "STOCK", salePriceRial: 100n } });
+  const stockProductA = await prisma.product.create({ data: { id: stockItemA.id, businessId: businessA.id, branchId: branchA1.id, defaultCostRial: 100n, trackInventory: true } });
   await prisma.inventoryBalance.create({ data: { businessId: businessA.id, branchId: branchA1.id, productId: stockProductA.id, quantityOnHand: "12", inventoryValueRial: 1200n, averageCostRial: 100n } });
-  const serviceItemB = await prisma.catalogItem.create({ data: { businessId: businessB.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n } });
-  await prisma.service.create({ data: { id: serviceItemB.id, businessId: businessB.id } });
+  const serviceItemB = await prisma.catalogItem.create({ data: { businessId: businessB.id, branchId: branchB1.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n } });
+  await prisma.service.create({ data: { id: serviceItemB.id, businessId: businessB.id, branchId: branchB1.id } });
   const auditParty = await prisma.party.create({ data: { businessId: businessA.id, name: "Audit target", normalizedName: "audit target" } });
   await prisma.customer.create({ data: { id: auditParty.id, businessId: businessA.id } });
   await Promise.all([

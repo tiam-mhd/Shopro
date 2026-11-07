@@ -5,7 +5,7 @@ import type { AppRequest, AuthenticatedUser } from "../common/request-context.js
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import { MAX_PRODUCT_IMAGE_UPLOAD_BYTES } from "./product-image-files.js";
-import { CreateProductCategoryDto } from "./products.dto.js";
+import { CreateProductCategoryDto, TransferCatalogItemDto } from "./products.dto.js";
 import { CreateServiceDto, UpdateCatalogCategoryDto, UpdateServiceDto } from "./services.dto.js";
 import { ServicesService } from "./services.service.js";
 
@@ -35,4 +35,5 @@ export class ServicesController {
   @Get(":id") get(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string) { return this.services.get(user, id); }
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateServiceDto, @Req() request: AppRequest) { return this.services.create(user, dto, request); }
   @Patch(":id") update(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateServiceDto, @Req() request: AppRequest) { return this.services.update(user, id, dto, request); }
+  @Post(":id/transfer") transfer(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: TransferCatalogItemDto, @Req() request: AppRequest) { return this.services.transfer(user, id, dto.targetBranchId, request); }
 }

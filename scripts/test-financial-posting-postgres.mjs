@@ -65,10 +65,16 @@ try {
     prisma.supplier.create({ data: { id: supplierParty.id, businessId } }),
   ]);
   const catalogItem = await prisma.catalogItem.create({
-    data: { businessId, name: "Test stock", normalizedName: "test stock", unitId: unit.id, kind: "STOCK", salePriceRial: 1_500_000n },
+    data: { businessId, branchId: branchA.id, name: "Test stock", normalizedName: "test stock", unitId: unit.id, kind: "STOCK", salePriceRial: 1_500_000n },
   });
   const product = await prisma.product.create({
-    data: { id: catalogItem.id, businessId, sku: "FIN-POST-1", defaultCostRial: 1_000_000n, trackInventory: true },
+    data: { id: catalogItem.id, businessId, branchId: branchA.id, sku: "FIN-POST-1", defaultCostRial: 1_000_000n, trackInventory: true },
+  });
+  const branchBCatalogItem = await prisma.catalogItem.create({
+    data: { businessId, branchId: branchB.id, name: "Test stock", normalizedName: "test stock", unitId: unit.id, kind: "STOCK", salePriceRial: 1_500_000n },
+  });
+  const branchBProduct = await prisma.product.create({
+    data: { id: branchBCatalogItem.id, businessId, branchId: branchB.id, sku: "FIN-POST-1", defaultCostRial: 1_000_000n, trackInventory: true },
   });
   const openingSourceId = randomUUID();
   const quantityMilli = (value) => {
@@ -104,7 +110,7 @@ try {
   const purchaseDraftForCancellation = await purchases.create(userB, {
     supplierId: supplier.id,
     txnDate: "2026-11-02",
-    lines: [{ productId: product.id, quantity: "1", unitCostRial: "900000" }],
+    lines: [{ productId: branchBProduct.id, quantity: "1", unitCostRial: "900000" }],
   }, request);
   const expenseDraftForCancellation = await expenses.create(userA, { amountRial: "45000", categoryId: expenseCategory.id, txnDate: "2026-11-03", note: "Integration expense draft cancellation" }, request);
 
@@ -137,7 +143,7 @@ try {
   const inventoryAfterAuditFailures = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchA.id, productId: product.id } } });
   assert.equal(quantityMilli(inventoryAfterAuditFailures.quantityOnHand), 3_000n);
   assert.equal(inventoryAfterAuditFailures.inventoryValueRial, 3_000_000n);
-  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).defaultCostRial, 1_000_000n, "failed purchase audit must roll back weighted-cost changes");
+  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: branchBProduct.id } })).defaultCostRial, 1_000_000n, "failed purchase audit must roll back weighted-cost changes");
   assert.equal(await accounting.existingIdempotent(userId, businessId, salesAuditFailureKey, accounting.idempotencyHash({ id: saleDraftForCancellation.id, payments: salesAuditFailurePayload.payments })), null, "failed sale audit must roll back its idempotency record");
   assert.equal(await accounting.existingIdempotent(userId, businessId, purchaseAuditFailureKey, accounting.idempotencyHash({ id: purchaseDraftForCancellation.id, payments: purchaseAuditFailurePayload.payments })), null, "failed purchase audit must roll back its idempotency record");
   assert.equal(await accounting.existingIdempotent(userId, businessId, expenseAuditFailureKey, accounting.idempotencyHash({ id: expenseDraftForCancellation.id, financeAccountId: expenseAuditFailurePayload.financeAccountId })), null, "failed expense audit must roll back its idempotency record");
@@ -184,7 +190,7 @@ try {
   const purchaseDraft = await purchases.create(userB, {
     supplierId: supplier.id,
     txnDate: "2026-11-02",
-    lines: [{ productId: product.id, quantity: "2", unitCostRial: "1200000" }],
+    lines: [{ productId: branchBProduct.id, quantity: "2", unitCostRial: "1200000" }],
   }, request);
   const purchasePostKey = `test-purchase-post-${randomUUID()}`;
   const purchasePayload = { payments: [{ amountRial: "1200000", financeAccountId: financeAccounts[1].id, method: "CASH" }] };
@@ -202,7 +208,7 @@ try {
   assert.equal((await prisma.purchase.findFirstOrThrow({ where: { id: purchase.id, businessId } })).status, "POSTED", "a failed draft deletion must retain the posted purchase");
   assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceType: "PURCHASE", sourceId: purchase.id, status: "POSTED" } }), 1, "a failed draft deletion must preserve the posted purchase journal");
   assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }), 1, "a failed draft deletion must preserve purchase cash rows");
-  const inventoryAfterRejectedPurchaseDelete = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } });
+  const inventoryAfterRejectedPurchaseDelete = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: branchBProduct.id } } });
   assert.equal(quantityMilli(inventoryAfterRejectedPurchaseDelete.quantityOnHand), 2_000n);
   assert.equal(inventoryAfterRejectedPurchaseDelete.inventoryValueRial, 2_400_000n);
 
@@ -222,7 +228,7 @@ try {
 
   const branchBFinancialBeforeDraftCancellation = {
     cashTransactions: await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }),
-    inventory: await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } }),
+    inventory: await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: branchBProduct.id } } }),
   };
   const deletedPurchaseDraft = await purchases.deleteDraft(userB, purchaseDraftForCancellation.id, request);
   assert.deepEqual(deletedPurchaseDraft, { id: purchaseDraftForCancellation.id, status: "DELETED" });
@@ -230,7 +236,7 @@ try {
   assert.equal(await prisma.journalEntry.count({ where: { businessId, sourceId: purchaseDraftForCancellation.id } }), 0, "deleting a purchase draft must not create journal entries");
   assert.equal(await prisma.cashTransaction.count({ where: { businessId, branchId: branchB.id } }), branchBFinancialBeforeDraftCancellation.cashTransactions, "deleting a purchase draft must not create cash transactions");
   assert.equal(await prisma.inventoryMovement.count({ where: { businessId, branchId: branchB.id, sourceId: purchaseDraftForCancellation.id } }), 0, "deleting a purchase draft must not move stock");
-  const branchBInventoryAfterDraftCancellation = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } });
+  const branchBInventoryAfterDraftCancellation = await prisma.inventoryBalance.findUniqueOrThrow({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: branchBProduct.id } } });
   assert.equal(branchBInventoryAfterDraftCancellation.quantityOnHand.toString(), branchBFinancialBeforeDraftCancellation.inventory.quantityOnHand.toString(), "deleting a purchase draft must not change stock quantity");
   assert.equal(branchBInventoryAfterDraftCancellation.inventoryValueRial, branchBFinancialBeforeDraftCancellation.inventory.inventoryValueRial, "deleting a purchase draft must not change inventory value");
   assert.equal(await prisma.auditEvent.count({ where: { businessId, entityId: purchaseDraftForCancellation.id, action: "purchase.draft.deleted" } }), 1, "purchase draft deletion must be audited");
@@ -263,7 +269,7 @@ try {
   assert.equal(purchaseVoidCash.length, 1);
   assert.equal(purchaseVoidCash[0].kind, "RECEIPT");
   assert.equal(purchaseVoidCash[0].amountRial, 1_200_000n);
-  const branchBInventory = await prisma.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: product.id } } });
+  const branchBInventory = await prisma.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId: branchB.id, productId: branchBProduct.id } } });
   assert.equal(branchBInventory?.quantityOnHand.toString(), "0");
   assert.equal(branchBInventory?.inventoryValueRial, 0n);
   const purchaseVoidDashboard = await reports.dashboard(userB, "2026-11-01", "2026-11-03");
@@ -275,7 +281,7 @@ try {
   assert.equal(purchaseVoidCashFlow.grossPaymentsRial, "1200000");
   assert.equal(purchaseVoidCashFlow.netCashFlowRial, "0");
 
-  const balances = await prisma.inventoryBalance.findMany({ where: { businessId, productId: product.id } });
+  const balances = await prisma.inventoryBalance.findMany({ where: { businessId, productId: { in: [product.id, branchBProduct.id] } } });
   const totalOnHandMilli = balances.reduce((sum, row) => sum + quantityMilli(row.quantityOnHand), 0n);
   const totalInventoryValue = balances.reduce((sum, row) => sum + row.inventoryValueRial, 0n);
   assert.equal(totalOnHandMilli, 2_000n);
@@ -436,7 +442,7 @@ try {
   assert.equal(finalCashFlow.grossPaymentsRial, "1300000");
   assert.equal(finalCashFlow.netCashFlowRial, "250000");
 
-  const afterVoidBalances = await prisma.inventoryBalance.findMany({ where: { businessId, productId: product.id } });
+  const afterVoidBalances = await prisma.inventoryBalance.findMany({ where: { businessId, productId: { in: [product.id, branchBProduct.id] } } });
   const afterVoidQty = afterVoidBalances.reduce((sum, row) => sum + quantityMilli(row.quantityOnHand), 0n);
   const afterVoidValue = afterVoidBalances.reduce((sum, row) => sum + row.inventoryValueRial, 0n);
   assert.equal(afterVoidQty, 2_500n, "sale and return voids must restore stock while the purchase void removes branch B stock");

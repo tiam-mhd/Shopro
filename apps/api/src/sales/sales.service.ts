@@ -103,7 +103,7 @@ export class SalesService {
         await this.accounting.assertOpen(tx, businessId, date);
         const originalLines = new Map(invoice.lines.map((line) => [line.id, line]));
         const previousLines = await tx.salesInvoiceLine.findMany({
-          where: { businessId, returnOfLineId: { in: dto.lines.map((line) => line.invoiceLineId) }, invoice: { returnOfId: invoice.id, status: "POSTED" } },
+          where: { businessId, branchId, returnOfLineId: { in: dto.lines.map((line) => line.invoiceLineId) }, invoice: { returnOfId: invoice.id, status: "POSTED" } },
           select: { returnOfLineId: true, quantity: true, discountRial: true, taxRial: true },
         });
         const previousQuantity = new Map<string, bigint>(); const previousDiscount = new Map<string, bigint>(); const previousTax = new Map<string, bigint>();
@@ -175,7 +175,7 @@ export class SalesService {
           note: reason, returnOfId: invoice.id, returnReason: reason, postedAt: new Date(), postedBy: user.id,
         } });
         await tx.salesInvoiceLine.createMany({ data: lines.map(({ input, original, quantity, discount, tax, total: lineTotal, cogs }) => ({
-          businessId, invoiceId: returnInvoice.id, returnOfLineId: original.id, productId: original.productId,
+          businessId, branchId, invoiceId: returnInvoice.id, returnOfLineId: original.id, productId: original.productId,
           descriptionSnapshot: original.descriptionSnapshot, skuSnapshot: original.skuSnapshot,
           quantity: new Prisma.Decimal(quantityText(quantity)), unitCodeSnapshot: original.unitCodeSnapshot, unitPriceRial: original.unitPriceRial,
           discountRial: -discount, taxRateBasisPoints: original.taxRateBasisPoints, taxRial: -tax, lineTotalRial: -lineTotal,
@@ -236,7 +236,7 @@ export class SalesService {
     if (previous) return previous;
     const date = this.date(dto.txnDate);
     if (dto.customerId && !(await this.prisma.customer.findFirst({ where: { id: dto.customerId, businessId, party: { is: { archivedAt: null } } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
-    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, branchId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
     const productMap = new Map(products.map((product) => [product.id, product]));
     if (productMap.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا/خدمت پیدا نشد.");
     const lines = dto.lines.map((line) => { const item = productMap.get(line.productId)!; return this.calculateDraftLine(user, line, { ...item, sku: item.product?.sku ?? null }); });
@@ -286,7 +286,7 @@ export class SalesService {
     if (!before) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
     const date = this.date(dto.txnDate);
     if (dto.customerId && !(await this.prisma.customer.findFirst({ where: { id: dto.customerId, businessId, party: { is: { archivedAt: null } } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
-    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, branchId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
     const productMap = new Map(products.map((product) => [product.id, product]));
     if (productMap.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا/خدمت پیدا نشد.");
     const lines = dto.lines.map((line) => { const item = productMap.get(line.productId)!; return this.calculateDraftLine(user, line, { ...item, sku: item.product?.sku ?? null }); });
@@ -309,7 +309,7 @@ export class SalesService {
     return this.prisma.$transaction(async (tx) => {
       const current = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, select: { id: true } });
       if (!current) throw new ConflictException("وضعیت فاکتور تغییر کرده است؛ فهرست را تازه کنید.");
-      await tx.salesInvoiceLine.deleteMany({ where: { businessId, invoiceId: id } });
+      await tx.salesInvoiceLine.deleteMany({ where: { businessId, branchId, invoiceId: id } });
       const updated = await tx.salesInvoice.update({ where: { id }, data: {
         customerId: dto.customerId ?? null, txnDate: date, note: dto.note?.trim() || null,
         subtotalRial: subtotal, discountRial: discounts, taxRial: tax, totalRial: total, version: { increment: 1 },

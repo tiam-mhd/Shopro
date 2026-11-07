@@ -130,12 +130,12 @@ try {
   const performanceUnit = await prisma.unit.create({ data: { businessId, code: "perf-unit", labelFa: "واحد آزمایش ظرفیت", precision: 0, groupKey: "count", isVisible: true } });
   const serviceSpecs = Array.from({ length: 10_000 }, (_, index) => {
     const suffix = String(index + 1).padStart(5, "0");
-    return { id: randomUUID(), businessId, unitId: performanceUnit.id, name: `خدمت ظرفیت ${suffix}`, normalizedName: `perf service ${suffix}`, kind: "SERVICE", salePriceRial: 1_000n };
+    return { id: randomUUID(), businessId, branchId: branchIdByCode.get("BAL-10000"), unitId: performanceUnit.id, name: `خدمت ظرفیت ${suffix}`, normalizedName: `perf service ${suffix}`, kind: "SERVICE", salePriceRial: 1_000n };
   });
   for (let offset = 0; offset < serviceSpecs.length; offset += 2_000) {
     const batch = serviceSpecs.slice(offset, offset + 2_000);
     await prisma.catalogItem.createMany({ data: batch });
-    await prisma.service.createMany({ data: batch.map(({ id }) => ({ id, businessId })) });
+    await prisma.service.createMany({ data: batch.map(({ id, branchId }) => ({ id, businessId, branchId })) });
   }
   const perfCatalogItem = await prisma.catalogItem.findFirstOrThrow({ where: { businessId, kind: "SERVICE", name: "خدمت ظرفیت 00001" }, select: { id: true } });
   assert.ok(lineSpecs.length >= 100_000, "capacity fixture must contain at least 100,000 journal lines");

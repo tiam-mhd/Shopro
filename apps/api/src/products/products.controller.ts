@@ -4,7 +4,7 @@ import type { Response } from "express";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
-import { CreateProductCategoryDto, CreateProductDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
+import { CreateProductCategoryDto, CreateProductDto, TransferCatalogItemDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
 import { ProductsService } from "./products.service.js";
 import { MAX_PRODUCT_IMAGE_UPLOAD_BYTES } from "./product-image-files.js";
 import { UpdateCatalogCategoryDto } from "./services.dto.js";
@@ -37,4 +37,5 @@ export class ProductsController {
   @Post("categories") createCategory(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateProductCategoryDto, @Req() request: AppRequest) { return this.products.createCategory(user, dto, request); }
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateProductDto, @Req() request: AppRequest) { return this.products.create(user, dto, request); }
   @Patch(":id") update(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateProductDto, @Req() request: AppRequest) { return this.products.update(user, id, dto, request); }
+  @Post(":id/transfer") transfer(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: TransferCatalogItemDto, @Req() request: AppRequest) { return this.products.transfer(user, id, dto.targetBranchId, request); }
 }

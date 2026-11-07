@@ -44,7 +44,7 @@ export class PurchasesService {
     const supplier = dto.supplierId ? await this.prisma.supplier.findFirst({ where: { id: dto.supplierId, businessId, party: { is: { archivedAt: null } } }, select: { paymentTermsDays: true } }) : null;
     if (dto.supplierId && !supplier) throw new BadRequestException("تأمین‌کننده انتخاب‌شده معتبر نیست.");
     const dueDate = dto.dueDate ? this.date(dto.dueDate) : this.dateAfterDays(date, supplier?.paymentTermsDays ?? null);
-    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, kind: "STOCK", isActive: true }, include: { product: { select: { id: true, trackInventory: true } } } });
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, branchId, kind: "STOCK", isActive: true }, include: { product: { select: { id: true, trackInventory: true } } } });
     const byId = new Map(products.map((product) => [product.id, product]));
     if (byId.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا پیدا نشد.");
     const lines = dto.lines.map((line) => {
@@ -88,7 +88,7 @@ export class PurchasesService {
     const supplier = dto.supplierId ? await this.prisma.supplier.findFirst({ where: { id: dto.supplierId, businessId, party: { is: { archivedAt: null } } }, select: { paymentTermsDays: true } }) : null;
     if (dto.supplierId && !supplier) throw new BadRequestException("تأمین‌کننده انتخاب‌شده معتبر نیست.");
     const dueDate = dto.dueDate ? this.date(dto.dueDate) : this.dateAfterDays(date, supplier?.paymentTermsDays ?? null);
-    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, kind: "STOCK", isActive: true }, include: { unit: true, product: { select: { id: true, trackInventory: true } } } });
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, branchId, kind: "STOCK", isActive: true }, include: { unit: true, product: { select: { id: true, trackInventory: true } } } });
     const byId = new Map(products.map((product) => [product.id, product]));
     if (byId.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا پیدا نشد.");
     const lines = dto.lines.map((line) => {
@@ -118,7 +118,7 @@ export class PurchasesService {
     const saved = await this.prisma.$transaction(async (tx) => {
       const current = await tx.purchase.findFirst({ where: { id, businessId, branchId, status: "DRAFT" }, select: { id: true, totalRial: true } });
       if (!current) throw new ConflictException("وضعیت خرید تغییر کرده است؛ فهرست را تازه کنید.");
-      await tx.purchaseLine.deleteMany({ where: { businessId, purchaseId: id } });
+      await tx.purchaseLine.deleteMany({ where: { businessId, branchId, purchaseId: id } });
       const updated = await tx.purchase.update({ where: { id }, data: {
         supplierId: dto.supplierId ?? null, txnDate: date, dueDate, note: dto.note?.trim() || null,
         subtotalRial: subtotal, discountRial: discount, taxRial: taxTotal, totalRial: total,
@@ -191,7 +191,7 @@ export class PurchasesService {
           const average = newQty > 0n ? (value * 1000n + newQty / 2n) / newQty : 0n;
           await tx.inventoryBalance.upsert({ where: { businessId_branchId_productId: { businessId, branchId, productId: product.id } }, create: { businessId, branchId, productId: product.id, quantityOnHand: new Prisma.Decimal(qtyText(newQty)), inventoryValueRial: value, averageCostRial: average }, update: { quantityOnHand: new Prisma.Decimal(qtyText(newQty)), inventoryValueRial: value, averageCostRial: average } });
           await tx.inventoryMovement.create({ data: { businessId, branchId, productId: product.id, txnDate: purchase.txnDate, sourceType: "PURCHASE", sourceId: purchase.id, quantityDelta: new Prisma.Decimal(qtyText(qty)), unitCostRial: line.unitCostRial, valueDeltaRial: lineValue, createdBy: user.id } });
-          await tx.product.update({ where: { id: item.id }, data: { defaultCostRial: average } });
+          await tx.product.update({ where: { id_businessId_branchId: { id: item.id, businessId, branchId } }, data: { defaultCostRial: average } });
           inventoryValue += lineValue;
         } else {
           debitLines.push({ ledgerAccountId: await this.accounting.account(tx, businessId, "general_expense"), debitRial: lineValue, description: line.descriptionSnapshot });

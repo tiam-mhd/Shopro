@@ -38,8 +38,8 @@ try {
     prisma.party.create({ data: { businessId, name: "Sync customer", normalizedName: "sync customer" } }),
   ]);
   const customer = await prisma.customer.create({ data: { id: customerParty.id, businessId } });
-  const catalogItem = await prisma.catalogItem.create({ data: { businessId, name: "Sync service", normalizedName: "sync service", unitId: unit.id, kind: "SERVICE", salePriceRial: 25_000n } });
-  const service = await prisma.service.create({ data: { id: catalogItem.id, businessId } });
+  const catalogItem = await prisma.catalogItem.create({ data: { businessId, branchId: branchA.id, name: "Sync service", normalizedName: "sync service", unitId: unit.id, kind: "SERVICE", salePriceRial: 25_000n } });
+  const service = await prisma.service.create({ data: { id: catalogItem.id, businessId, branchId: branchA.id } });
   await Promise.all([
     prisma.ledgerAccount.create({ data: { businessId, code: "SYNC-AR", name: "Sync receivable", type: "ASSET", systemKey: "accounts_receivable" } }),
     prisma.ledgerAccount.create({ data: { businessId, code: "SYNC-REV", name: "Sync revenue", type: "REVENUE", systemKey: "sales_revenue" } }),

@@ -18,12 +18,12 @@ export class ServicesService {
   constructor(private readonly prisma: PrismaService, private readonly storage: AttachmentStorageService) {}
 
   async catalog(user: AuthenticatedUser, search?: string, cursor?: string, requestedLimit?: string) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     assertUuid(cursor, "نشانگر صفحهٔ فهرست کالا و خدمات معتبر نیست.");
     const q = search ? normalizePersianSearch(search) : undefined;
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 200;
-    const where = { businessId, isActive: true, ...(q ? { OR: [
+    const where = { businessId, branchId, isActive: true, ...(q ? { OR: [
       { normalizedName: { contains: q } },
       { name: { contains: search!.trim(), mode: "insensitive" as const } },
       { product: { is: { sku: { contains: search!.trim(), mode: "insensitive" as const } } } },
@@ -36,18 +36,19 @@ export class ServicesService {
   }
 
   async catalogItem(user: AuthenticatedUser, id: string) {
-    const row = await this.prisma.catalogItem.findFirst({ where: { id, businessId: this.business(user) }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, product: { select: { sku: true, defaultCostRial: true, trackInventory: true, reorderPoint: true } }, service: { select: { description: true } } } });
+    const { businessId, branchId } = this.scope(user);
+    const row = await this.prisma.catalogItem.findFirst({ where: { id, businessId, branchId }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, product: { select: { sku: true, defaultCostRial: true, trackInventory: true, reorderPoint: true } }, service: { select: { description: true } } } });
     if (!row) throw new NotFoundException("کالا یا خدمت پیدا نشد.");
     return { id: row.id, name: row.name, sku: row.product?.sku ?? null, kind: row.kind, unit: row.unit, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.product?.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.product?.trackInventory ?? false, reorderPoint: row.product?.reorderPoint?.toString() ?? null, description: row.service?.description ?? null };
   }
 
   async list(user: AuthenticatedUser, search?: string, cursor?: string, requestedLimit?: string) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     assertUuid(cursor, "نشانگر صفحهٔ خدمات معتبر نیست.");
     const q = search ? normalizePersianSearch(search) : undefined;
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 200;
-    const where: Prisma.ServiceWhereInput = { businessId, catalogItem: { isActive: true }, ...(q ? { OR: [
+    const where: Prisma.ServiceWhereInput = { businessId, branchId, catalogItem: { isActive: true }, ...(q ? { OR: [
       { catalogItem: { is: { normalizedName: { contains: q } } } },
       { catalogItem: { is: { name: { contains: search!.trim(), mode: "insensitive" } } } },
       { description: { contains: search!.trim(), mode: "insensitive" } },
@@ -64,22 +65,22 @@ export class ServicesService {
   }
 
   async get(user: AuthenticatedUser, id: string) {
-    const businessId = this.business(user);
-    const row = await this.prisma.service.findFirst({ where: { id, businessId }, include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, category: { select: { id: true, name: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } } });
+    const { businessId, branchId } = this.scope(user);
+    const row = await this.prisma.service.findFirst({ where: { id, businessId, branchId }, include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, category: { select: { id: true, name: true } }, images: { where: { branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } } } });
     if (!row) throw new NotFoundException("خدمت پیدا نشد.");
     return { id: row.id, name: row.catalogItem.name, description: row.description, unit: row.catalogItem.unit, category: row.category, salePriceRial: row.catalogItem.salePriceRial.toString(), taxRateBasisPoints: row.catalogItem.taxRateBasisPoints, isActive: row.catalogItem.isActive, images: row.images.map((image) => ({ id: image.id, position: image.position, path: imagePath(row.id, image.id) })) };
   }
 
   async create(user: AuthenticatedUser, dto: CreateServiceDto, request: AppRequest) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     this.requireEditor(user);
     const unit = await this.resolveUnit(businessId, dto.unitId);
-    if (dto.categoryId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در دسترس نیست.");
+    if (dto.categoryId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, businessId, branchId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در این شعبه در دسترس نیست.");
     const name = dto.name.trim();
     const price = this.parseMoney(dto.salePriceRial);
     const created = await this.prisma.$transaction(async (tx) => {
-      const catalogItem = await tx.catalogItem.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), kind: "SERVICE", unitId: unit.id, salePriceRial: price, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0 } });
-      const service = await tx.service.create({ data: { id: catalogItem.id, businessId, categoryId: dto.categoryId || null, description: dto.description?.trim() || null } });
+      const catalogItem = await tx.catalogItem.create({ data: { businessId, branchId, name, normalizedName: normalizePersianSearch(name), kind: "SERVICE", unitId: unit.id, salePriceRial: price, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0 } });
+      const service = await tx.service.create({ data: { id: catalogItem.id, businessId, branchId, categoryId: dto.categoryId || null, description: dto.description?.trim() || null } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "service.created", entityType: "service", entityId: service.id, requestId: request.requestId ?? "unknown", afterJson: { name, categoryId: service.categoryId, salePriceRial: price.toString() } } });
       return catalogItem;
     }, { isolationLevel: "Serializable" });
@@ -87,14 +88,14 @@ export class ServicesService {
   }
 
   async update(user: AuthenticatedUser, id: string, dto: UpdateServiceDto, request: AppRequest) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     this.requireEditor(user);
-    const before = await this.prisma.service.findFirst({ where: { id, businessId }, include: { catalogItem: true } });
+    const before = await this.prisma.service.findFirst({ where: { id, businessId, branchId }, include: { catalogItem: true } });
     if (!before) throw new NotFoundException("خدمت پیدا نشد.");
     if (before.catalogItem.archivedAt && dto.isActive !== true) throw new NotFoundException("خدمت پیدا نشد.");
-    if (dto.unitId && dto.unitId !== before.catalogItem.unitId && await this.prisma.salesInvoiceLine.count({ where: { businessId, productId: id } })) throw new BadRequestException("واحد خدمتی که در فاکتور ثبت شده قابل تغییر نیست.");
+    if (dto.unitId && dto.unitId !== before.catalogItem.unitId && await this.prisma.salesInvoiceLine.count({ where: { businessId, branchId, productId: id } })) throw new BadRequestException("واحد خدمتی که در فاکتور ثبت شده قابل تغییر نیست.");
     if (dto.unitId) await this.resolveUnit(businessId, dto.unitId);
-    if (dto.categoryId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در دسترس نیست.");
+    if (dto.categoryId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, businessId, branchId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در این شعبه در دسترس نیست.");
     const name = dto.name?.trim();
     return this.prisma.$transaction(async (tx) => {
       const catalogItem = await tx.catalogItem.update({ where: { id }, data: { name, normalizedName: name ? normalizePersianSearch(name) : undefined, unitId: dto.unitId, salePriceRial: dto.salePriceRial ? this.parseMoney(dto.salePriceRial) : undefined, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
@@ -108,19 +109,22 @@ export class ServicesService {
     const { businessId, branchId } = this.scope(user);
     this.requireEditor(user);
     if (placement !== "PRIMARY" && placement !== "GALLERY") throw new BadRequestException("نوع جایگاه تصویر معتبر نیست.");
-    const service = await this.prisma.service.findFirst({ where: { id: serviceId, businessId }, include: { catalogItem: { select: { archivedAt: true } } } });
+    const service = await this.prisma.service.findFirst({ where: { id: serviceId, businessId, branchId }, include: { catalogItem: { select: { archivedAt: true } } } });
     if (!service || service.catalogItem.archivedAt) throw new NotFoundException("خدمت پیدا نشد.");
     const prepared = await prepareProductImage(file);
     const imageId = randomUUID();
     const storageScope = { businessId, branchId, productId: serviceId, imageId };
     await this.storage.saveProductImage(storageScope, prepared.bytes);
     let previousPrimaryId: string | null = null;
+    let previousPrimaryStorageProductId: string | null = null;
     try {
       const image = await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.serviceImage.findMany({ where: { businessId, branchId, serviceId }, orderBy: { position: "asc" }, select: { id: true, position: true } });
+        const existing = await tx.serviceImage.findMany({ where: { businessId, branchId, serviceId }, orderBy: { position: "asc" }, select: { id: true, position: true, storageProductId: true } });
         let position: number;
         if (placement === "PRIMARY") {
-          previousPrimaryId = existing.find((row) => row.position === 0)?.id ?? null;
+          const previousPrimary = existing.find((row) => row.position === 0);
+          previousPrimaryId = previousPrimary?.id ?? null;
+          if (previousPrimary) previousPrimaryStorageProductId = previousPrimary.storageProductId;
           if (previousPrimaryId) await tx.serviceImage.delete({ where: { id: previousPrimaryId } });
           position = 0;
         } else {
@@ -128,14 +132,78 @@ export class ServicesService {
           if (galleryCount >= 8) throw new BadRequestException("گالری هر خدمت حداکثر ۸ تصویر دارد.");
           position = Math.max(0, ...existing.map((row) => row.position)) + 1;
         }
-        const created = await tx.serviceImage.create({ data: { id: imageId, businessId, branchId, serviceId, position, bytes: BigInt(prepared.bytes.byteLength), checksum: prepared.checksum } });
+        const created = await tx.serviceImage.create({ data: { id: imageId, businessId, branchId, serviceId, storageProductId: serviceId, position, bytes: BigInt(prepared.bytes.byteLength), checksum: prepared.checksum } });
         await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: placement === "PRIMARY" ? "service.image.primary.updated" : "service.image.gallery.added", entityType: "service_image", entityId: imageId, requestId: request.requestId ?? "unknown", afterJson: { serviceId, position, bytes: prepared.bytes.byteLength, checksum: prepared.checksum } } });
         return created;
       }, { isolationLevel: "Serializable" });
-      if (previousPrimaryId) await this.storage.removeProductImage({ businessId, branchId, productId: serviceId, imageId: previousPrimaryId }).catch(() => undefined);
+      if (previousPrimaryId) await this.storage.removeProductImage({ businessId, branchId, productId: previousPrimaryStorageProductId ?? serviceId, imageId: previousPrimaryId }).catch(() => undefined);
       return { id: image.id, position: image.position, path: imagePath(serviceId, image.id) };
     } catch (error) {
       await this.storage.removeProductImage(storageScope).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async transfer(user: AuthenticatedUser, serviceId: string, targetBranchId: string, request: AppRequest) {
+    const { businessId, branchId: sourceBranchId } = this.scope(user);
+    this.requireEditor(user);
+    assertUuid(targetBranchId, "شناسهٔ شعبهٔ مقصد معتبر نیست.");
+    if (targetBranchId === sourceBranchId) throw new BadRequestException("شعبهٔ مقصد باید با شعبهٔ جاری متفاوت باشد.");
+    if (!user.branchIds?.includes(targetBranchId)) throw new ForbiddenException("به شعبهٔ مقصد دسترسی ندارید.");
+    const targetBranch = await this.prisma.branch.findFirst({ where: { id: targetBranchId, businessId, isActive: true }, select: { id: true } });
+    if (!targetBranch) throw new BadRequestException("شعبهٔ مقصد فعال و در دسترس نیست.");
+    const source = await this.prisma.service.findFirst({
+      where: { id: serviceId, businessId, branchId: sourceBranchId },
+      include: { catalogItem: true, images: { where: { branchId: sourceBranchId }, orderBy: { position: "asc" } } },
+    });
+    if (!source) throw new NotFoundException("خدمت در شعبهٔ جاری پیدا نشد.");
+    const prior = await this.prisma.catalogItem.findFirst({ where: { businessId, branchId: targetBranchId, originBranchId: sourceBranchId, originItemId: serviceId }, select: { id: true } });
+    if (prior) return { id: prior.id, sourceId: serviceId, branchId: targetBranchId, alreadyTransferred: true };
+
+    const destinationServiceId = randomUUID();
+    const savedFiles: Array<{ businessId: string; branchId: string; productId: string; imageId: string }> = [];
+    const imageCopies: Array<{ id: string; position: number; bytes: bigint; checksum: string }> = [];
+    try {
+      for (const image of source.images) {
+        const bytes = await this.storage.readProductImage({ businessId, branchId: sourceBranchId, productId: image.storageProductId, imageId: image.id });
+        const imageId = randomUUID();
+        const targetScope = { businessId, branchId: targetBranchId, productId: destinationServiceId, imageId };
+        await this.storage.saveProductImage(targetScope, bytes);
+        savedFiles.push(targetScope);
+        imageCopies.push({ id: imageId, position: image.position, bytes: image.bytes, checksum: image.checksum });
+      }
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`catalog-transfer:${businessId}:${sourceBranchId}:${targetBranchId}:${serviceId}`}, 0))`;
+        const existing = await tx.catalogItem.findFirst({ where: { businessId, branchId: targetBranchId, originBranchId: sourceBranchId, originItemId: serviceId }, select: { id: true } });
+        if (existing) return { id: existing.id, created: false };
+        const categoryId = source.categoryId ? await this.copyServiceCategory(tx, businessId, sourceBranchId, targetBranchId, source.categoryId) : null;
+        const catalogItem = await tx.catalogItem.create({ data: {
+          id: destinationServiceId, businessId, branchId: targetBranchId, originBranchId: sourceBranchId, originItemId: serviceId,
+          name: source.catalogItem.name, normalizedName: source.catalogItem.normalizedName, kind: "SERVICE", unitId: source.catalogItem.unitId,
+          salePriceRial: source.catalogItem.salePriceRial, taxRateBasisPoints: source.catalogItem.taxRateBasisPoints,
+          isActive: source.catalogItem.isActive, archivedAt: source.catalogItem.archivedAt,
+        } });
+        await tx.service.create({ data: { id: catalogItem.id, businessId, branchId: targetBranchId, categoryId, description: source.description } });
+        if (imageCopies.length) await tx.serviceImage.createMany({ data: imageCopies.map((image) => ({ ...image, businessId, branchId: targetBranchId, serviceId: destinationServiceId, storageProductId: destinationServiceId })) });
+        await tx.auditEvent.create({ data: {
+          businessId, actorId: user.id, action: "service.transferred", entityType: "service", entityId: destinationServiceId,
+          requestId: request.requestId ?? "unknown", beforeJson: { sourceServiceId: serviceId, sourceBranchId },
+          afterJson: { serviceId: destinationServiceId, branchId: targetBranchId, imageCount: imageCopies.length, historyCopied: false },
+        } });
+        return { id: destinationServiceId, created: true };
+      }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
+      if (!result.created) {
+        await Promise.all(savedFiles.map((scope) => this.storage.removeProductImage(scope).catch(() => undefined)));
+        return { id: result.id, sourceId: serviceId, branchId: targetBranchId, alreadyTransferred: true };
+      }
+      return { id: result.id, sourceId: serviceId, branchId: targetBranchId, alreadyTransferred: false, imageCount: imageCopies.length };
+    } catch (error) {
+      await Promise.all(savedFiles.map((scope) => this.storage.removeProductImage(scope).catch(() => undefined)));
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const concurrent = await this.prisma.catalogItem.findFirst({ where: { businessId, branchId: targetBranchId, originBranchId: sourceBranchId, originItemId: serviceId }, select: { id: true } });
+        if (concurrent) return { id: concurrent.id, sourceId: serviceId, branchId: targetBranchId, alreadyTransferred: true };
+      }
       throw error;
     }
   }
@@ -167,31 +235,31 @@ export class ServicesService {
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "service.image.deleted", entityType: "service_image", entityId: imageId, requestId: request.requestId ?? "unknown", beforeJson: { serviceId, position: target.position, checksum: target.checksum } } });
       return target;
     }, { isolationLevel: "Serializable" });
-    await this.storage.removeProductImage({ businessId, branchId, productId: serviceId, imageId }).catch(() => undefined);
+    await this.storage.removeProductImage({ businessId, branchId, productId: image.storageProductId, imageId }).catch(() => undefined);
     return { id: image.id, deleted: true };
   }
 
   async readImage(user: AuthenticatedUser, serviceId: string, imageId: string) {
     const { businessId, branchId } = this.scope(user);
-    const image = await this.prisma.serviceImage.findFirst({ where: { id: imageId, serviceId, businessId, branchId }, select: { id: true } });
+    const image = await this.prisma.serviceImage.findFirst({ where: { id: imageId, serviceId, businessId, branchId }, select: { id: true, storageProductId: true } });
     if (!image) throw new NotFoundException("تصویر خدمت پیدا نشد.");
-    return this.storage.readProductImage({ businessId, branchId, productId: serviceId, imageId });
+    return this.storage.readProductImage({ businessId, branchId, productId: image.storageProductId, imageId });
   }
 
   async categories(user: AuthenticatedUser, includeArchived = false) {
-    const businessId = this.business(user);
-    const rows = await this.prisma.serviceCategory.findMany({ where: { businessId, ...(includeArchived ? {} : { isActive: true }) }, include: { _count: { select: { services: true } }, parent: { select: { name: true } } }, orderBy: [{ isActive: "desc" }, { name: "asc" }] });
+    const { businessId, branchId } = this.scope(user);
+    const rows = await this.prisma.serviceCategory.findMany({ where: { businessId, branchId, ...(includeArchived ? {} : { isActive: true }) }, include: { _count: { select: { services: true } }, parent: { select: { name: true } } }, orderBy: [{ isActive: "desc" }, { name: "asc" }] });
     return rows.map(({ id, name, parentId, parent, isActive, _count }) => ({ id, name, parentId, parentName: parent?.name ?? null, isActive, serviceCount: _count.services }));
   }
 
   async createCategory(user: AuthenticatedUser, dto: CreateProductCategoryDto, request: AppRequest) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     this.requireEditor(user);
     const name = dto.name.trim();
-    const duplicate = await this.prisma.serviceCategory.findFirst({ where: { businessId, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
+    const duplicate = await this.prisma.serviceCategory.findFirst({ where: { businessId, branchId, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
     if (duplicate) throw new BadRequestException("دسته‌بندی خدماتی با این نام از قبل وجود دارد.");
     const created = await this.prisma.$transaction(async (tx) => {
-      const category = await tx.serviceCategory.create({ data: { businessId, name } });
+      const category = await tx.serviceCategory.create({ data: { businessId, branchId, name } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "service_category.created", entityType: "service_category", entityId: category.id, requestId: request.requestId ?? "unknown", afterJson: { name } } });
       return category;
     });
@@ -199,15 +267,15 @@ export class ServicesService {
   }
 
   async updateCategory(user: AuthenticatedUser, id: string, dto: UpdateCatalogCategoryDto, request: AppRequest) {
-    const businessId = this.business(user);
+    const { businessId, branchId } = this.scope(user);
     this.requireEditor(user);
-    const before = await this.prisma.serviceCategory.findFirst({ where: { id, businessId } });
+    const before = await this.prisma.serviceCategory.findFirst({ where: { id, businessId, branchId } });
     if (!before) throw new NotFoundException("دسته‌بندی خدمات پیدا نشد.");
     if (dto.parentId === id) throw new BadRequestException("دسته‌بندی نمی‌تواند والد خودش باشد.");
-    if (dto.parentId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.parentId, businessId, isActive: true } }))) throw new BadRequestException("دسته‌بندی والد در دسترس نیست.");
-    if (dto.isActive === false && await this.prisma.serviceCategory.count({ where: { businessId, parentId: id, isActive: true } })) throw new BadRequestException("ابتدا دسته‌های زیرمجموعه را بایگانی کنید.");
+    if (dto.parentId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.parentId, businessId, branchId, isActive: true } }))) throw new BadRequestException("دسته‌بندی والد در این شعبه در دسترس نیست.");
+    if (dto.isActive === false && await this.prisma.serviceCategory.count({ where: { businessId, branchId, parentId: id, isActive: true } })) throw new BadRequestException("ابتدا دسته‌های زیرمجموعه را بایگانی کنید.");
     const name = dto.name?.trim();
-    if (name && await this.prisma.serviceCategory.findFirst({ where: { businessId, id: { not: id }, name: { equals: name, mode: "insensitive" } } })) throw new BadRequestException("دسته‌بندی خدماتی با این نام از قبل وجود دارد.");
+    if (name && await this.prisma.serviceCategory.findFirst({ where: { businessId, branchId, id: { not: id }, name: { equals: name, mode: "insensitive" } } })) throw new BadRequestException("دسته‌بندی خدماتی با این نام از قبل وجود دارد.");
     const category = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.serviceCategory.update({ where: { id }, data: { name, parentId: dto.parentId === undefined ? undefined : dto.parentId || null, isActive: dto.isActive } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.isActive === false ? "service_category.archived" : "service_category.updated", entityType: "service_category", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, isActive: before.isActive, parentId: before.parentId }, afterJson: { name: updated.name, isActive: updated.isActive, parentId: updated.parentId } } });
@@ -225,6 +293,27 @@ export class ServicesService {
     const visible = await this.prisma.unit.findMany({ where: { businessId, isVisible: true }, take: 2, select: { id: true } });
     if (visible.length !== 1) throw new BadRequestException(visible.length ? "واحد خدمت را انتخاب کنید." : "ابتدا دست‌کم یک واحد را فعال کنید.");
     return this.prisma.unit.findUniqueOrThrow({ where: { id_businessId: { id: visible[0].id, businessId } } });
+  }
+
+  private async copyServiceCategory(tx: Prisma.TransactionClient, businessId: string, sourceBranchId: string, targetBranchId: string, categoryId: string) {
+    const chain: Array<{ id: string; parentId: string | null; name: string; isActive: boolean }> = [];
+    const seen = new Set<string>();
+    let currentId: string | null = categoryId;
+    while (currentId) {
+      if (seen.has(currentId)) throw new BadRequestException("ساختار دسته‌بندی خدمات معتبر نیست.");
+      seen.add(currentId);
+      const current: { id: string; parentId: string | null; name: string; isActive: boolean } | null = await tx.serviceCategory.findFirst({ where: { id: currentId, businessId, branchId: sourceBranchId }, select: { id: true, parentId: true, name: true, isActive: true } });
+      if (!current) throw new NotFoundException("دسته‌بندی خدمت مبدأ پیدا نشد.");
+      chain.unshift(current);
+      currentId = current.parentId;
+    }
+    let targetParentId: string | null = null;
+    for (const category of chain) {
+      let target: { id: string } | null = await tx.serviceCategory.findFirst({ where: { businessId, branchId: targetBranchId, parentId: targetParentId, name: { equals: category.name, mode: "insensitive" } }, select: { id: true } });
+      if (!target) target = await tx.serviceCategory.create({ data: { businessId, branchId: targetBranchId, parentId: targetParentId, name: category.name, isActive: category.isActive }, select: { id: true } });
+      targetParentId = target.id;
+    }
+    return targetParentId;
   }
 
   private parseMoney(value: string) { if (!/^\d{1,20}$/.test(value)) throw new BadRequestException("مبلغ باید عدد صحیح ریال باشد."); return BigInt(value); }

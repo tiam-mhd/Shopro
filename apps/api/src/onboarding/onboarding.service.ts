@@ -28,8 +28,8 @@ export class OnboardingService {
       this.prisma.branch.findFirst({ where: { id: branchId, businessId, isActive: true }, select: { id: true, name: true, code: true } }),
       this.prisma.onboardingProgress.findUnique({ where: { businessId_branchId: { businessId, branchId } } }),
       this.prisma.onboardingResultView.findUnique({ where: { businessId_branchId_userId: { businessId, branchId, userId: user.id } }, select: { viewedAt: true } }),
-      this.prisma.product.count({ where: { businessId, catalogItem: { is: { isActive: true } } } }),
-      this.prisma.service.count({ where: { businessId, catalogItem: { is: { isActive: true } } } }),
+      this.prisma.product.count({ where: { businessId, branchId, catalogItem: { is: { isActive: true } } } }),
+      this.prisma.service.count({ where: { businessId, branchId, catalogItem: { is: { isActive: true } } } }),
       this.prisma.businessMember.count({ where: { businessId, status: "ACTIVE" } }),
       this.prisma.salesInvoice.findFirst({ where: { businessId, branchId, status: "POSTED", postedBy: user.id, returnOfId: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, invoiceNo: true, createdAt: true, txnDate: true } }),
       ["OWNER", "MANAGER", "ACCOUNTANT"].includes(role)

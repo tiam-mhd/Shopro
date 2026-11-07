@@ -83,7 +83,7 @@ export class ReportsService {
       this.prisma.expense.aggregate({ where: { businessId, branchId, status: "POSTED", txnDate: range }, _sum: { amountRial: true, taxRial: true }, _count: { id: true } }),
       this.prisma.cashTransaction.aggregate({ where: { businessId, branchId, kind: "RECEIPT", status: "POSTED", txnDate: range, journalEntry: { status: "POSTED" } }, _sum: { amountRial: true } }),
       this.prisma.financeAccount.findMany({ where: { businessId, branchId, isActive: true }, select: { id: true, name: true, ledgerAccountId: true, kind: true } }),
-      this.prisma.product.findMany({ where: { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true, reorderPoint: { not: null } }, include: { catalogItem: { include: { unit: { select: { labelFa: true } } } }, balances: { where: { branchId }, select: { quantityOnHand: true } } }, take: 500 }),
+      this.prisma.product.findMany({ where: { businessId, branchId, catalogItem: { is: { isActive: true } }, trackInventory: true, reorderPoint: { not: null } }, include: { catalogItem: { include: { unit: { select: { labelFa: true } } } }, balances: { where: { branchId }, select: { quantityOnHand: true } } }, take: 500 }),
       this.prisma.salesInvoice.findMany({ where: { businessId, branchId, status: "POSTED", txnDate: range }, select: { id: true, txnDate: true, totalRial: true, allocations: { select: { amountRial: true } } } }),
       this.prisma.salesInvoiceLine.findMany({ where: { businessId, invoice: { businessId, branchId, status: "POSTED", txnDate: range } }, select: { cogsRial: true, catalogItem: { select: { kind: true, product: { select: { trackInventory: true } } } }, lineTotalRial: true, discountRial: true, taxRial: true } }),
       this.prisma.salesInvoice.groupBy({ by: ["txnDate"], where: { businessId, branchId, status: "POSTED", txnDate: range }, _sum: { totalRial: true }, orderBy: { txnDate: "asc" } }),
@@ -168,7 +168,7 @@ export class ReportsService {
     assertUuid(cursor, "نشانگر صفحه برای گزارش موجودی معتبر نیست.");
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 500;
-    const where = { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true };
+    const where = { businessId, branchId, catalogItem: { is: { isActive: true } }, trackInventory: true };
     if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای گزارش موجودی معتبر نیست؛ گزارش را دوباره بارگذاری کنید.");
     const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { catalogItem: { include: { unit: { select: { labelFa: true } } } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
     const mapped = products.map((product) => { const balance = product.balances[0]; const quantity = balance?.quantityOnHand ?? 0; return { productId: product.id, name: product.catalogItem.name, sku: product.sku, unit: product.catalogItem.unit.labelFa, quantity: quantity.toString(), averageCostRial: balance?.averageCostRial.toString() ?? "0", valueRial: balance?.inventoryValueRial.toString() ?? "0", low: product.reorderPoint !== null && quantity.lte(product.reorderPoint) }; });

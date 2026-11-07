@@ -410,6 +410,11 @@ model Branch {
   storefrontOtpGrants        StorefrontOtpGrant[]
   productImages              ProductImage[]
   serviceImages              ServiceImage[]
+  productCategories          ProductCategory[]
+  serviceCategories          ServiceCategory[]
+  catalogItems               CatalogItem[] @relation("CatalogBranch")
+  products                   Product[]
+  services                   Service[]
   storefrontReservations     StorefrontReservation[]
 
   @@unique([businessId, code])
@@ -532,7 +537,7 @@ model StorefrontListing {
   business          Business                     @relation(fields: [businessId], references: [id], onDelete: Restrict)
   branch            Branch                       @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
   storefront        Storefront                   @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
-  catalogItem       CatalogItem                  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem       CatalogItem                  @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   orderItems        StorefrontOrderItem[]
 
   @@unique([branchId, productId])
@@ -686,7 +691,7 @@ model StorefrontOrderItem {
   business           Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
   order              StorefrontOrder    @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   listing            StorefrontListing? @relation(fields: [listingId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  catalogItem        CatalogItem?       @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem        CatalogItem?       @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@index([businessId, orderId])
   @@map("storefront_order_items")
@@ -769,7 +774,7 @@ model StorefrontReservation {
   business   Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
   branch     Branch          @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
   order      StorefrontOrder @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  product    Product         @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  product    Product         @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@unique([orderId, productId])
   @@index([businessId, branchId, productId, expiresAt, releasedAt])
@@ -814,38 +819,47 @@ model Unit {
 model ProductCategory {
   id         String            @id @default(uuid()) @db.Uuid
   businessId String            @map("business_id") @db.Uuid
+  branchId   String            @map("branch_id") @db.Uuid
   parentId   String?           @map("parent_id") @db.Uuid
   name       String            @db.VarChar(100)
   isActive   Boolean           @default(true) @map("is_active")
   business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  parent     ProductCategory?  @relation("CategoryTree", fields: [parentId, businessId], references: [id, businessId], onDelete: Restrict)
+  branch     Branch            @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  parent     ProductCategory?  @relation("CategoryTree", fields: [parentId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   children   ProductCategory[] @relation("CategoryTree")
   products   Product[]
 
   @@unique([id, businessId])
-  @@index([businessId, isActive])
+  @@unique([id, businessId, branchId])
+  @@index([businessId, branchId, isActive])
   @@map("product_categories")
 }
 
 model ServiceCategory {
   id         String            @id @default(uuid()) @db.Uuid
   businessId String            @map("business_id") @db.Uuid
+  branchId   String            @map("branch_id") @db.Uuid
   parentId   String?           @map("parent_id") @db.Uuid
   name       String            @db.VarChar(100)
   isActive   Boolean           @default(true) @map("is_active")
   business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  parent     ServiceCategory?  @relation("ServiceCategoryTree", fields: [parentId, businessId], references: [id, businessId], onDelete: Restrict)
+  branch     Branch            @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  parent     ServiceCategory?  @relation("ServiceCategoryTree", fields: [parentId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   children   ServiceCategory[] @relation("ServiceCategoryTree")
   services   Service[]
 
   @@unique([id, businessId])
-  @@index([businessId, isActive])
+  @@unique([id, businessId, branchId])
+  @@index([businessId, branchId, isActive])
   @@map("service_categories")
 }
 
 model CatalogItem {
   id                   String                @id @default(uuid()) @db.Uuid
   businessId           String                @map("business_id") @db.Uuid
+  branchId             String                @map("branch_id") @db.Uuid
+  originBranchId       String?               @map("origin_branch_id") @db.Uuid
+  originItemId         String?               @map("origin_item_id") @db.Uuid
   name                 String                @db.VarChar(160)
   normalizedName       String                @map("normalized_name") @db.VarChar(200)
   kind                 ProductKind
@@ -857,6 +871,9 @@ model CatalogItem {
   createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   business             Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch               Branch                @relation("CatalogBranch", fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  originItem           CatalogItem?          @relation("CatalogItemTransferOrigin", fields: [originItemId, businessId, originBranchId], references: [id, businessId, branchId], onDelete: Restrict)
+  transferredCopies    CatalogItem[]         @relation("CatalogItemTransferOrigin")
   unit                 Unit                  @relation(fields: [unitId, businessId], references: [id, businessId], onDelete: Restrict)
   product              Product?
   service              Service?
@@ -866,13 +883,16 @@ model CatalogItem {
   storefrontOrderItems StorefrontOrderItem[]
 
   @@unique([id, businessId])
-  @@index([businessId, kind, isActive, normalizedName])
+  @@unique([id, businessId, branchId])
+  @@unique([businessId, branchId, originBranchId, originItemId])
+  @@index([businessId, branchId, kind, isActive, normalizedName])
   @@map("catalog_items")
 }
 
 model Product {
   id                     String                  @id @db.Uuid
   businessId             String                  @map("business_id") @db.Uuid
+  branchId               String                  @map("branch_id") @db.Uuid
   sku                    String?                 @db.VarChar(48)
   barcode                String?                 @db.VarChar(64)
   categoryId             String?                 @map("category_id") @db.Uuid
@@ -880,8 +900,9 @@ model Product {
   reorderPoint           Decimal?                @map("reorder_point") @db.Decimal(18, 3)
   trackInventory         Boolean                 @default(true) @map("track_inventory")
   business               Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  catalogItem            CatalogItem             @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
-  category               ProductCategory?        @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
+  branch                 Branch                  @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem            CatalogItem             @relation(fields: [id, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
+  category               ProductCategory?        @relation(fields: [categoryId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   movements              InventoryMovement[]
   balances               InventoryBalance[]
   stockCountLines        StockCountLine[]
@@ -889,24 +910,28 @@ model Product {
   images                 ProductImage[]
 
   @@unique([id, businessId])
-  @@unique([businessId, sku])
-  @@unique([businessId, barcode])
-  @@index([businessId, categoryId])
+  @@unique([id, businessId, branchId])
+  @@unique([businessId, branchId, sku])
+  @@unique([businessId, branchId, barcode])
+  @@index([businessId, branchId, categoryId])
   @@map("products")
 }
 
 model Service {
   id          String           @id @db.Uuid
   businessId  String           @map("business_id") @db.Uuid
+  branchId    String           @map("branch_id") @db.Uuid
   categoryId  String?          @map("category_id") @db.Uuid
   description String?          @db.VarChar(1000)
   business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  catalogItem CatalogItem      @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
-  category    ServiceCategory? @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
+  branch      Branch           @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem CatalogItem      @relation(fields: [id, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
+  category    ServiceCategory? @relation(fields: [categoryId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   images      ServiceImage[]
 
   @@unique([id, businessId])
-  @@index([businessId, categoryId])
+  @@unique([id, businessId, branchId])
+  @@index([businessId, branchId, categoryId])
   @@map("services")
 }
 
@@ -915,13 +940,14 @@ model ProductImage {
   businessId String   @map("business_id") @db.Uuid
   branchId   String   @map("branch_id") @db.Uuid
   productId  String   @map("product_id") @db.Uuid
+  storageProductId String @map("storage_product_id") @db.Uuid
   position   Int      @default(0)
   bytes      BigInt
   checksum   String   @db.Char(64)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
-  product    Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+  product    Product  @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
 
   @@unique([businessId, branchId, productId, position])
   @@index([businessId, branchId, productId])
@@ -933,13 +959,14 @@ model ServiceImage {
   businessId String   @map("business_id") @db.Uuid
   branchId   String   @map("branch_id") @db.Uuid
   serviceId  String   @map("service_id") @db.Uuid
+  storageProductId String @map("storage_product_id") @db.Uuid
   position   Int      @default(0)
   bytes      BigInt
   checksum   String   @db.Char(64)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
-  service    Service  @relation(fields: [serviceId, businessId], references: [id, businessId], onDelete: Cascade)
+  service    Service  @relation(fields: [serviceId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
 
   @@unique([businessId, branchId, serviceId, position])
   @@index([businessId, branchId, serviceId])
@@ -1074,6 +1101,7 @@ model SalesInvoice {
 
   @@unique([businessId, invoiceNo])
   @@unique([id, businessId])
+  @@unique([id, businessId, branchId])
   @@unique([storefrontOrderId, businessId])
   @@index([businessId, branchId, txnDate, status])
   @@map("sales_invoices")
@@ -1082,6 +1110,7 @@ model SalesInvoice {
 model SalesInvoiceLine {
   id                  String             @id @default(uuid()) @db.Uuid
   businessId          String             @map("business_id") @db.Uuid
+  branchId            String             @map("branch_id") @db.Uuid
   invoiceId           String             @map("invoice_id") @db.Uuid
   returnOfLineId      String?            @map("return_of_line_id") @db.Uuid
   productId           String?            @map("product_id") @db.Uuid
@@ -1096,12 +1125,13 @@ model SalesInvoiceLine {
   lineTotalRial       BigInt             @map("line_total_rial")
   cogsRial            BigInt?            @map("cogs_rial")
   business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  invoice             SalesInvoice       @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Cascade)
-  returnOfLine        SalesInvoiceLine?  @relation("SalesLineReturns", fields: [returnOfLineId, businessId], references: [id, businessId], onDelete: Restrict)
+  invoice             SalesInvoice       @relation(fields: [invoiceId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
+  returnOfLine        SalesInvoiceLine?  @relation("SalesLineReturns", fields: [returnOfLineId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   returnedLines       SalesInvoiceLine[] @relation("SalesLineReturns")
-  catalogItem         CatalogItem?       @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem         CatalogItem?       @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@unique([id, businessId])
+  @@unique([id, businessId, branchId])
   @@index([businessId, invoiceId])
   @@map("sales_invoice_lines")
 }
@@ -1133,6 +1163,7 @@ model Purchase {
 
   @@unique([businessId, purchaseNo])
   @@unique([id, businessId])
+  @@unique([id, businessId, branchId])
   @@index([businessId, branchId, txnDate, status])
   @@map("purchases")
 }
@@ -1140,6 +1171,7 @@ model Purchase {
 model PurchaseLine {
   id                  String       @id @default(uuid()) @db.Uuid
   businessId          String       @map("business_id") @db.Uuid
+  branchId            String       @map("branch_id") @db.Uuid
   purchaseId          String       @map("purchase_id") @db.Uuid
   productId           String?      @map("product_id") @db.Uuid
   descriptionSnapshot String       @map("description_snapshot") @db.VarChar(200)
@@ -1150,8 +1182,8 @@ model PurchaseLine {
   taxRial             BigInt       @default(0) @map("tax_rial")
   lineTotalRial       BigInt       @map("line_total_rial")
   business            Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  purchase            Purchase     @relation(fields: [purchaseId, businessId], references: [id, businessId], onDelete: Cascade)
-  catalogItem         CatalogItem? @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  purchase            Purchase     @relation(fields: [purchaseId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
+  catalogItem         CatalogItem? @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@index([businessId, purchaseId])
   @@map("purchase_lines")
@@ -1305,7 +1337,7 @@ model InventoryMovement {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch         Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  product        Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  product        Product  @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@index([businessId, branchId, productId, txnDate])
   @@index([businessId, sourceType, sourceId])
@@ -1323,7 +1355,7 @@ model InventoryBalance {
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch             Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
-  product            Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+  product            Product  @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
 
   @@unique([businessId, branchId, productId])
   @@map("inventory_balances")
@@ -1343,19 +1375,21 @@ model StockCount {
   lines      StockCountLine[]
 
   @@unique([id, businessId])
+  @@unique([id, businessId, branchId])
   @@map("stock_counts")
 }
 
 model StockCountLine {
   id                     String     @id @default(uuid()) @db.Uuid
   businessId             String     @map("business_id") @db.Uuid
+  branchId               String     @map("branch_id") @db.Uuid
   stockCountId           String     @map("stock_count_id") @db.Uuid
   productId              String     @map("product_id") @db.Uuid
   countedQuantity        Decimal    @map("counted_quantity") @db.Decimal(18, 3)
   systemQuantitySnapshot Decimal    @map("system_quantity_snapshot") @db.Decimal(18, 3)
   deltaQuantity          Decimal    @map("delta_quantity") @db.Decimal(18, 3)
-  stockCount             StockCount @relation(fields: [stockCountId, businessId], references: [id, businessId], onDelete: Cascade)
-  product                Product    @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  stockCount             StockCount @relation(fields: [stockCountId, businessId, branchId], references: [id, businessId, branchId], onDelete: Cascade)
+  product                Product    @relation(fields: [productId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@unique([stockCountId, productId])
   @@map("stock_count_lines")

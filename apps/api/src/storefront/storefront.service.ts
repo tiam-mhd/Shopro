@@ -238,9 +238,9 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     const store = await this.findPublicStore(slug, false);
     const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId, isPublished: true, canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null, kind: "STOCK" } } }, select: { id: true } });
     if (!listing) throw new NotFoundException("تصویر کالا پیدا نشد.");
-    const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId, businessId: store.businessId, branchId: store.branchId }, select: { id: true } });
+    const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId, businessId: store.businessId, branchId: store.branchId }, select: { id: true, storageProductId: true } });
     if (!image) throw new NotFoundException("تصویر کالا پیدا نشد.");
-    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId, imageId });
+    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId: image.storageProductId, imageId });
   }
 
   async publicServiceImage(slug: string, serviceId: string, imageId: string, ipAddress?: string) {
@@ -248,9 +248,9 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     const store = await this.findPublicStore(slug, false);
     const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId: serviceId, isPublished: true, canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null, kind: "SERVICE" } } }, select: { id: true } });
     if (!listing) throw new NotFoundException("تصویر خدمت پیدا نشد.");
-    const image = await this.prisma.serviceImage.findFirst({ where: { id: imageId, serviceId, businessId: store.businessId, branchId: store.branchId }, select: { id: true } });
+    const image = await this.prisma.serviceImage.findFirst({ where: { id: imageId, serviceId, businessId: store.businessId, branchId: store.branchId }, select: { id: true, storageProductId: true } });
     if (!image) throw new NotFoundException("تصویر خدمت پیدا نشد.");
-    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId: serviceId, imageId });
+    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId: image.storageProductId, imageId });
   }
 
   async settings(user: AuthenticatedUser) {
@@ -306,7 +306,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     const normalized = query ? normalizePersianSearch(query) : "";
     const commonFilter: Prisma.CatalogItemWhereInput = { isActive: true, archivedAt: null, ...(normalized ? { normalizedName: { contains: normalized } } : {}) };
     const baseWhere: Prisma.CatalogItemWhereInput = {
-      businessId: scope.businessId, ...commonFilter,
+      businessId: scope.businessId, branchId: scope.branchId, ...commonFilter,
       ...(productId ? { id: productId } : {}),
       ...(normalized ? { OR: [
         { normalizedName: { contains: normalized } },
@@ -331,14 +331,14 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         orderBy: [{ normalizedName: "asc" }, { id: "asc" }],
       }),
       this.prisma.catalogItem.count({ where }),
-      this.prisma.product.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, catalogItem: { is: commonFilter }, ...(normalized ? { OR: [{ catalogItem: { is: { normalizedName: { contains: normalized } } } }, { sku: { contains: query ?? "", mode: "insensitive" } }, { barcode: { contains: toAsciiDigits(query ?? "") } }] } : {}) }, _count: { _all: true } }),
-      this.prisma.service.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, catalogItem: { is: commonFilter } }, _count: { _all: true } }),
+      this.prisma.product.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, branchId: scope.branchId, catalogItem: { is: commonFilter }, ...(normalized ? { OR: [{ catalogItem: { is: { normalizedName: { contains: normalized } } } }, { sku: { contains: query ?? "", mode: "insensitive" } }, { barcode: { contains: toAsciiDigits(query ?? "") } }] } : {}) }, _count: { _all: true } }),
+      this.prisma.service.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, branchId: scope.branchId, catalogItem: { is: commonFilter } }, _count: { _all: true } }),
     ]);
     const categoryGroups = [...productGroups, ...serviceGroups];
     const categoryIds = [...new Set(categoryGroups.flatMap((group) => group.categoryId ? [group.categoryId] : []))];
     const [productCategoryRows, serviceCategoryRows] = categoryIds.length ? await Promise.all([
-      this.prisma.productCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }),
-      this.prisma.serviceCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }),
+      this.prisma.productCategory.findMany({ where: { businessId: scope.businessId, branchId: scope.branchId, id: { in: categoryIds } }, select: { id: true, name: true } }),
+      this.prisma.serviceCategory.findMany({ where: { businessId: scope.businessId, branchId: scope.branchId, id: { in: categoryIds } }, select: { id: true, name: true } }),
     ]) : [[], []];
     const categoryNames = new Map([...productCategoryRows, ...serviceCategoryRows].map((category) => [category.id, category.name]));
     const categories: Array<{ id: string | null; name: string; count: number }> = [];
@@ -384,7 +384,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
   async updateListing(user: AuthenticatedUser, productId: string, dto: StorefrontListingDto, request: AppRequest) {
     const scope = this.scope(user); this.requireRole(user, ["OWNER", "MANAGER"]);
     const store = await this.requireStore(scope);
-    const product = await this.prisma.catalogItem.findFirst({ where: { id: productId, businessId: scope.businessId, isActive: true, archivedAt: null }, select: { id: true, kind: true, salePriceRial: true, name: true, unit: { select: { precision: true } } } });
+    const product = await this.prisma.catalogItem.findFirst({ where: { id: productId, businessId: scope.businessId, branchId: scope.branchId, isActive: true, archivedAt: null }, select: { id: true, kind: true, salePriceRial: true, name: true, unit: { select: { precision: true } } } });
     if (!product) throw new NotFoundException("کالا یا خدمت فعال پیدا نشد.");
     const price = dto.publicPriceRial ? parseMoney(dto.publicPriceRial, "قیمت عمومی") : null;
     const minimum = quantityMilliForPrecision(dto.minimumQuantity, product.unit.precision);
@@ -700,7 +700,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         if (order.status !== "SUBMITTED") throw new ConflictException("فقط سفارش جدید را می‌توان پذیرفت.");
         const activeCardCount = await tx.storePaymentCard.count({ where: { ...scope, isActive: true, financeAccount: { isActive: true, kind: "BANK" } } });
         if (!activeCardCount) throw new ConflictException("پیش از پذیرش سفارش، مالک باید یک کارت مقصد فعال به حساب بانکی فعال همین شعبه وصل کند.");
-        const products = order.business.inventoryEnabled ? await tx.product.findMany({ where: { id: { in: order.items.map((item) => item.productId!).filter(Boolean) }, businessId: scope.businessId }, select: { id: true, trackInventory: true, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } } } }) : [];
+        const products = order.business.inventoryEnabled ? await tx.product.findMany({ where: { id: { in: order.items.map((item) => item.productId!).filter(Boolean) }, businessId: scope.businessId, branchId: scope.branchId }, select: { id: true, trackInventory: true, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } } } }) : [];
         const productMap = new Map(products.map((product) => [product.id, product]));
         const needed = new Map<string, bigint>();
         for (const item of order.items) {

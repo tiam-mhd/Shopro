@@ -69,3 +69,8 @@ export class UpdateUnitsVisibilityDto {
   @IsArray() @ArrayMaxSize(100) @ArrayUnique() @IsUUID("4", { each: true })
   visibleUnitIds!: string[];
 }
+
+export class TransferCatalogItemDto {
+  @IsUUID("4")
+  targetBranchId!: string;
+}

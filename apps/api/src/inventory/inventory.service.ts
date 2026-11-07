@@ -20,7 +20,7 @@ type CountQuantity = { productId: string; counted: bigint };
 function stockCountLineInputs(quantities: CountQuantity[], systemQuantityByProduct: ReadonlyMap<string, bigint>): Prisma.StockCountLineUncheckedCreateWithoutStockCountInput[] {
   return quantities.map(({ productId, counted }) => {
     const system = systemQuantityByProduct.get(productId) ?? 0n;
-    // The nested StockCount relation supplies businessId and stockCountId.
+    // The nested StockCount relation supplies businessId, branchId, and stockCountId.
     return { productId, countedQuantity: new Prisma.Decimal(quantityText(counted)), systemQuantitySnapshot: new Prisma.Decimal(quantityText(system)), deltaQuantity: new Prisma.Decimal(quantityText(counted - system)) };
   });
 }
@@ -34,7 +34,7 @@ export class InventoryService {
     assertUuid(cursor, "نشانگر صفحه برای موجودی معتبر نیست.");
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 500;
-    const where = { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true };
+    const where = { businessId, branchId, catalogItem: { is: { isActive: true } }, trackInventory: true };
     if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
     const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
     const mapped = products.map((product) => ({ productId: product.id, name: product.catalogItem.name, sku: product.sku, unit: product.catalogItem.unit, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? null, averageCostRial: product.balances[0]?.averageCostRial.toString() ?? "0", valueRial: product.balances[0]?.inventoryValueRial.toString() ?? "0" }));
@@ -77,7 +77,7 @@ export class InventoryService {
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
     const date = this.date(dto.txnDate);
     if (new Set(dto.lines.map((line) => line.productId)).size !== dto.lines.length) throw new BadRequestException("یک کالا را در یک شمارش فقط یک‌بار وارد کنید.");
-    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
+    const products = await this.prisma.product.findMany({ where: { businessId, branchId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
     if (products.length !== dto.lines.length) throw new BadRequestException("یک یا چند کالا در این کسب‌وکار قابل شمارش نیست.");
     const quantities = dto.lines.map((line) => ({ productId: line.productId, counted: milli(line.countedQuantity) }));
     const row = await this.prisma.$transaction(async (tx) => {
@@ -100,7 +100,7 @@ export class InventoryService {
     if (!before) throw new NotFoundException("پیش‌نویس شمارش موجودی پیدا نشد.");
     const date = this.date(dto.txnDate);
     if (new Set(dto.lines.map((line) => line.productId)).size !== dto.lines.length) throw new BadRequestException("یک کالا را در یک شمارش فقط یک‌بار وارد کنید.");
-    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
+    const products = await this.prisma.product.findMany({ where: { businessId, branchId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
     if (products.length !== dto.lines.length) throw new BadRequestException("یک یا چند کالا در این کسب‌وکار قابل شمارش نیست.");
     const quantities = dto.lines.map((line) => ({ productId: line.productId, counted: milli(line.countedQuantity) }));
     return this.prisma.$transaction(async (tx) => {
@@ -108,7 +108,7 @@ export class InventoryService {
       if (!current) throw new ConflictException("وضعیت شمارش تغییر کرده است؛ فهرست را تازه کنید.");
       const balances = await tx.inventoryBalance.findMany({ where: { businessId, branchId, productId: { in: quantities.map((line) => line.productId) } }, select: { productId: true, quantityOnHand: true } });
       const currentByProduct = new Map(balances.map((balance) => [balance.productId, milli(balance.quantityOnHand.toString())]));
-      await tx.stockCountLine.deleteMany({ where: { businessId, stockCountId: id } });
+      await tx.stockCountLine.deleteMany({ where: { businessId, branchId, stockCountId: id } });
       const updated = await tx.stockCount.update({ where: { id }, data: {
         txnDate: date, reason: dto.reason.trim(),
         lines: { create: stockCountLineInputs(quantities, currentByProduct) },
