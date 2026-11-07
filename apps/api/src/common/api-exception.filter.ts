@@ -22,6 +22,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.join("؛ ") : status === HttpStatus.PAYLOAD_TOO_LARGE ? "حجم فایل پیوست نباید بیشتر از ۱۰ مگابایت باشد." : multerError && status === HttpStatus.BAD_REQUEST ? "ساختار فایل پیوست معتبر نیست." : messages[status] ?? "خطایی در پردازش درخواست رخ داد.";
     const stableCode = typeof declaredCode === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(declaredCode) ? declaredCode : undefined;
     const responseBody: Record<string, unknown> = { code: status === 500 ? "INTERNAL_ERROR" : stableCode ?? `HTTP_${status}`, message, requestId: request.requestId ?? null };
+    if ((status === 429 || status === 502 || status === 503) && body && typeof body === "object") {
+      for (const key of ["expiresAt", "resendAt"] as const) {
+        const value = (body as Record<string, unknown>)[key];
+        if (typeof value === "string" && Number.isFinite(Date.parse(value))) responseBody[key] = value;
+      }
+    }
     if (stableCode === "PRICE_CHANGED" && body && typeof body === "object") Object.assign(responseBody, safePriceChangeDetails(body as Record<string, unknown>));
     response.status(status).json(responseBody);
     if (status >= 500) process.stderr.write(JSON.stringify({ level: "error", requestId: request.requestId, path: request.path, method: request.method, status, error: safeErrorChain(exception) }) + "\n");

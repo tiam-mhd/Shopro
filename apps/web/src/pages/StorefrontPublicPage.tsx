@@ -1,9 +1,11 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, BadgeCheck, Clock3, CreditCard, Info, MapPin, Minus, PackageCheck, Phone, Plus, Search, ShoppingBag, Store, Truck, X } from "lucide-react";
+import { OtpCodeInput, OTP_CODE_LENGTH } from "../components/OtpCodeInput.js";
 import { ApiError, newOperationId, publicGet, publicPost, publicUpload } from "../lib/api.js";
 import { money } from "../lib/format.js";
+import { formatOtpCountdown, otpResendLabel, otpTimingFromError, useOtpCountdown } from "../lib/otp-countdown.js";
 import { StorefrontPublicFrame } from "./StorefrontPublicFrame.js";
 import "../storefront.css";
 
@@ -72,6 +74,8 @@ export function StorefrontPublicPage() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const codeExpiry = useOtpCountdown();
+  const resendCooldown = useOtpCountdown();
   const [checkoutToken, setCheckoutToken] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState<"PICKUP" | "LOCAL_DELIVERY">("PICKUP");
   const [address, setAddress] = useState("");
@@ -173,17 +177,20 @@ export function StorefrontPublicPage() {
   const sendOtp = async (event: FormEvent) => {
     event.preventDefault(); setError(""); setSuccess(""); setWorking(true);
     try {
-      await publicPost(`/public/stores/${encodeURIComponent(slug ?? "")}/otp/request`, { phone });
+      const timing = await publicPost<{ expiresAt: string; resendAt: string }>(`/public/stores/${encodeURIComponent(slug ?? "")}/otp/request`, { phone }); codeExpiry.startAt(timing.expiresAt); resendCooldown.startAt(timing.resendAt); setCode("");
+
+
       setOtpSent(true); setSuccess("اگر شماره معتبر باشد، کد تأیید برای آن ارسال می‌شود.");
-    } catch (cause) { setError(messageOf(cause)); }
+    } catch (cause) { const timing = otpTimingFromError(cause); if (timing) { codeExpiry.startAt(timing.expiresAt); resendCooldown.startAt(timing.resendAt); setOtpSent(true); if (cause instanceof ApiError && cause.status !== 429) setCode(""); } setError(messageOf(cause)); }
     finally { setWorking(false); }
   };
 
   const verifyPhone = async () => {
+    if (code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0) return;
     setError(""); setSuccess(""); setWorking(true);
     try {
       const result = await publicPost<{ checkoutToken: string; phone: string; expiresAt: string }>(`/public/stores/${encodeURIComponent(slug ?? "")}/otp/verify`, { phone, code });
-      setCheckoutToken(result.checkoutToken); setPhone(result.phone); setSuccess("شمارهٔ موبایل تأیید شد.");
+      setCheckoutToken(result.checkoutToken); setPhone(result.phone); setCode(""); codeExpiry.reset(); resendCooldown.reset(); setSuccess("شمارهٔ موبایل تأیید شد.");
     } catch (cause) { setError(messageOf(cause)); }
     finally { setWorking(false); }
   };
@@ -323,7 +330,7 @@ export function StorefrontPublicPage() {
       {cartOpen && <button type="button" className="sf-cart-backdrop" aria-label="بستن سبد خرید" onClick={() => setCartOpen(false)} />}
       <aside className={`sf-cart-panel ${cartOpen ? "is-open" : ""}`} aria-label="سبد خرید"><div className="sf-cart-title"><div><span className="sf-eyebrow">سبد خرید شما</span><h2>{cartLines.length ? `${cartLines.length} قلم کالا` : "سبد شما خالی است"}</h2></div><span className="sf-cart-icon"><ShoppingBag size={21} /></span><button className="sf-cart-close" type="button" aria-label="بستن سبد خرید" onClick={() => setCartOpen(false)}><X size={18} /></button></div>{cartLines.length ? <><div className="sf-cart-lines">{cartLines.map((line) => <div className="sf-cart-line" key={line.product.id}><div className="sf-cart-line-copy"><strong>{line.product.title}</strong><small>{line.quantity} {line.product.unit}</small><div className="sf-quantity sf-cart-quantity"><button type="button" aria-label={`کاهش ${line.product.title}`} onClick={() => removeProduct(line.product)}><Minus size={12} /></button><span>{line.quantity}</span><button type="button" aria-label={`افزایش ${line.product.title}`} disabled={!line.product.available} onClick={() => addProduct(line.product)}><Plus size={12} /></button></div></div><b>{money(extendedRial(line.quantity, line.product.unitPriceRial).toString())}</b><button type="button" className="sf-remove-line" aria-label={`حذف ${line.product.title}`} onClick={() => changeQuantity(line.product, "0")}><X size={15} /></button></div>)}</div><Totals subtotal={subtotal.toString()} tax={tax.toString()} delivery={deliveryFee.toString()} total={total.toString()} />{store.acceptsPickup && store.acceptsLocalDelivery && <label className="sf-delivery-choice">روش دریافت<select value={deliveryMethod} onChange={(event) => updateDelivery(event.target.value as "PICKUP" | "LOCAL_DELIVERY")}><option value="PICKUP">تحویل حضوری</option><option value="LOCAL_DELIVERY">ارسال محلی</option></select></label>}<button type="button" className="sf-button sf-primary sf-wide" disabled={!store.acceptingOrders} onClick={() => { setCartOpen(false); setStep("checkout"); }}>ادامه و ثبت سفارش<ArrowLeft size={17} /></button></> : <div className="sf-cart-empty"><span className="sf-empty-icon"><ShoppingBag size={22} /></span><p>با انتخاب کالا، جمع سفارش و هزینهٔ ارسال اینجا نمایش داده می‌شود.</p></div>}</aside></div>
       {cartLines.length > 0 && <button className="sf-mobile-cart-trigger" type="button" onClick={() => setCartOpen(true)}><span><ShoppingBag size={18} /><b>{cartLines.length}</b></span><strong>مشاهدهٔ سبد خرید</strong><b>{money(total.toString())}</b></button>}
-    </> : <section className="sf-card sf-checkout"><button type="button" className="sf-back-button" onClick={() => setStep("browse")}><ArrowRight size={16} />بازگشت به فروشگاه</button><div className="sf-checkout-grid"><div className="sf-checkout-details"><span className="sf-eyebrow">تکمیل سفارش</span><h2>اطلاعات تحویل و مشتری</h2><form onSubmit={(event) => void sendOtp(event)} className="sf-form-grid"><label>نام و نام خانوادگی<input required minLength={2} maxLength={120} autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label><label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => { setPhone(event.target.value); setCheckoutToken(""); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label><button className="sf-button sf-secondary sf-send-otp" disabled={working}>{working ? "در حال ارسال…" : otpSent ? "ارسال دوبارهٔ کد" : "دریافت کد تأیید"}</button></form>{otpSent && !checkoutToken && <div className="sf-otp-row"><label>کد پیامک‌شده<input dir="ltr" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value)} maxLength={8} /></label><button type="button" className="sf-button sf-primary" disabled={working || code.length < 4} onClick={() => void verifyPhone()}>تأیید شماره</button></div>}{checkoutToken && <div className="sf-alert sf-alert-success"><BadgeCheck size={17} />شمارهٔ موبایل تأیید شده است.</div>}
+    </> : <section className="sf-card sf-checkout"><button type="button" className="sf-back-button" onClick={() => setStep("browse")}><ArrowRight size={16} />بازگشت به فروشگاه</button><div className="sf-checkout-grid"><div className="sf-checkout-details"><span className="sf-eyebrow">تکمیل سفارش</span><h2>اطلاعات تحویل و مشتری</h2><form onSubmit={(event) => void sendOtp(event)} className="sf-form-grid"><label>نام و نام خانوادگی<input required minLength={2} maxLength={120} autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label><label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => { setPhone(event.target.value); setCheckoutToken(""); setOtpSent(false); setCode(""); codeExpiry.reset(); resendCooldown.reset(); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label><button className="sf-button sf-secondary sf-send-otp" disabled={working || Boolean(checkoutToken) || (otpSent && resendCooldown.remaining !== null && resendCooldown.remaining > 0)}>{working ? "در حال ارسال…" : checkoutToken ? "شماره تأیید شد" : otpSent ? otpResendLabel("ارسال دوبارهٔ کد", resendCooldown.remaining) : "دریافت کد تأیید"}</button></form>{otpSent && !checkoutToken && <div className="sf-otp-row"><label>کد پیامک‌شده<OtpCodeInput id="checkout-otp" label="کد پیامک‌شده" value={code} onChange={setCode} length={OTP_CODE_LENGTH} disabled={working || codeExpiry.remaining === 0} /></label>{codeExpiry.remaining !== null && <p className="sf-otp-expiry" role={codeExpiry.remaining === 0 ? "status" : undefined} aria-live={codeExpiry.remaining === 0 ? "polite" : "off"}>{codeExpiry.remaining === 0 ? "مهلت استفاده از این کد تمام شده است." : <>اعتبار کد: <bdi dir="ltr">{formatOtpCountdown(codeExpiry.remaining)}</bdi></>}</p>}<button type="button" className="sf-button sf-primary" disabled={working || code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0} onClick={() => void verifyPhone()}>تأیید شماره</button></div>}{checkoutToken && <div className="sf-alert sf-alert-success"><BadgeCheck size={17} />شمارهٔ موبایل تأیید شده است.</div>}
       <div className="sf-delivery-section"><div className="sf-section-head"><div><span className="sf-eyebrow">مرحلهٔ تحویل</span><h3>روش دریافت سفارش را انتخاب کنید</h3></div></div><div className="sf-delivery-cards">{store.acceptsPickup && <button type="button" className={deliveryMethod === "PICKUP" ? "selected" : ""} onClick={() => updateDelivery("PICKUP")}><Store size={20} /><span><strong>تحویل حضوری</strong><small>دریافت از فروشگاه</small></span><b>بدون هزینهٔ ارسال</b></button>}{store.acceptsLocalDelivery && <button type="button" className={deliveryMethod === "LOCAL_DELIVERY" ? "selected" : ""} onClick={() => updateDelivery("LOCAL_DELIVERY")}><Truck size={20} /><span><strong>ارسال محلی</strong><small>تحویل در نشانی شما</small></span><b>{money(store.deliveryFeeRial)}</b></button>}</div></div>
       <div className="sf-delivery-form">{deliveryMethod === "LOCAL_DELIVERY" && <label className="sf-span-all">نشانی دقیق تحویل<textarea required minLength={5} maxLength={500} autoComplete="street-address" value={address} onChange={(event) => setAddress(event.target.value)} rows={3} /></label>}<label className="sf-span-all">توضیحات سفارش (اختیاری)<textarea maxLength={500} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} rows={2} /></label></div>
       {checkoutToken && <p className="sf-footnote sf-privacy-note"><BadgeCheck size={15} />شمارهٔ موبایل فقط برای تأیید هویت و پیگیری سفارش‌های همین فروشگاه استفاده می‌شود.</p>}

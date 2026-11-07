@@ -3,8 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, CircleDollarSign, CreditCard, KeyRound, LogOut, PackageCheck, RefreshCw, Search, Shield, ShieldAlert } from "lucide-react";
 import type { CursorPage } from "@shopro/contracts";
 import { BrandLogo } from "../components/BrandLogo.js";
+import { OtpCodeInput, OTP_CODE_LENGTH } from "../components/OtpCodeInput.js";
 import { ApiError, adminApi, get } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
+import { formatOtpCountdown, otpResendLabel, otpTimingFromError, useOtpCountdown } from "../lib/otp-countdown.js";
 import { InlineError, LoadingBlock } from "../App.js";
 import { Modal } from "../components/Modal.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
@@ -27,16 +29,22 @@ export function SystemAdminSubscriptionsApp() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const codeExpiry = useOtpCountdown();
+  const resendCooldown = useOtpCountdown();
+  const applyTiming = (timing: { expiresAt: string; resendAt: string }) => {
+    codeExpiry.startAt(timing.expiresAt);
+    resendCooldown.startAt(timing.resendAt);
+  };
 
   useEffect(() => { if (session.isError && session.error instanceof ApiError && session.error.status === 401) setMessage(""); }, [session.isError, session.error]);
   const requestCode = async () => {
     setBusy(true); setError("");
-    try { const result = await adminApi<{ message: string }>("/system-admin/auth/otp/request", { method: "POST", body: JSON.stringify({ phone }) }); setSent(true); setMessage(result.message); }
-    catch (cause) { setError(errorText(cause)); }
+    try { const result = await adminApi<{ message: string; expiresAt: string; resendAt: string }>("/system-admin/auth/otp/request", { method: "POST", body: JSON.stringify({ phone }) }); applyTiming(result); setCode(""); setSent(true); setMessage(result.message); }
+    catch (cause) { const timing = otpTimingFromError(cause); if (timing) { applyTiming(timing); setSent(true); if (cause instanceof ApiError && cause.status !== 429) setCode(""); } setError(errorText(cause)); }
     finally { setBusy(false); }
   };
   const verify = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); if (code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0) return; setBusy(true); setError("");
     try { await adminApi("/system-admin/auth/otp/verify", { method: "POST", body: JSON.stringify({ phone, code }) }); await client.invalidateQueries({ queryKey: ["system-admin-session"] }); await session.refetch(); }
     catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); }
@@ -50,7 +58,7 @@ export function SystemAdminSubscriptionsApp() {
 
   if (session.isPending) return <AdminState><LoadingBlock /></AdminState>;
   if (session.isError && !(session.error instanceof ApiError && session.error.status === 401)) return <AdminState><InlineError error={session.error} retry={() => void session.refetch()} /></AdminState>;
-  if (session.isError || !session.data) return <AdminLogin phone={phone} setPhone={setPhone} code={code} setCode={setCode} sent={sent} setSent={setSent} busy={busy} error={error} message={message} onRequest={() => void requestCode()} onVerify={(event) => void verify(event)} />;
+  if (session.isError || !session.data) return <AdminLogin phone={phone} setPhone={setPhone} code={code} setCode={setCode} sent={sent} busy={busy} error={error} message={message} expiresIn={codeExpiry.remaining} resendIn={resendCooldown.remaining} onRequest={() => void requestCode()} onVerify={(event) => void verify(event)} onChangePhone={() => { setSent(false); setCode(""); setError(""); setMessage(""); codeExpiry.reset(); resendCooldown.reset(); }} />;
 
   const csrf = session.data.csrfToken ?? undefined;
   return <main className="system-admin-page" dir="rtl">
@@ -72,8 +80,8 @@ export function SystemAdminSubscriptionsApp() {
   </main>;
 }
 
-function AdminLogin({ phone, setPhone, code, setCode, sent, setSent, busy, error, message, onRequest, onVerify }: { phone: string; setPhone: (value: string) => void; code: string; setCode: (value: string) => void; sent: boolean; setSent: (value: boolean) => void; busy: boolean; error: string; message: string; onRequest: () => void; onVerify: (event: FormEvent) => void }) {
-  return <main className="admin-login-page" dir="rtl"><section className="admin-login-card"><BrandLogo className="admin-login-logo" alt="لوگوی شاپرو" /><span className="eyebrow">ورود جداگانهٔ مدیر سامانه</span><h1>مدیریت مرکزی اشتراک</h1><p>کد یک‌بارمصرف برای مدیر فعال ارسال می‌شود.</p>{!sent ? <form onSubmit={(event) => { event.preventDefault(); onRequest(); }}><label className="field"><span className="field-label">شمارهٔ موبایل مدیر</span><input autoComplete="tel" inputMode="tel" dir="ltr" value={phone} onChange={(event) => setPhone(event.target.value)} required /></label><button className="button button-primary full" disabled={busy}>{busy ? "در حال ارسال…" : "ارسال کد ورود"}</button></form> : <form onSubmit={onVerify}><label className="field"><span className="field-label">کد یک‌بارمصرف</span><input autoFocus autoComplete="one-time-code" inputMode="numeric" dir="ltr" value={code} onChange={(event) => setCode(event.target.value)} required /></label><button className="button button-primary full" disabled={busy}>{busy ? "در حال بررسی…" : "تأیید و ورود"}</button><button className="button button-text full" type="button" disabled={busy} onClick={() => { setSent(false); setCode(""); }}>تغییر شماره</button></form>}{message && <p className="notice notice-success">{message}</p>}{error && <p className="notice notice-error" role="alert">{error}</p>}<small><KeyRound size={14} />نشست مدیر سامانه از نشست کاربران کسب‌وکار جداست.</small></section></main>;
+function AdminLogin({ phone, setPhone, code, setCode, sent, busy, error, message, expiresIn, resendIn, onRequest, onVerify, onChangePhone }: { phone: string; setPhone: (value: string) => void; code: string; setCode: (value: string) => void; sent: boolean; busy: boolean; error: string; message: string; expiresIn: number | null; resendIn: number | null; onRequest: () => void; onVerify: (event: FormEvent) => void; onChangePhone: () => void }) {
+  return <main className="admin-login-page" dir="rtl"><section className="admin-login-card"><BrandLogo className="admin-login-logo" alt="لوگوی شاپرو" /><span className="eyebrow">ورود جداگانهٔ مدیر سامانه</span><h1>مدیریت مرکزی اشتراک</h1><p>کد یک‌بارمصرف برای مدیر فعال ارسال می‌شود.</p>{!sent ? <form onSubmit={(event) => { event.preventDefault(); onRequest(); }}><label className="field"><span className="field-label">شمارهٔ موبایل مدیر</span><input autoComplete="tel" inputMode="tel" dir="ltr" value={phone} onChange={(event) => setPhone(event.target.value)} required /></label><button className="button button-primary full" disabled={busy}>{busy ? "در حال ارسال…" : "ارسال کد ورود"}</button></form> : <form onSubmit={onVerify}><label className="field"><span className="field-label">کد یک‌بارمصرف</span><OtpCodeInput id="admin-otp" label="کد یک‌بارمصرف مدیر" value={code} onChange={setCode} length={OTP_CODE_LENGTH} autoFocus disabled={busy || expiresIn === 0} /></label>{expiresIn !== null && <p className="otp-expiry-countdown" role={expiresIn === 0 ? "status" : undefined} aria-live={expiresIn === 0 ? "polite" : "off"}>{expiresIn === 0 ? "مهلت استفاده از این کد تمام شده است." : <>اعتبار کد: <bdi dir="ltr">{formatOtpCountdown(expiresIn)}</bdi></>}</p>}<button className="button button-primary full" disabled={busy || code.length !== OTP_CODE_LENGTH || expiresIn === 0}>{busy ? "در حال بررسی…" : "تأیید و ورود"}</button><button className="button button-text full" type="button" disabled={busy} onClick={onChangePhone}>تغییر شماره</button><button className="button button-text full" type="button" disabled={busy || (resendIn !== null && resendIn > 0)} onClick={onRequest}>{otpResendLabel("ارسال دوبارهٔ کد", resendIn)}</button></form>}{message && <p className="notice notice-success">{message}</p>}{error && <p className="notice notice-error" role="alert">{error}</p>}<small><KeyRound size={14} />نشست مدیر سامانه از نشست کاربران کسب‌وکار جداست.</small></section></main>;
 }
 
 function BranchesAdminTab({ csrf }: { csrf?: string }) {

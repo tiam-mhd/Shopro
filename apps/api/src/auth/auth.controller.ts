@@ -15,8 +15,8 @@ export class AuthController {
 
   @Public() @Post("otp/request") @HttpCode(HttpStatus.OK)
   async requestOtp(@Body() body: RequestOtpDto, @Req() request: AppRequest) {
-    await this.auth.requestOtp(body.phone, "USER_LOGIN", request.ip, request.requestId);
-    return { ok: true, message: "اگر شماره معتبر باشد، کد ورود ارسال می‌شود." };
+    const timing = await this.auth.requestOtp(body.phone, "USER_LOGIN", request.ip, request.requestId);
+    return { ok: true, message: "اگر شماره معتبر باشد، کد ورود ارسال می‌شود.", ...timing };
   }
 
   @Public() @Post("otp/verify") @HttpCode(HttpStatus.OK)

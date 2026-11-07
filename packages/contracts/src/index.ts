@@ -1,5 +1,6 @@
 export type DisplayCurrency = "IRR" | "IRT";
 export type MemberRole = "OWNER" | "MANAGER" | "ACCOUNTANT" | "CASHIER" | "VIEWER";
+export const OTP_CODE_LENGTH: 4 | 5 | 6 | 7 | 8 = 6;
 
 export interface CursorPage<T> {
   items: T[];

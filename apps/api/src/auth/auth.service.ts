@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable } from "@nestjs/common";
 import { createHmac, createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import { toAsciiDigits } from "@shopro/contracts";
+import { OTP_CODE_LENGTH, toAsciiDigits } from "@shopro/contracts";
 import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ParsgreenService } from "./parsgreen.service.js";
@@ -21,37 +21,59 @@ const normalizePhone = (value: string) => {
 export class AuthService {
   constructor(private readonly prisma: PrismaService, private readonly parsgreen: ParsgreenService) {}
 
-  async requestOtp(input: string, audience: OtpAudience, ipAddress?: string, requestId?: string): Promise<void> {
+  async requestOtp(input: string, audience: OtpAudience, ipAddress?: string, requestId?: string): Promise<{ expiresAt: string; resendAt: string }> {
     const phone = normalizePhone(input);
     if (audience === "ADMIN_LOGIN") {
       const admin = await this.prisma.systemAdmin.findUnique({ where: { phone }, select: { isActive: true } });
-      if (!admin?.isActive) return;
+      if (!admin?.isActive) {
+        const inactiveAt = new Date();
+        return {
+          expiresAt: new Date(inactiveAt.getTime() + Number(process.env.OTP_TTL_SECONDS ?? 180) * 1000).toISOString(),
+          resendAt: new Date(inactiveAt.getTime() + Number(process.env.OTP_RESEND_SECONDS ?? 60) * 1000).toISOString(),
+        };
+      }
     }
     const purpose = audience;
     const now = new Date();
-    const ipHash = ipAddress ? this.digest(`ip:${ipAddress}`) : null;
-    const code = randomInt(100000, 1000000).toString();
     const ttl = Number(process.env.OTP_TTL_SECONDS ?? 180);
+    const resendSeconds = Number(process.env.OTP_RESEND_SECONDS ?? 60);
+    let expiresAt = new Date(now.getTime() + ttl * 1000);
+    let resendAt = new Date(now.getTime() + resendSeconds * 1000);
+    const ipHash = ipAddress ? this.digest(`ip:${ipAddress}`) : null;
+    const code = randomInt(0, 10 ** OTP_CODE_LENGTH).toString().padStart(OTP_CODE_LENGTH, "0");
     await this.prisma.$transaction(async (tx) => {
       const lockKeys = [`otp:phone:${purpose}:${phone}`, ...(ipHash ? [`otp:ip:${purpose}:${ipHash}`] : [])].sort();
       for (const lockKey of lockKeys) await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
       const expiredBefore = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       await tx.otpChallenge.deleteMany({ where: { OR: [{ expiresAt: { lt: expiredBefore } }, { consumedAt: { lt: expiredBefore } }] } });
       const recent = await tx.otpChallenge.findFirst({
-        where: { phone, purpose, createdAt: { gte: new Date(now.getTime() - Number(process.env.OTP_RESEND_SECONDS ?? 60) * 1000) } },
-        select: { id: true },
+        where: { phone, purpose, createdAt: { gte: new Date(now.getTime() - resendSeconds * 1000) } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, createdAt: true, expiresAt: true },
       });
-      if (recent) throw new HttpException("برای دریافت کد تازه کمی صبر کنید.", HttpStatus.TOO_MANY_REQUESTS);
+      if (recent) throw new HttpException({ message: "برای دریافت کد تازه کمی صبر کنید.", expiresAt: recent.expiresAt.toISOString(), resendAt: new Date(recent.createdAt.getTime() + resendSeconds * 1000).toISOString() }, HttpStatus.TOO_MANY_REQUESTS);
       const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       const limit = Number(process.env.OTP_MAX_PER_PHONE_HOUR ?? 5);
       const phoneCount = await tx.otpChallenge.count({ where: { phone, purpose, createdAt: { gte: hourAgo } } });
       const ipCount = ipHash ? await tx.otpChallenge.count({ where: { purpose, requestIpHash: ipHash, createdAt: { gte: new Date(now.getTime() - 60 * 1000) } } }) : 0;
       if (phoneCount >= limit || ipCount >= 10) throw new HttpException("تعداد درخواست کد بیش از حد مجاز است.", HttpStatus.TOO_MANY_REQUESTS);
-      await tx.otpChallenge.create({
-        data: { phone, purpose, codeHash: this.digest(`otp:${purpose}:${phone}:${code}`), expiresAt: new Date(now.getTime() + ttl * 1000), requestIpHash: ipHash },
+      const challenge = await tx.otpChallenge.create({
+        data: { phone, purpose, codeHash: this.digest(`otp:${purpose}:${phone}:${code}`), expiresAt, requestIpHash: ipHash },
       });
+      expiresAt = challenge.expiresAt;
+      resendAt = new Date(challenge.createdAt.getTime() + resendSeconds * 1000);
     });
-    await this.parsgreen.sendOtp(phone, code, requestId);
+    try {
+      await this.parsgreen.sendOtp(phone, code, requestId);
+    } catch (cause) {
+      if (cause instanceof HttpException) {
+        const response = cause.getResponse();
+        const message = typeof response === "string" ? response : response && typeof response === "object" && "message" in response ? (response as { message: unknown }).message : cause.message;
+        throw new HttpException({ message, expiresAt: expiresAt.toISOString(), resendAt: resendAt.toISOString() }, cause.getStatus());
+      }
+      throw cause;
+    }
+    return { expiresAt: expiresAt.toISOString(), resendAt: resendAt.toISOString() };
   }
 
   async verifyUserOtp(inputPhone: string, inputCode: string): Promise<{ user: SafeUser; sessionId: string; rawSession: string; rawCsrf: string; expiresAt: Date }> {

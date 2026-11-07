@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, BadgeCheck, LogOut, RefreshCw, ShoppingBag, UserRound } from "lucide-react";
+import { OtpCodeInput, OTP_CODE_LENGTH } from "../components/OtpCodeInput.js";
 import { ApiError, storefrontCustomerGet, storefrontCustomerPost } from "../lib/api.js";
 import { money } from "../lib/format.js";
+import { formatOtpCountdown, otpResendLabel, otpTimingFromError, useOtpCountdown } from "../lib/otp-countdown.js";
 import { StorefrontPublicFrame } from "./StorefrontPublicFrame.js";
 import "../storefront.css";
 
@@ -58,6 +60,12 @@ function CustomerAccount({ slug }: { slug: string }) {
   const [otpSent, setOtpSent] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const codeExpiry = useOtpCountdown();
+  const resendCooldown = useOtpCountdown();
+  const applyTiming = (timing: { expiresAt: string; resendAt: string }) => {
+    codeExpiry.startAt(timing.expiresAt);
+    resendCooldown.startAt(timing.resendAt);
+  };
 
   useEffect(() => {
     if (!customerToken) {
@@ -84,18 +92,20 @@ function CustomerAccount({ slug }: { slug: string }) {
   const requestOtp = async (event: FormEvent) => {
     event.preventDefault(); setError(""); setSuccess(""); setWorking(true);
     try {
-      await storefrontCustomerPost(`${basePath}/otp/request`, { phone });
+      const timing = await storefrontCustomerPost<{ expiresAt: string; resendAt: string }>(`${basePath}/otp/request`, { phone }); applyTiming(timing); setCode("");
+
+
       setOtpSent(true); setSuccess("اگر شماره معتبر باشد، کد ورود برای آن ارسال می‌شود.");
-    } catch (cause) { setError(messageOf(cause)); }
+    } catch (cause) { const timing = otpTimingFromError(cause); if (timing) { applyTiming(timing); setOtpSent(true); if (cause instanceof ApiError && cause.status !== 429) setCode(""); } setError(messageOf(cause)); }
     finally { setWorking(false); }
   };
 
   const verifyOtp = async (event: FormEvent) => {
-    event.preventDefault(); setError(""); setSuccess(""); setWorking(true);
+    event.preventDefault(); if (code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0) return; setError(""); setSuccess(""); setWorking(true);
     try {
       const result = await storefrontCustomerPost<{ customerToken: string; phone: string }>(`${basePath}/otp/verify`, { phone, code });
       sessionStorage.setItem(storageKey, result.customerToken);
-      setPhone(result.phone); setCode(""); setOtpSent(false); setCustomerToken(result.customerToken);
+      setPhone(result.phone); setCode(""); setOtpSent(false); codeExpiry.reset(); resendCooldown.reset(); setCustomerToken(result.customerToken);
       setSuccess("وارد حساب مشتری شدید.");
     } catch (cause) { setError(messageOf(cause)); }
     finally { setWorking(false); }
@@ -140,13 +150,14 @@ function CustomerAccount({ slug }: { slug: string }) {
       {!customerToken ? <section className="sf-card sf-section sf-customer-login">
         <div className="sf-customer-login-heading"><span className="sf-customer-step">۱</span><div><h2>ورود امن با شمارهٔ موبایل</h2><p>کد تأیید فقط به شمارهٔ شما ارسال می‌شود.</p></div></div>
         <form className="sf-customer-login-form" onSubmit={(event) => void requestOtp(event)}>
-          <label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" minLength={8} maxLength={16} value={phone} onChange={(event) => { setPhone(event.target.value); setOtpSent(false); setCode(""); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label>
-          <button className="sf-button sf-primary" disabled={working}>{working ? "در حال ارسال…" : otpSent ? "ارسال دوبارهٔ کد" : "دریافت کد ورود"}</button>
+          <label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" minLength={8} maxLength={16} value={phone} onChange={(event) => { setPhone(event.target.value); setOtpSent(false); setCode(""); codeExpiry.reset(); resendCooldown.reset(); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label>
+          <button className="sf-button sf-primary" disabled={working || (otpSent && resendCooldown.remaining !== null && resendCooldown.remaining > 0)}>{working ? "در حال ارسال…" : otpSent ? otpResendLabel("ارسال دوبارهٔ کد", resendCooldown.remaining) : "دریافت کد ورود"}</button>
         </form>
         {otpSent && <form className="sf-customer-verify" onSubmit={(event) => void verifyOtp(event)}>
           <div className="sf-customer-login-heading"><span className="sf-customer-step">۲</span><div><h2>کد تأیید را وارد کنید</h2><p>کد ارسال‌شده به شمارهٔ {phone} را وارد کنید.</p></div></div>
-          <label>کد یک‌بارمصرف<input required dir="ltr" inputMode="numeric" autoComplete="one-time-code" minLength={4} maxLength={8} value={code} onChange={(event) => setCode(event.target.value)} /></label>
-          <button className="sf-button sf-primary" disabled={working || code.length < 4}>{working ? "در حال بررسی…" : "تأیید و ورود"}</button>
+          <label>کد یک‌بارمصرف<OtpCodeInput id="store-customer-otp" label="کد یک‌بارمصرف" value={code} onChange={setCode} length={OTP_CODE_LENGTH} autoFocus disabled={working || codeExpiry.remaining === 0} /></label>
+          {codeExpiry.remaining !== null && <p className="sf-otp-expiry" role={codeExpiry.remaining === 0 ? "status" : undefined} aria-live={codeExpiry.remaining === 0 ? "polite" : "off"}>{codeExpiry.remaining === 0 ? "مهلت استفاده از این کد تمام شده است." : <>اعتبار کد: <bdi dir="ltr">{formatOtpCountdown(codeExpiry.remaining)}</bdi></>}</p>}
+          <button className="sf-button sf-primary" disabled={working || code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0}>{working ? "در حال بررسی…" : "تأیید و ورود"}</button>
         </form>}
         <p className="sf-customer-privacy"><BadgeCheck size={16} /> کد فقط برای تأیید شماره و دسترسی به سفارش‌های همین فروشگاه استفاده می‌شود.</p>
       </section> : loading ? <section className="sf-card sf-state" role="status">در حال دریافت اطلاعات حساب و سفارش‌ها…</section> : <>
