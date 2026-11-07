@@ -76,6 +76,8 @@ function onboardingState(state) {
     resultViewedByCurrentUser: state.resultViewed,
     firstDocument: state.firstDocument,
     productCount: state.product ? 1 : 0,
+    serviceCount: 0,
+    catalogCount: state.product ? 1 : 0,
     steps,
     activationComplete: Boolean(state.firstDocument && state.resultViewed),
     openingBalancesSupported: false,
@@ -192,11 +194,11 @@ const injectedAutomation = `
     setValue(document.querySelector("#onboarding-product-name"), "کالای آزمایشی");
     await waitFor(() => document.querySelector("#onboarding-product-unit")?.value, "default product unit");
     setValue(document.querySelector("#onboarding-sale-price"), "مبلغ نامعتبر");
-    await clickButton("افزودن کالا یا خدمت");
+    await clickButton("افزودن کالا");
     await waitFor(() => document.querySelector("#onboarding-sale-price-error")?.textContent.includes("مبلغ"), "inline sale price validation");
     if ((await getState()).product) throw new Error("invalid product price reached the API");
     setValue(document.querySelector("#onboarding-sale-price"), "۱۲۳۴٫۵");
-    await clickButton("افزودن کالا یا خدمت");
+    await clickButton("افزودن کالا");
     await waitFor(async () => (await getState()).product?.name === "کالای آزمایشی", "product creation");
     const saleLink = await waitFor(() => links().find((link) => link.textContent.includes("ثبت اولین فروش")), "role-appropriate sale action");
     saleLink.click();
@@ -340,7 +342,7 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname === "/api/v1/products" && method === "POST") {
       const body = await readBody(request);
-      state.product = { id: "product-owner", name: body.name, salePriceRial: body.salePriceRial, defaultCostRial: body.defaultCostRial ?? null, kind: body.kind, unitId: body.unitId };
+      state.product = { id: "product-owner", name: body.name, salePriceRial: body.salePriceRial, defaultCostRial: body.defaultCostRial ?? null, kind: "STOCK", unitId: body.unitId };
       sendJson(response, 201, state.product); return;
     }
     if (url.pathname.startsWith("/api/v1/products?") && method === "GET") { sendJson(response, 200, { items: state.product ? [{ ...state.product, unit: { id: "unit-piece", labelFa: "عدد", precision: 0 }, taxRateBasisPoints: 0, quantityOnHand: "0", trackInventory: true }] : [], hasMore: false, nextCursor: null }); return; }

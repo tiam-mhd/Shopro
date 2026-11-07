@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, BadgeCheck, Boxes, CreditCard, UsersRound } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Boxes, BriefcaseBusiness, CreditCard, PackagePlus, UsersRound } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BusinessSummary, MemberRole } from "@shopro/contracts";
@@ -25,6 +25,8 @@ type OnboardingStatus = {
   resultViewedByCurrentUser: boolean;
   firstDocument: { id: string; type: string; reference: string | null; date: string; href: string } | null;
   productCount: number;
+  serviceCount: number;
+  catalogCount: number;
   steps: OnboardingStep[];
   activationComplete: boolean;
   openingBalancesSupported: false;
@@ -219,9 +221,10 @@ export function OnboardingWorkspacePage({ business, branchId, online }: { busine
 
     <section className="card onboarding-step-card">
       <StepHeading number="۳" title="کالا یا خدمت" status={productStep.status} />
-      <p>نام و قیمت فروش را وارد کنید. بهای خرید با قیمت فروش فرق دارد و برای محاسبهٔ سود و ارزش موجودی استفاده می‌شود.</p>
-      {status.productCount > 0 && <p className="notice notice-success" role="status">{faNumber(status.productCount)} کالا یا خدمت واقعی در این کسب‌وکار ثبت شده است.</p>}
-      {status.role === "OWNER" || status.role === "MANAGER" || status.role === "ACCOUNTANT" ? status.productCount === 0 && productStep.status !== "SKIPPED" ? <QuickProductForm currency={status.business.displayCurrency} units={unitsQuery.data ?? []} online={online} unitsError={unitsQuery.isError ? messageOf(unitsQuery.error) : ""} onCreated={async () => { await client.invalidateQueries({ queryKey: ["onboarding", business.id] }); }} /> : null : <p className="muted">ساخت کالا برای نقش شما مجاز نیست؛ فروش را از کالاهای آمادهٔ شعبه انجام دهید.</p>}
+      <p>کالاها و خدمات از اینجا جداگانه مدیریت می‌شوند. برای شروع سریع، می‌توانید یک کالا را ثبت کنید یا مستقیم به مدیریت خدمات بروید.</p>
+      {status.catalogCount > 0 && <p className="notice notice-success" role="status">{faNumber(status.catalogCount)} کالا و خدمت واقعی در این کسب‌وکار ثبت شده است.</p>}
+      {status.role === "OWNER" || status.role === "MANAGER" || status.role === "ACCOUNTANT" ? status.catalogCount === 0 && productStep.status !== "SKIPPED" ? <QuickProductForm currency={status.business.displayCurrency} units={unitsQuery.data ?? []} online={online} unitsError={unitsQuery.isError ? messageOf(unitsQuery.error) : ""} onCreated={async () => { await client.invalidateQueries({ queryKey: ["onboarding", business.id] }); }} /> : null : <p className="muted">مدیریت کالا و خدمت برای نقش شما مجاز نیست؛ فروش را از اقلام آمادهٔ شعبه انجام دهید.</p>}
+      {status.role === "OWNER" || status.role === "MANAGER" || status.role === "ACCOUNTANT" ? <div className="onboarding-catalog-actions"><Link className="button button-secondary" to="/app/products"><PackagePlus size={16} />مدیریت کالاها <small>({faNumber(status.productCount)})</small></Link><Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />مدیریت خدمات <small>({faNumber(status.serviceCount)})</small></Link></div> : null}
       {productStep.status === "SKIPPED" ? <StepAction step={productStep} busy={Boolean(busyAction)} onClick={() => void openStep(productStep)} /> : productStep.status !== "DONE" && (status.role === "OWNER" || status.role === "MANAGER" || status.role === "ACCOUNTANT") && <button className="button button-text" type="button" disabled={!online || Boolean(busyAction)} onClick={() => void skipStep("product")}>بدون افزودن کالا ادامه می‌دهم</button>}
       {status.productCount > 0 && <Link className="button button-secondary" to="/app/inventory"><Boxes size={16} />ثبت موجودی واقعی در شمارش انبار</Link>}
     </section>
@@ -254,7 +257,6 @@ export function OnboardingWorkspacePage({ business, branchId, online }: { busine
 
 function QuickProductForm({ currency, units, online, unitsError, onCreated }: { currency: "IRR" | "IRT"; units: Unit[]; online: boolean; unitsError: string; onCreated: () => Promise<void> }) {
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"STOCK" | "SERVICE">("STOCK");
   const [unitId, setUnitId] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [cost, setCost] = useState("");
@@ -266,8 +268,8 @@ function QuickProductForm({ currency, units, online, unitsError, onCreated }: { 
     event.preventDefault();
     setError("");
     const nextErrors: Record<string, string> = {};
-    if (!name.trim()) nextErrors.name = "نام کالا یا خدمت را وارد کنید.";
-    if (name.trim().length > 160) nextErrors.name = "نام کالا یا خدمت حداکثر ۱۶۰ کاراکتر است.";
+    if (!name.trim()) nextErrors.name = "نام کالا را وارد کنید.";
+    if (name.trim().length > 160) nextErrors.name = "نام کالا حداکثر ۱۶۰ کاراکتر است.";
     if (!unitId) nextErrors.unit = "واحد را انتخاب کنید.";
     if (!salePrice.trim()) nextErrors.salePrice = "قیمت فروش را وارد کنید.";
     let salePriceRial: string | undefined;
@@ -289,7 +291,7 @@ function QuickProductForm({ currency, units, online, unitsError, onCreated }: { 
     if (!online) { setError("برای ثبت کالا باید به اینترنت وصل باشید. فرم فعلی پاک نشده است."); return; }
     setSaving(true);
     try {
-      await post("/products", { name: name.trim(), kind, unitId, salePriceRial: salePriceRial!, ...(defaultCostRial ? { defaultCostRial } : {}) });
+      await post("/products", { name: name.trim(), unitId, salePriceRial: salePriceRial!, ...(defaultCostRial ? { defaultCostRial } : {}) });
       trackOnboardingEvent("product_created", "product");
       setName(""); setSalePrice(""); setCost("");
       await onCreated();
@@ -297,12 +299,12 @@ function QuickProductForm({ currency, units, online, unitsError, onCreated }: { 
     finally { setSaving(false); }
   };
   return <form className="onboarding-product-form" onSubmit={(event) => void submit(event)}>
-    <Field id="onboarding-product-name" label="نام کالا یا خدمت" value={name} onChange={(value) => { setName(value); setFieldErrors((errors) => ({ ...errors, name: "" })); }} error={fieldErrors.name} required placeholder="مثلاً دفتر یا تعمیر" />
-    <div className="form-grid"><label className="field"><span className="field-label">نوع</span><select value={kind} onChange={(event) => setKind(event.target.value as "STOCK" | "SERVICE")}><option value="STOCK">کالای انبارشونده</option><option value="SERVICE">خدمت</option></select></label><label className="field" htmlFor="onboarding-product-unit"><span className="field-label">واحد <i>*</i></span><select id="onboarding-product-unit" value={unitId} onChange={(event) => { setUnitId(event.target.value); setFieldErrors((errors) => ({ ...errors, unit: "" })); }} required aria-invalid={fieldErrors.unit ? true : undefined} aria-describedby={fieldErrors.unit ? "onboarding-product-unit-error" : undefined}><option value="">انتخاب واحد</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.labelFa}</option>)}</select>{fieldErrors.unit && <span className="field-error" id="onboarding-product-unit-error" role="alert">{fieldErrors.unit}</span>}</label></div>
+    <Field id="onboarding-product-name" label="نام کالا" value={name} onChange={(value) => { setName(value); setFieldErrors((errors) => ({ ...errors, name: "" })); }} error={fieldErrors.name} required placeholder="مثلاً دفتر یادداشت" />
+    <label className="field" htmlFor="onboarding-product-unit"><span className="field-label">واحد <i>*</i></span><select id="onboarding-product-unit" value={unitId} onChange={(event) => { setUnitId(event.target.value); setFieldErrors((errors) => ({ ...errors, unit: "" })); }} required aria-invalid={fieldErrors.unit ? true : undefined} aria-describedby={fieldErrors.unit ? "onboarding-product-unit-error" : undefined}><option value="">انتخاب واحد</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.labelFa}</option>)}</select>{fieldErrors.unit && <span className="field-error" id="onboarding-product-unit-error" role="alert">{fieldErrors.unit}</span>}</label>
     <div className="form-grid"><Field id="onboarding-sale-price" label={`قیمت فروش (${currency === "IRT" ? "تومان" : "ریال"})`} value={salePrice} onChange={(value) => { setSalePrice(value); setFieldErrors((errors) => ({ ...errors, salePrice: "" })); }} error={fieldErrors.salePrice} required inputMode="decimal" /><Field id="onboarding-default-cost" label={`بهای خرید پیش‌فرض، اختیاری (${currency === "IRT" ? "تومان" : "ریال"})`} value={cost} onChange={(value) => { setCost(value); setFieldErrors((errors) => ({ ...errors, cost: "" })); }} error={fieldErrors.cost} inputMode="decimal" /></div>
     <p className="onboarding-help">قیمت فروش درآمد را می‌سازد. بهای خرید پیش‌فرض برای ارزش‌گذاری موجودی و محاسبهٔ بهای تمام‌شده به‌کار می‌رود. تعداد اولیه را جداگانه با شمارش انبار ثبت کنید.</p>
     {unitsError && <InlineError error={unitsError} />}{error && <p className="field-error" role="alert">{error}</p>}
-    <SubmitButton busy={saving}>{saving ? "در حال ثبت در سرور…" : "افزودن کالا یا خدمت"}</SubmitButton>
+    <SubmitButton busy={saving}>{saving ? "در حال ثبت در سرور…" : "افزودن کالا"}</SubmitButton>
   </form>;
 }
 
