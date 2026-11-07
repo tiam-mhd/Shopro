@@ -79,7 +79,7 @@ export class ServicesService {
     const name = dto.name.trim();
     const price = this.parseMoney(dto.salePriceRial);
     const created = await this.prisma.$transaction(async (tx) => {
-      const catalogItem = await tx.catalogItem.create({ data: { businessId, branchId, name, normalizedName: normalizePersianSearch(name), kind: "SERVICE", unitId: unit.id, salePriceRial: price, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0 } });
+      const catalogItem = await tx.catalogItem.create({ data: { businessId, branchId, name, normalizedName: normalizePersianSearch(name), kind: "SERVICE", unitId: unit.id, salePriceRial: price, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, isActive: dto.isActive ?? true, archivedAt: dto.isActive === false ? new Date() : null } });
       const service = await tx.service.create({ data: { id: catalogItem.id, businessId, branchId, categoryId: dto.categoryId || null, description: dto.description?.trim() || null } });
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "service.created", entityType: "service", entityId: service.id, requestId: request.requestId ?? "unknown", afterJson: { name, categoryId: service.categoryId, salePriceRial: price.toString() } } });
       return catalogItem;
@@ -92,9 +92,9 @@ export class ServicesService {
     this.requireEditor(user);
     const before = await this.prisma.service.findFirst({ where: { id, businessId, branchId }, include: { catalogItem: true } });
     if (!before) throw new NotFoundException("خدمت پیدا نشد.");
-    if (before.catalogItem.archivedAt && dto.isActive !== true) throw new NotFoundException("خدمت پیدا نشد.");
+    if (before.catalogItem.archivedAt && dto.isActive === undefined) throw new NotFoundException("خدمت پیدا نشد.");
     if (dto.unitId && dto.unitId !== before.catalogItem.unitId && await this.prisma.salesInvoiceLine.count({ where: { businessId, branchId, productId: id } })) throw new BadRequestException("واحد خدمتی که در فاکتور ثبت شده قابل تغییر نیست.");
-    if (dto.unitId) await this.resolveUnit(businessId, dto.unitId);
+    if (dto.unitId && dto.unitId !== before.catalogItem.unitId) await this.resolveUnit(businessId, dto.unitId);
     if (dto.categoryId && !(await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, businessId, branchId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در این شعبه در دسترس نیست.");
     const name = dto.name?.trim();
     return this.prisma.$transaction(async (tx) => {

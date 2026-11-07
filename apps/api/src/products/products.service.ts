@@ -75,6 +75,8 @@ export class ProductsService {
     if (!unit) throw new BadRequestException("واحد انتخاب‌شده معتبر یا برای نمایش فعال نیست.");
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, branchId, isActive: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده معتبر نیست.");
     const initialQuantityMilli = dto.initialQuantity === undefined ? 0n : parseInitialQuantity(dto.initialQuantity, unit.precision);
+    const trackInventory = dto.trackInventory ?? true;
+    if (!trackInventory && initialQuantityMilli > 0n) throw new BadRequestException("برای کالایی که مدیریت موجودی آن خاموش است، موجودی اولیه باید صفر باشد.");
     if (dto.kind && dto.kind !== "STOCK") throw new BadRequestException("برای ثبت خدمت از مسیر اختصاصی خدمات استفاده کنید.");
     if (initialQuantityMilli > 0n && !branchId) throw new BadRequestException("برای ثبت موجودی اولیه، ابتدا یک شعبه را انتخاب کنید.");
     if (initialQuantityMilli > 0n) {
@@ -84,8 +86,8 @@ export class ProductsService {
     const name = dto.name.trim();
     const defaultCostRial = dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null;
     return this.prisma.$transaction(async (tx) => {
-      const catalogItem = await tx.catalogItem.create({ data: { businessId, branchId, name, normalizedName: normalizePersianSearch(name), kind: "STOCK", unitId: unit.id, salePriceRial: parseMoney(dto.salePriceRial), taxRateBasisPoints: dto.taxRateBasisPoints ?? 0 } });
-      const product = await tx.product.create({ data: { id: catalogItem.id, businessId, branchId, sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, categoryId: dto.categoryId || null, defaultCostRial, reorderPoint: dto.reorderPoint ?? null, trackInventory: true } });
+      const catalogItem = await tx.catalogItem.create({ data: { businessId, branchId, name, normalizedName: normalizePersianSearch(name), kind: "STOCK", unitId: unit.id, salePriceRial: parseMoney(dto.salePriceRial), taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, isActive: dto.isActive ?? true, archivedAt: dto.isActive === false ? new Date() : null } });
+      const product = await tx.product.create({ data: { id: catalogItem.id, businessId, branchId, sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, categoryId: dto.categoryId || null, defaultCostRial, reorderPoint: dto.reorderPoint ?? null, trackInventory } });
       let openingValueRial = 0n;
       if (initialQuantityMilli > 0n && branchId) {
         const unitCostRial = defaultCostRial ?? 0n;
@@ -114,7 +116,16 @@ export class ProductsService {
     const { businessId, branchId } = this.scope(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
     const before = await this.prisma.product.findFirst({ where: { id, businessId, branchId }, include: { catalogItem: true } });
-    if (!before || before.catalogItem.archivedAt !== null) throw new NotFoundException("کالا پیدا نشد.");
+    if (!before || (before.catalogItem.archivedAt !== null && dto.isActive === undefined)) throw new NotFoundException("کالا پیدا نشد.");
+    if (dto.trackInventory === false && before.trackInventory) {
+      const [movementCount, countLineCount, balance] = await Promise.all([
+        this.prisma.inventoryMovement.count({ where: { businessId, branchId, productId: id } }),
+        this.prisma.stockCountLine.count({ where: { businessId, branchId, productId: id } }),
+        this.prisma.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId, productId: id } }, select: { quantityOnHand: true, inventoryValueRial: true } }),
+      ]);
+      if (movementCount || countLineCount || (balance && (balance.quantityOnHand.abs().greaterThan(0) || balance.inventoryValueRial !== 0n))) throw new BadRequestException("مدیریت موجودی کالایی که سابقه یا مقدار موجودی دارد قابل خاموش‌کردن نیست.");
+      if (dto.currentQuantity !== undefined) throw new BadRequestException("هنگام خاموش‌کردن مدیریت موجودی، خانهٔ مقدار فعلی را خالی بگذارید.");
+    }
     if (dto.unitId && dto.unitId !== before.catalogItem.unitId) {
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId, isVisible: true }, select: { id: true } });
       if (!unit) throw new BadRequestException("واحد انتخاب‌شده متعلق به این کسب‌وکار نیست.");
@@ -137,7 +148,7 @@ export class ProductsService {
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, branchId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده در این شعبه در دسترس نیست.");
     const product = await this.prisma.$transaction(async (tx) => {
       const catalogItem = await tx.catalogItem.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, unitId: dto.unitId, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
-      const updated = await tx.product.update({ where: { id }, data: { sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null } });
+      const updated = await tx.product.update({ where: { id }, data: { sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null, trackInventory: dto.trackInventory } });
       if (targetQuantityMilli !== undefined && quantityBranchId) await this.adjustCurrentQuantity(tx, user, { ...updated, name: catalogItem.name, kind: catalogItem.kind }, quantityBranchId, targetQuantityMilli, request);
       await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.salePriceRial !== undefined ? "product.price.updated" : "product.updated", entityType: "product", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.catalogItem.name, salePriceRial: before.catalogItem.salePriceRial.toString(), isActive: before.catalogItem.isActive }, afterJson: { name: catalogItem.name, salePriceRial: catalogItem.salePriceRial.toString(), isActive: catalogItem.isActive } } });
       return this.serialize({ ...catalogItem, ...updated });

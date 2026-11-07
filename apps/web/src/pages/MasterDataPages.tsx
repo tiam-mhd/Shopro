@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, Boxes, BriefcaseBusiness, Check, ImagePlus, PackagePlus, Pencil, Plus, ReceiptText, RotateCcw, ScanBarcode, Search, ShoppingCart, Star, Tags, Trash2, Truck, UsersRound } from "lucide-react";
+import { Archive, Boxes, BriefcaseBusiness, Check, Download, FileSpreadsheet, ImagePlus, PackagePlus, Pencil, Plus, ReceiptText, RotateCcw, ScanBarcode, Search, ShoppingCart, Star, Tags, Trash2, Truck, Upload, UsersRound } from "lucide-react";
 import { toAsciiDigits, type CursorPage, type MemberRole } from "@shopro/contracts";
-import { adminApi, del, downloadFile, get, patch, post } from "../lib/api.js";
+import { adminApi, del, downloadFile, get, patch, post, uploadFile } from "../lib/api.js";
 import { faNumber, money } from "../lib/format.js";
 import { EmptyState, Field, InlineError, LoadMoreButton, PageHeader, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
@@ -273,7 +273,7 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
     finally { setBusy(false); }
   };
 
-  return <PageHeader title="کالاها" subtitle="مدیریت کالاهای انبارشونده، قیمت و موجودی شعبه" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />مدیریت خدمات</Link><Link className="button button-secondary" to="/app/product-categories"><Tags size={16} />دسته‌بندی کالاها</Link><button className="button button-primary" type="button" onClick={openCreate}><PackagePlus size={17} />کالای جدید</button></div>}>
+  return <PageHeader title="کالاها" subtitle="مدیریت کالاهای انبارشونده، قیمت و موجودی شعبه" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />مدیریت خدمات</Link><Link className="button button-secondary" to="/app/product-categories"><Tags size={16} />دسته‌بندی کالاها</Link><CatalogExcelActions kind="products" onImported={() => invalidate()} /><button className="button button-primary" type="button" onClick={openCreate}><PackagePlus size={17} />کالای جدید</button></div>}>
     <div className="toolbar card"><div className="search-box"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="نام، کد کالا یا بارکد" aria-label="جست‌وجوی کالاها" /></div><span className="result-count">{faNumber(productRows.length)} کالا</span></div>
     {products.isError && <InlineError error={products.error} retry={() => void products.refetch()} />}
     {products.isPending ? <div className="card"><span className="muted">در حال بارگیری کالاها…</span></div> : <><div className="card table-card"><div className="table-head product-table-head"><span>کالا</span><span>موجودی</span><span>قیمت فروش</span><span aria-hidden="true" /></div>{productRows.map((product) => <div className="table-row product-table-row" key={product.id}>
@@ -403,7 +403,7 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
     finally { setBusy(false); }
   };
 
-  return <PageHeader title="خدمات" subtitle="مدیریت خدمات، شرح، واحد و قیمت فروش" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/products"><Boxes size={16} />مدیریت کالاها</Link><Link className="button button-secondary" to="/app/service-categories"><Tags size={16} />دسته‌بندی خدمات</Link><button className="button button-primary" type="button" onClick={openCreate}><BriefcaseBusiness size={17} />خدمت جدید</button></div>}>
+  return <PageHeader title="خدمات" subtitle="مدیریت خدمات، شرح، واحد و قیمت فروش" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/products"><Boxes size={16} />مدیریت کالاها</Link><Link className="button button-secondary" to="/app/service-categories"><Tags size={16} />دسته‌بندی خدمات</Link><CatalogExcelActions kind="services" onImported={() => invalidate()} /><button className="button button-primary" type="button" onClick={openCreate}><BriefcaseBusiness size={17} />خدمت جدید</button></div>}>
     <div className="toolbar card"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="جست‌وجوی نام یا شرح خدمت" aria-label="جست‌وجوی خدمات" /></div><span className="result-count">{faNumber(rows.length)} خدمت</span></div>
     {services.isError && <InlineError error={services.error} retry={() => void services.refetch()} />}
     {services.isPending ? <div className="card"><span className="muted">در حال بارگیری خدمات…</span></div> : <><div className="card table-card service-table-card"><div className="table-head service-table-head"><span>خدمت</span><span>دسته‌بندی</span><span>واحد</span><span>قیمت</span><span aria-hidden="true" /></div>{rows.map((service) => <div className="table-row service-table-row" key={service.id}>
@@ -423,6 +423,77 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
     <UnitCatalogModal open={unitCatalogOpen} businessId={unitBusinessId ?? "none"} selectedUnitId={unitId} onClose={() => setUnitCatalogOpen(false)} onSelect={(unit) => selectCatalogUnit(unit)} />
     <Modal open={!!archiveTarget} onClose={() => setArchiveTarget(null)} title="بایگانی خدمت" description="خدمت از انتخاب‌های جدید کنار گذاشته می‌شود؛ اطلاعات اسناد قبلی باقی می‌ماند."><p>«{archiveTarget?.name}» بایگانی شود؟</p>{error && <InlineError error={error} />}<div className="modal-form-actions"><button type="button" className="button button-danger" disabled={busy} onClick={() => void archive()}>{busy ? "در حال بایگانی…" : "تأیید بایگانی"}</button></div></Modal>
   </PageHeader>;
+}
+
+type SpreadsheetPreview = { total: number; ready: number; invalid: number; creates: number; updates: number; rows: Array<{ rowNumber: number; name: string; action: "create" | "update"; valid: boolean; errors: string[] }> };
+type SpreadsheetImportResult = { total: number; imported: number; failed: number; results: Array<{ rowNumber: number; name: string; action: "create" | "update"; success: boolean; message: string }> };
+
+function CatalogExcelActions({ kind, onImported }: { kind: "products" | "services"; onImported: () => void | Promise<unknown> }) {
+  const noun = kind === "products" ? "کالا" : "خدمت";
+  const endpoint = `/${kind}/excel`;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<SpreadsheetPreview | null>(null);
+  const [result, setResult] = useState<SpreadsheetImportResult | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<"template" | "export" | "preview" | "import" | "" >("");
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const chooseFile = () => { if (fileInput.current) { fileInput.current.value = ""; fileInput.current.click(); } };
+
+  const download = async (path: string, filename: string, action: "template" | "export") => {
+    setBusy(action); setError("");
+    try {
+      const blob = await downloadFile(path);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
+    } catch (cause) { setError(messageOf(cause)); setPreviewOpen(true); }
+    finally { setBusy(""); }
+  };
+
+  const selectFile = async (selected: File | null) => {
+    setFile(selected); setPreview(null); setResult(null); setError("");
+    if (!selected) return;
+    setPreviewOpen(true); setBusy("preview");
+    try { setPreview(await uploadFile<SpreadsheetPreview>(`${endpoint}/preview`, selected)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(""); }
+  };
+
+  const importRows = async () => {
+    if (!file || !preview?.ready) return;
+    setBusy("import"); setError("");
+    try {
+      const imported = await uploadFile<SpreadsheetImportResult>(`${endpoint}/import`, file);
+      setResult(imported);
+      await onImported();
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(""); }
+  };
+
+  const close = () => { if (busy === "import") return; setPreviewOpen(false); setFile(null); setPreview(null); setResult(null); setError(""); if (fileInput.current) fileInput.current.value = ""; };
+  return <>
+    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => void download(`${endpoint}/template`, `${kind}-template.xlsx`, "template")}><FileSpreadsheet size={16} />{busy === "template" ? "در حال دریافت…" : "قالب اکسل"}</button>
+    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => { setPreviewOpen(true); chooseFile(); }}><Upload size={16} />ورود از اکسل</button>
+    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => void download(`${endpoint}/export`, `${kind}.xlsx`, "export")}><Download size={16} />{busy === "export" ? "در حال ساخت…" : "خروجی اکسل"}</button>
+    <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={(event) => void selectFile(event.currentTarget.files?.[0] ?? null)} />
+    <Modal open={previewOpen} onClose={close} title={`ورود گروهی ${noun}`} description="فایل ابتدا بررسی می‌شود. ردیف‌های معتبر پس از تأیید ثبت می‌شوند و ردیف‌های خطادار در گزارش باقی می‌مانند." size="wide">
+      {file && <div className="catalog-excel-file"><FileSpreadsheet size={18} /><span><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} کیلوبایت</small></span><button className="button button-secondary" type="button" disabled={!!busy} onClick={chooseFile}>انتخاب فایل دیگر</button></div>}
+      {!file && <div className="catalog-excel-empty"><FileSpreadsheet size={24} /><strong>فایل اکسل را انتخاب کنید</strong><p>فقط فایل xlsx تا ۵ مگابایت پذیرفته می‌شود؛ حداکثر ۵۰۰ ردیف در هر بار.</p><button type="button" className="button button-primary" onClick={chooseFile}><Upload size={16} />انتخاب فایل</button></div>}
+      {busy === "preview" && <div className="catalog-excel-loading" role="status">در حال بررسی ستون‌ها، واحدها و داده‌های شعبه…</div>}
+      {error && <InlineError error={error} />}
+      {preview && !result && <>
+        <div className="catalog-excel-summary"><span><strong>{faNumber(preview.ready)}</strong><small>ردیف آماده</small></span><span><strong>{faNumber(preview.creates)}</strong><small>مورد تازه</small></span><span><strong>{faNumber(preview.updates)}</strong><small>به‌روزرسانی</small></span><span className={preview.invalid ? "has-errors" : ""}><strong>{faNumber(preview.invalid)}</strong><small>ردیف خطادار</small></span></div>
+        <div className="catalog-excel-preview-list" role="table" aria-label="پیش‌نمایش ورود اکسل">
+          {preview.rows.map((row) => <div className={`catalog-excel-preview-row ${row.valid ? "is-valid" : "is-invalid"}`} role="row" key={row.rowNumber}><span className="catalog-excel-row-status">{row.valid ? <Check size={15} /> : <span aria-label="دارای خطا">!</span>}</span><span className="catalog-excel-row-main"><strong>{faNumber(row.rowNumber)} · {row.name}</strong><small>{row.action === "create" ? "ثبت مورد تازه" : "به‌روزرسانی رکورد"}{row.errors.length ? ` · ${row.errors.join("؛ ")}` : ""}</small></span></div>)}
+        </div>
+        <p className="catalog-excel-note">ردیف‌های خطادار وارد نمی‌شوند. تصاویر در این فایل منتقل نمی‌شوند و از گالری کالا یا خدمت مدیریت می‌شوند.</p>
+        <div className="modal-form-actions"><button type="button" className="button button-primary" disabled={!!busy || preview.ready === 0} onClick={() => void importRows()}>{busy === "import" ? "در حال ثبت…" : `ثبت ${faNumber(preview.ready)} ردیف معتبر`}</button></div>
+      </>}
+      {result && <section className="catalog-excel-result" role="status"><strong>پردازش فایل تمام شد</strong><div><span>{faNumber(result.imported)} ردیف ثبت شد</span><span>{faNumber(result.failed)} ردیف نیاز به اصلاح دارد</span></div>{result.failed > 0 && <div className="catalog-excel-preview-list">{result.results.filter((row) => !row.success).map((row) => <div className="catalog-excel-preview-row is-invalid" key={row.rowNumber}><span className="catalog-excel-row-status">!</span><span className="catalog-excel-row-main"><strong>{faNumber(row.rowNumber)} · {row.name}</strong><small>{row.message}</small></span></div>)}</div>}</section>}
+    </Modal>
+  </>;
 }
 
 type CatalogCategory = { id: string; name: string; parentId: string | null; parentName: string | null; isActive: boolean; productCount?: number; serviceCount?: number };

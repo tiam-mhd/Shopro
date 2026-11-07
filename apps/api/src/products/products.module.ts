@@ -6,6 +6,7 @@ import { AttachmentStorageService } from "../expenses/attachment-storage.service
 import { ServicesController } from "./services.controller.js";
 import { ServicesService } from "./services.service.js";
 import { CatalogController } from "./catalog.controller.js";
+import { CatalogSpreadsheetService } from "./catalog-spreadsheet.service.js";
 
-@Module({ controllers: [ProductsController, ServicesController, CatalogController], providers: [ProductsService, ServicesService, AccountingService, AttachmentStorageService], exports: [ProductsService, ServicesService] })
+@Module({ controllers: [ProductsController, ServicesController, CatalogController], providers: [ProductsService, ServicesService, CatalogSpreadsheetService, AccountingService, AttachmentStorageService], exports: [ProductsService, ServicesService] })
 export class ProductsModule {}

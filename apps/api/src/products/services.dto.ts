@@ -7,6 +7,7 @@ export class CreateServiceDto {
   @IsString() @Length(1, 24) salePriceRial!: string;
   @IsOptional() @IsInt() @Min(0) @Max(10000) taxRateBasisPoints?: number;
   @IsOptional() @IsString() @Length(0, 1000) description?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 export class UpdateServiceDto {

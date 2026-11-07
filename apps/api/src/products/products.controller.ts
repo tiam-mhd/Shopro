@@ -8,18 +8,35 @@ import { CreateProductCategoryDto, CreateProductDto, TransferCatalogItemDto, Upd
 import { ProductsService } from "./products.service.js";
 import { MAX_PRODUCT_IMAGE_UPLOAD_BYTES } from "./product-image-files.js";
 import { UpdateCatalogCategoryDto } from "./services.dto.js";
+import { CatalogSpreadsheetService, MAX_CATALOG_SPREADSHEET_BYTES } from "./catalog-spreadsheet.service.js";
 
 type UploadedProductImage = { originalname: string; buffer: Buffer; size: number };
 
 @Controller("products")
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(private readonly products: ProductsService, private readonly spreadsheets: CatalogSpreadsheetService) {}
   @Get() list(@CurrentUser() user: AuthenticatedUser, @Query("q") q?: string, @Query("lowStock") low?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string, @Query("kind") kind?: string) { return this.products.list(user, q, low, cursor, limit, kind); }
   @Get("units") units(@CurrentUser() user: AuthenticatedUser) { return this.products.units(user); }
   @Get("units/settings") unitSettings(@CurrentUser() user: AuthenticatedUser) { return this.products.unitSettings(user); }
   @Patch("units/settings") updateUnitSettings(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateUnitsVisibilityDto, @Req() request: AppRequest) { return this.products.updateUnitSettings(user, dto, request); }
   @Get("categories") categories(@CurrentUser() user: AuthenticatedUser, @Query("includeArchived") includeArchived?: string) { return this.products.categories(user, includeArchived === "true"); }
   @Patch("categories/:id") updateCategory(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateCatalogCategoryDto, @Req() request: AppRequest) { return this.products.updateCategory(user, id, dto, request); }
+  @Get("excel/template") async template(@CurrentUser() user: AuthenticatedUser, @Res() response: Response) {
+    response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    response.setHeader("Content-Disposition", 'attachment; filename="products-template.xlsx"');
+    response.setHeader("Cache-Control", "no-store");
+    response.send(await this.spreadsheets.template(user, "products"));
+  }
+  @Get("excel/export") async export(@CurrentUser() user: AuthenticatedUser, @Res() response: Response) {
+    response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    response.setHeader("Content-Disposition", 'attachment; filename="products.xlsx"');
+    response.setHeader("Cache-Control", "no-store");
+    response.send(await this.spreadsheets.export(user, "products"));
+  }
+  @Post("excel/preview") @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_CATALOG_SPREADSHEET_BYTES, files: 1, fields: 0, parts: 1 }, preservePath: false }))
+  previewExcel(@CurrentUser() user: AuthenticatedUser, @UploadedFile() file: { originalname: string; buffer: Buffer; size: number } | undefined) { return this.spreadsheets.preview(user, "products", file); }
+  @Post("excel/import") @UseInterceptors(FileInterceptor("file", { limits: { fileSize: MAX_CATALOG_SPREADSHEET_BYTES, files: 1, fields: 0, parts: 1 }, preservePath: false }))
+  importExcel(@CurrentUser() user: AuthenticatedUser, @UploadedFile() file: { originalname: string; buffer: Buffer; size: number } | undefined, @Req() request: AppRequest) { return this.spreadsheets.import(user, "products", file, request); }
   @Get(":id/images/:imageId") @Header("Content-Type", "image/webp") @Header("X-Content-Type-Options", "nosniff") @Header("Cache-Control", "private, max-age=300")
   async image(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Param("imageId", UuidParamPipe) imageId: string, @Res() response: Response) {
     const image = await this.products.readImage(user, id, imageId);

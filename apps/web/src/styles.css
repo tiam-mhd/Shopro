@@ -1840,6 +1840,37 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .catalog-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .catalog-page-actions .button { min-height: 38px; }
+.catalog-excel-file { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 11px; border: 1px solid var(--line-soft); border-radius: 12px; color: var(--green-dark); background: var(--surface-soft); }
+.catalog-excel-file > span { display: grid; flex: 1; gap: 4px; min-width: 0; color: var(--ink); }
+.catalog-excel-file strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-excel-file small { color: var(--muted); font-size: 9px; }
+.catalog-excel-empty { display: grid; justify-items: center; gap: 9px; padding: 26px 12px; border: 1px dashed var(--line); border-radius: 14px; color: var(--green-dark); background: var(--surface-soft); text-align: center; }
+.catalog-excel-empty strong { color: var(--ink); font-size: 12px; }
+.catalog-excel-empty p { max-width: 360px; margin: 0 0 5px; color: var(--muted); font-size: 10px; line-height: 1.8; }
+.catalog-excel-loading { margin-top: 12px; padding: 10px 12px; border-radius: 10px; color: var(--muted-strong); background: var(--surface-soft); font-size: 10px; }
+.catalog-excel-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.catalog-excel-summary > span { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--line-soft); border-radius: 11px; background: var(--surface-soft); }
+.catalog-excel-summary strong { color: var(--ink); font-size: 15px; }
+.catalog-excel-summary small { color: var(--muted); font-size: 9px; }
+.catalog-excel-summary .has-errors strong { color: var(--red); }
+.catalog-excel-preview-list { display: grid; max-height: min(42vh, 330px); margin-top: 10px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 12px; }
+.catalog-excel-preview-row { display: grid; grid-template-columns: 26px minmax(0,1fr); align-items: start; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); }
+.catalog-excel-preview-row:last-child { border-bottom: 0; }
+.catalog-excel-row-status { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 8px; color: var(--green-dark); background: var(--green-soft); font-size: 12px; font-weight: 800; }
+.catalog-excel-preview-row.is-invalid .catalog-excel-row-status { color: var(--red); background: var(--red-soft); }
+.catalog-excel-row-main { display: grid; gap: 4px; min-width: 0; }
+.catalog-excel-row-main strong { overflow-wrap: anywhere; color: var(--ink); font-size: 10px; }
+.catalog-excel-row-main small { color: var(--muted); font-size: 9px; line-height: 1.7; overflow-wrap: anywhere; }
+.catalog-excel-note { margin: 10px 2px 0; color: var(--muted); font-size: 9px; line-height: 1.8; }
+.catalog-excel-result { display: grid; gap: 12px; }
+.catalog-excel-result > strong { color: var(--ink); font-size: 13px; }
+.catalog-excel-result > div:first-of-type { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted-strong); font-size: 10px; }
+@media (max-width: 560px) {
+  .catalog-excel-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .catalog-excel-file { flex-wrap: wrap; }
+  .catalog-excel-file > span { flex-basis: calc(100% - 36px); }
+  .catalog-excel-file > .button { flex: 1 1 100%; }
+}
 .service-avatar { color: var(--blue); background: var(--blue-soft); }
 .service-table-head, .service-table-row { grid-template-columns: minmax(0, 1fr) minmax(100px, 150px) minmax(64px, 90px) minmax(95px, 130px) auto; }
 .service-table-row { min-height: 69px; }

@@ -33,6 +33,11 @@ export class CreateProductDto {
 
   @IsOptional() @IsInt() @Min(0) @Max(10000)
   taxRateBasisPoints?: number;
+
+  @IsOptional() @IsBoolean()
+  trackInventory?: boolean;
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
 }
 
 export class UpdateProductDto {
@@ -56,6 +61,8 @@ export class UpdateProductDto {
   currentQuantity?: string;
   @IsOptional() @IsInt() @Min(0) @Max(10000)
   taxRateBasisPoints?: number;
+  @IsOptional() @IsBoolean()
+  trackInventory?: boolean;
   @IsOptional() @IsBoolean()
   isActive?: boolean;
 }
