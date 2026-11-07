@@ -23,12 +23,13 @@ export class OnboardingService {
     });
     if (!membership) throw new ForbiddenException("به این کسب‌وکار و شعبه دسترسی ندارید.");
     const role = membership.role;
-    const [business, branch, progress, resultView, productCount, memberCount, sale, purchase, expense, cashTransaction, stockCount, subscription] = await Promise.all([
+    const [business, branch, progress, resultView, productCount, serviceCount, memberCount, sale, purchase, expense, cashTransaction, stockCount, subscription] = await Promise.all([
       this.prisma.business.findUnique({ where: { id: businessId }, select: { id: true, displayName: true, displayCurrency: true, timezone: true } }),
       this.prisma.branch.findFirst({ where: { id: branchId, businessId, isActive: true }, select: { id: true, name: true, code: true } }),
       this.prisma.onboardingProgress.findUnique({ where: { businessId_branchId: { businessId, branchId } } }),
       this.prisma.onboardingResultView.findUnique({ where: { businessId_branchId_userId: { businessId, branchId, userId: user.id } }, select: { viewedAt: true } }),
-      this.prisma.product.count({ where: { businessId, isActive: true } }),
+      this.prisma.product.count({ where: { businessId, catalogItem: { is: { isActive: true } } } }),
+      this.prisma.service.count({ where: { businessId, catalogItem: { is: { isActive: true } } } }),
       this.prisma.businessMember.count({ where: { businessId, status: "ACTIVE" } }),
       this.prisma.salesInvoice.findFirst({ where: { businessId, branchId, status: "POSTED", postedBy: user.id, returnOfId: null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, invoiceNo: true, createdAt: true, txnDate: true } }),
       ["OWNER", "MANAGER", "ACCOUNTANT"].includes(role)
@@ -47,6 +48,7 @@ export class OnboardingService {
     ]);
     if (!business) throw new NotFoundException("کسب‌وکار پیدا نشد.");
     if (!branch) throw new NotFoundException("شعبهٔ جاری پیدا نشد.");
+    const catalogCount = productCount + serviceCount;
 
     const candidates: DocumentCandidate[] = [];
     if (sale) candidates.push({ ...sale, reference: sale.invoiceNo, type: "فروش", href: `/app/invoices/${sale.id}` });
@@ -74,7 +76,7 @@ export class OnboardingService {
       { id: "branch_ready", title: "شعبه آماده شد", status: "DONE", optional: false, href: null },
       { id: "subscription", title: "وضعیت اشتراک شعبه", status: subscription.status === "ACTIVE" || subscription.status === "GRACE" ? "DONE" : subscriptionNeedsAction ? "NEEDS_ACTION" : "OPTIONAL", optional: !subscriptionNeedsAction, href: "/app/subscription" },
       { id: "financial_start_mode", title: "روش شروع مالی انتخاب شد", status: progress?.financialStartMode ? "DONE" : status(false, "financial_start_mode", canChooseFinancialStart), optional: true, href: null },
-      { id: "product", title: "کالا یا خدمت اضافه شد", status: productCount > 0 ? "DONE" : status(false, "product", canManageProducts(role)), optional: true, href: canManageProducts(role) ? "/app/products" : null },
+      { id: "product", title: "کالا یا خدمت اضافه شد", status: catalogCount > 0 ? "DONE" : status(false, "product", canManageProducts(role)), optional: true, href: canManageProducts(role) ? "/app/products" : null },
       { id: "first_operation", title: "اولین عملیات واقعی ثبت شد", status: firstOperationDone ? "DONE" : status(false, "first_operation", canPostOperations(role)), optional: true, href: nextAction.href },
       { id: "result_viewed", title: "نتیجهٔ ثبت دیده شد", status: resultView ? "DONE" : firstOperationDone ? "NEEDS_ACTION" : "WAITING", optional: true, href: "/app" },
       { id: "team", title: "اعضای تیم دعوت شدند", status: memberCount > 1 ? "DONE" : status(false, "team", role === "OWNER"), optional: true, href: role === "OWNER" ? "/app/settings" : null },
@@ -91,6 +93,8 @@ export class OnboardingService {
       resultViewedAt: resultView?.viewedAt.toISOString() ?? null,
       firstDocument,
       productCount,
+      serviceCount,
+      catalogCount,
       steps,
       activationComplete: Boolean(firstDocument && resultView),
       resultViewedByCurrentUser: Boolean(resultView),

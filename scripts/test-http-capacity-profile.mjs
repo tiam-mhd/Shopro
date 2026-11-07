@@ -22,7 +22,7 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
   const postingBudgetMs = Number(process.env.SHOPRO_PERF_POST_P95_BUDGET_MS ?? 1_500);
   if (!Number.isInteger(virtualUsers) || virtualUsers < 1 || virtualUsers > 100) throw new Error("SHOPRO_PERF_VUS must be an integer between 1 and 100.");
   if (!Number.isInteger(durationMs) || durationMs < 1_000 || durationMs > 3_600_000) throw new Error("SHOPRO_PERF_DURATION_MS must be between 1,000 and 3,600,000.");
-  for (const [label, model, minimum] of [["products", prisma.product, 10_000], ["parties", prisma.party, 10_000], ["journal lines", prisma.journalLine, 100_000]]) {
+  for (const [label, model, minimum] of [["services", prisma.service, 10_000], ["parties", prisma.party, 10_000], ["journal lines", prisma.journalLine, 100_000]]) {
     const count = await model.count({ where: { businessId } });
     assert.ok(count >= minimum, `Capacity profile requires at least ${minimum} ${label}; found ${count}.`);
   }
@@ -58,7 +58,7 @@ export async function runHttpCapacityProfile({ prisma, businessId, branchId, cus
     const from = "2026-11-01";
     const to = "2026-11-02";
     const readRoutes = [
-      ["product search", `/products?q=perf%20product&limit=50`],
+      ["catalog search", `/catalog?q=perf%20service&limit=50`],
       ["party search", `/parties?q=balance-&type=CUSTOMER&limit=50`],
       ["sales list", `/sales?limit=50`],
       ["dashboard", `/reports/dashboard?from=${from}&to=${to}`],

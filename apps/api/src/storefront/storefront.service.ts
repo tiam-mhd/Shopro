@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { Prisma } from "../generated/prisma/client.js";
 import type { Storefront } from "../generated/prisma/client.js";
@@ -13,7 +13,7 @@ import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import { assertUuid } from "../common/uuid-param.pipe.js";
 import { entitlementDenial } from "../subscriptions/subscription-entitlement.guard.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
-import type { CreateStorePaymentCardDto, CreateStorefrontOrderDto, CreateStorefrontReceiptDto, RejectStorefrontOrderDto, RejectStorefrontPaymentDto, ResolveStorefrontOverpaymentDto, SetStorePaymentCardActiveDto, StorefrontListingDto, StorefrontSettingsDto, TransitionStorefrontOrderDto, VerifyStorefrontPaymentDto } from "./storefront.dto.js";
+import type { CreateStorePaymentCardDto, CreateStorefrontOrderDto, CreateStorefrontReceiptDto, RejectStorefrontOrderDto, RejectStorefrontPaymentDto, ResolveStorefrontOverpaymentDto, SetStorePaymentCardActiveDto, StorefrontListingDto, StorefrontSettingsDto, TransitionStorefrontOrderDto, UpdateStorefrontCustomerProfileDto, VerifyStorefrontPaymentDto } from "./storefront.dto.js";
 import { assertAllowedTransition, extensionRial, formatStockPolicy, isValidIranianCard, normalizeIranianMobile, normalizeStoreSlug, parseMoney, paymentAllocationPlan, quantityMilli, quantityMilliForPrecision, quantityMilliOrZero, quantityText, taxRial, trackingTokenForOrder } from "./storefront-core.js";
 import { decryptStoreCardNumber, encryptStoreCardNumber, maskedCardLast4 } from "./storefront-crypto.js";
 
@@ -69,34 +69,63 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
 
   async verifyCustomerOtp(slug: string, phone: string, code: string, ipAddress?: string) {
     await this.checkPublicRateLimit("customer-otp-verify", ipAddress, 10);
-    const store = await this.findCustomerStore(slug);
-    return this.auth.verifyStorefrontCustomerOtp(phone, code, { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId });
+    await this.findCustomerStore(slug);
+    return this.auth.verifyStorefrontCustomerOtp(phone, code);
   }
 
   async customerAccount(slug: string, token: string | undefined, ipAddress?: string) {
     await this.checkPublicRateLimit("customer-account", ipAddress, 120);
-    const store = await this.findCustomerStore(slug);
-    const session = await this.requireCustomerSession(store.id, token);
-    const latestOrder = await this.prisma.storefrontOrder.findFirst({
-      where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, customerPhone: session.phone },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { customerName: true },
+    await this.findCustomerStore(slug);
+    const session = await this.requireCustomerSession(token);
+    return { customer: this.customerProfileView(session.customer) };
+  }
+
+  async updateCustomerProfile(slug: string, token: string | undefined, dto: UpdateStorefrontCustomerProfileDto, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-profile-update", ipAddress, 20);
+    await this.findCustomerStore(slug);
+    const session = await this.requireCustomerSession(token);
+    if (dto.fullName === undefined && dto.address === undefined) throw new BadRequestException("اطلاعاتی برای ذخیره تغییر نکرده است.");
+    const fullName = dto.fullName?.trim();
+    if (dto.fullName !== undefined && (!fullName || fullName.length < 2)) throw new BadRequestException("نام و نام خانوادگی باید دست‌کم دو نویسه باشد.");
+    const profile = await this.prisma.storefrontCustomerProfile.update({
+      where: { id: session.customerId },
+      data: {
+        ...(dto.fullName !== undefined ? { fullName } : {}),
+        ...(dto.address !== undefined ? { address: dto.address.trim() || null } : {}),
+      },
+      select: { fullName: true, phone: true, address: true },
     });
-    return { customer: { name: latestOrder?.customerName ?? null, phone: session.phone } };
+    return { customer: this.customerProfileView(profile) };
+  }
+
+  async issueCustomerCheckoutToken(slug: string, token: string | undefined, ipAddress?: string) {
+    await this.checkPublicRateLimit("customer-checkout-token", ipAddress, 30);
+    const store = await this.findPublicStore(slug, true);
+    if (!await this.newOrdersAllowed(store.businessId, store.branchId)) throw new ConflictException("این شعبه فعلاً سفارش جدید نمی‌پذیرد.");
+    const session = await this.requireCustomerSession(token);
+    const checkoutToken = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await this.prisma.storefrontOtpGrant.create({ data: {
+      businessId: store.businessId, branchId: store.branchId, storefrontId: store.id,
+      phone: session.phone, tokenHash: hash(checkoutToken), expiresAt,
+    } });
+    return { checkoutToken, phone: session.phone, expiresAt: expiresAt.toISOString(), customer: this.customerProfileView(session.customer) };
   }
 
   async customerOrders(slug: string, token: string | undefined, cursor?: string, requestedLimit?: string, ipAddress?: string) {
     await this.checkPublicRateLimit("customer-orders", ipAddress, 120);
-    const store = await this.findCustomerStore(slug);
-    const session = await this.requireCustomerSession(store.id, token);
+    await this.findCustomerStore(slug);
+    const session = await this.requireCustomerSession(token);
     const limit = pageLimit(requestedLimit, 20, 50);
-    const where = { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, customerPhone: session.phone };
+    const where = { customerPhone: session.phone };
     if (cursor && !await this.prisma.storefrontOrder.findFirst({ where: { ...where, id: cursor }, select: { id: true } })) {
-      throw new BadRequestException("نشانگر صفحهٔ سفارش‌های این فروشگاه معتبر نیست.");
+      throw new BadRequestException("نشانگر صفحهٔ سفارش‌های شما معتبر نیست.");
     }
     const rows = await this.prisma.storefrontOrder.findMany({
       where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit + 1,
       include: {
+        storefront: { select: { publicName: true, slug: true } },
         items: { select: { titleSnapshot: true, quantity: true } },
         paymentAttempts: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 1, select: { status: true } },
       },
@@ -106,6 +135,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
       ...page,
       items: page.items.map((row) => ({
         id: row.id, publicCode: row.publicCode, status: row.status, paymentStatus: row.paymentStatus,
+        storeName: row.storefront.publicName, storeSlug: row.storefront.slug,
         createdAt: row.createdAt.toISOString(), deliveryMethod: row.deliveryMethod,
         totalRial: row.totalRial.toString(), items: row.items.map((item) => ({ title: item.titleSnapshot, quantity: item.quantity.toString() })),
         latestPaymentAttemptStatus: row.paymentAttempts[0]?.status ?? null,
@@ -165,34 +195,39 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     const rows = await this.prisma.storefrontListing.findMany({
       where: {
         storefrontId: store.id, branchId: store.branchId, businessId: store.businessId, isPublished: true,
-        canOrder: true, product: { isActive: true, archivedAt: null },
-        ...(q ? { OR: [{ publicTitle: { contains: q, mode: "insensitive" as const } }, { product: { normalizedName: { contains: q } } }] } : {}),
+        canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null } },
+        ...(q ? { OR: [{ publicTitle: { contains: q, mode: "insensitive" as const } }, { catalogItem: { is: { normalizedName: { contains: q } } } }] } : {}),
       },
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        product: { include: {
+        catalogItem: { include: {
           unit: { select: { labelFa: true, code: true, precision: true } },
-          category: { select: { name: true } },
-          balances: { where: { branchId: store.branchId }, select: { quantityOnHand: true } },
-          images: { where: { branchId: store.branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } },
+          product: { include: { category: { select: { name: true } }, balances: { where: { branchId: store.branchId }, select: { quantityOnHand: true } }, images: { where: { branchId: store.branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } } } },
+          service: { include: { category: { select: { name: true } }, images: { where: { branchId: store.branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } } } },
         } },
       },
-      orderBy: [{ displayOrder: "asc" }, { product: { normalizedName: "asc" } }, { id: "asc" }], take: limit + 1,
+      orderBy: [{ displayOrder: "asc" }, { catalogItem: { name: "asc" } }, { id: "asc" }], take: limit + 1,
     });
     const products = rows.map((row) => {
-      const product = row.product;
-      const unitPrice = row.publicPriceRial ?? product.salePriceRial;
-      const onHand = product.trackInventory ? product.balances[0]?.quantityOnHand.toString() ?? "0" : "0";
-      const stock = product.trackInventory ? formatStockPolicy(row.stockPolicy, onHand, store.showExactStock) : { stockLabel: row.stockPolicy === "INQUIRY" ? "استعلام موجودی" : "موجود", available: true, quantityOnHand: null };
+      const item = row.catalogItem;
+      const product = item.product;
+      const service = item.service;
+      const trackInventory = product?.trackInventory ?? false;
+      const balances = product?.balances ?? [];
+      const images = product?.images ?? service?.images ?? [];
+      const category = product?.category?.name ?? service?.category?.name ?? null;
+      const unitPrice = row.publicPriceRial ?? item.salePriceRial;
+      const onHand = trackInventory ? balances[0]?.quantityOnHand.toString() ?? "0" : "0";
+      const stock = trackInventory ? formatStockPolicy(row.stockPolicy, onHand, store.showExactStock) : { stockLabel: row.stockPolicy === "INQUIRY" ? "استعلام موجودی" : "موجود", available: true, quantityOnHand: null };
       return {
-        id: row.id, title: row.publicTitle?.trim() || product.name,
+        id: row.id, title: row.publicTitle?.trim() || item.name,
         description: row.publicDescription?.trim() || null,
-        kind: product.kind, category: product.category?.name ?? null,
-        unit: product.unit.labelFa, unitCode: product.unit.code, unitPrecision: product.unit.precision,
-        unitPriceRial: unitPrice.toString(), taxRateBasisPoints: product.taxRateBasisPoints,
+        kind: item.kind, category,
+        unit: item.unit.labelFa, unitCode: item.unit.code, unitPrecision: item.unit.precision,
+        unitPriceRial: unitPrice.toString(), taxRateBasisPoints: item.taxRateBasisPoints,
         stockLabel: stock.stockLabel, available: stock.available, quantityOnHand: stock.quantityOnHand,
         minimumQuantity: row.minimumQuantity.toString(), maximumQuantity: row.maximumQuantity?.toString() ?? null,
-        images: product.images.map((image) => ({ id: image.id, position: image.position, url: `/api/v1/public/stores/${encodeURIComponent(store.slug)}/products/${product.id}/images/${image.id}` })),
+        images: images.map((image) => ({ id: image.id, position: image.position, url: `/api/v1/public/stores/${encodeURIComponent(store.slug)}/${product ? "products" : "services"}/${item.id}/images/${image.id}` })),
       };
     });
     return cursorPage(products, limit, (row) => row.id);
@@ -201,11 +236,21 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
   async publicProductImage(slug: string, productId: string, imageId: string, ipAddress?: string) {
     await this.checkPublicRateLimit("product-image", ipAddress, 120);
     const store = await this.findPublicStore(slug, false);
-    const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId, isPublished: true, canOrder: true, product: { isActive: true, archivedAt: null } }, select: { id: true } });
+    const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId, isPublished: true, canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null, kind: "STOCK" } } }, select: { id: true } });
     if (!listing) throw new NotFoundException("تصویر کالا پیدا نشد.");
     const image = await this.prisma.productImage.findFirst({ where: { id: imageId, productId, businessId: store.businessId, branchId: store.branchId }, select: { id: true } });
     if (!image) throw new NotFoundException("تصویر کالا پیدا نشد.");
     return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId, imageId });
+  }
+
+  async publicServiceImage(slug: string, serviceId: string, imageId: string, ipAddress?: string) {
+    await this.checkPublicRateLimit("service-image", ipAddress, 120);
+    const store = await this.findPublicStore(slug, false);
+    const listing = await this.prisma.storefrontListing.findFirst({ where: { storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, productId: serviceId, isPublished: true, canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null, kind: "SERVICE" } } }, select: { id: true } });
+    if (!listing) throw new NotFoundException("تصویر خدمت پیدا نشد.");
+    const image = await this.prisma.serviceImage.findFirst({ where: { id: imageId, serviceId, businessId: store.businessId, branchId: store.branchId }, select: { id: true } });
+    if (!image) throw new NotFoundException("تصویر خدمت پیدا نشد.");
+    return this.storage.readProductImage({ businessId: store.businessId, branchId: store.branchId, productId: serviceId, imageId });
   }
 
   async settings(user: AuthenticatedUser) {
@@ -259,75 +304,87 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     if (productId) assertUuid(productId, "شناسهٔ کالا معتبر نیست.");
     const query = search?.trim().slice(0, 100);
     const normalized = query ? normalizePersianSearch(query) : "";
-    const baseWhere: Prisma.ProductWhereInput = {
-      businessId: scope.businessId, isActive: true, archivedAt: null,
+    const commonFilter: Prisma.CatalogItemWhereInput = { isActive: true, archivedAt: null, ...(normalized ? { normalizedName: { contains: normalized } } : {}) };
+    const baseWhere: Prisma.CatalogItemWhereInput = {
+      businessId: scope.businessId, ...commonFilter,
       ...(productId ? { id: productId } : {}),
       ...(normalized ? { OR: [
         { normalizedName: { contains: normalized } },
-        { sku: { contains: query ?? "", mode: "insensitive" } },
-        { barcode: { contains: toAsciiDigits(query ?? "") } },
+        { product: { is: { sku: { contains: query ?? "", mode: "insensitive" } } } },
+        { product: { is: { barcode: { contains: toAsciiDigits(query ?? "") } } } },
       ] } : {}),
     };
-    const where: Prisma.ProductWhereInput = {
+    const where: Prisma.CatalogItemWhereInput = {
       ...baseWhere,
-      ...(categoryId === "uncategorized" ? { categoryId: null } : categoryId ? { categoryId } : {}),
+      ...(categoryId === "uncategorized" ? { OR: [{ product: { is: { categoryId: null } } }, { service: { is: { categoryId: null } } }] } : categoryId ? { OR: [{ product: { is: { categoryId } } }, { service: { is: { categoryId } } }] } : {}),
     };
     const skip = (page - 1) * limit;
-    const [products, total, categoryGroups] = await Promise.all([
-      this.prisma.product.findMany({
+    const [items, total, productGroups, serviceGroups] = await Promise.all([
+      this.prisma.catalogItem.findMany({
         where, skip, take: limit,
         include: {
           unit: { select: { labelFa: true, precision: true } },
-          category: { select: { id: true, name: true } },
-          balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } },
+          product: { include: { category: { select: { id: true, name: true } }, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } } } },
+          service: { include: { category: { select: { id: true, name: true } } } },
           storefrontListings: { where: { branchId: scope.branchId }, take: 1 },
         },
         orderBy: [{ normalizedName: "asc" }, { id: "asc" }],
       }),
-      this.prisma.product.count({ where }),
-      this.prisma.product.groupBy({ by: ["categoryId"], where: baseWhere, _count: { _all: true } }),
+      this.prisma.catalogItem.count({ where }),
+      this.prisma.product.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, catalogItem: { is: commonFilter }, ...(normalized ? { OR: [{ catalogItem: { is: { normalizedName: { contains: normalized } } } }, { sku: { contains: query ?? "", mode: "insensitive" } }, { barcode: { contains: toAsciiDigits(query ?? "") } }] } : {}) }, _count: { _all: true } }),
+      this.prisma.service.groupBy({ by: ["categoryId"], where: { businessId: scope.businessId, catalogItem: { is: commonFilter } }, _count: { _all: true } }),
     ]);
-    const categoryIds = categoryGroups.flatMap((group) => group.categoryId ? [group.categoryId] : []);
-    const categoryRows = categoryIds.length ? await this.prisma.productCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }) : [];
-    const categoryNames = new Map(categoryRows.map((category) => [category.id, category.name]));
+    const categoryGroups = [...productGroups, ...serviceGroups];
+    const categoryIds = [...new Set(categoryGroups.flatMap((group) => group.categoryId ? [group.categoryId] : []))];
+    const [productCategoryRows, serviceCategoryRows] = categoryIds.length ? await Promise.all([
+      this.prisma.productCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }),
+      this.prisma.serviceCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }),
+    ]) : [[], []];
+    const categoryNames = new Map([...productCategoryRows, ...serviceCategoryRows].map((category) => [category.id, category.name]));
     const categories: Array<{ id: string | null; name: string; count: number }> = [];
     for (const group of categoryGroups) {
-      categories.push(group.categoryId
-        ? { id: group.categoryId, name: categoryNames.get(group.categoryId) ?? "دسته‌بندی دیگر", count: group._count._all }
-        : { id: null, name: "بدون دسته‌بندی", count: group._count._all });
+      const id = group.categoryId;
+      const existing = categories.find((category) => category.id === id);
+      if (existing) existing.count += group._count._all;
+      else categories.push(id ? { id, name: categoryNames.get(id) ?? "دسته‌بندی دیگر", count: group._count._all } : { id: null, name: "بدون دسته‌بندی", count: group._count._all });
     }
     categories.sort((left, right) => left.id === null ? 1 : right.id === null ? -1 : left.name.localeCompare(right.name, "fa"));
-    const items = products.map((product) => {
-      const row = product.storefrontListings[0] ?? null;
+    const mappedItems = items.map((item) => {
+      const product = item.product;
+      const service = item.service;
+      const catalog = product ?? service;
+      if (!catalog) return null;
+      const row = item.storefrontListings[0] ?? null;
       const priceInherited = !row || row.publicPriceRial === null;
       return {
-        productId: product.id, name: product.name, sku: product.sku, kind: product.kind,
-        categoryId: product.category?.id ?? null, category: product.category?.name ?? null,
-        unit: product.unit.labelFa, unitPrecision: product.unit.precision,
-        salePriceRial: product.salePriceRial.toString(), taxRateBasisPoints: product.taxRateBasisPoints,
-        quantityOnHand: product.balances[0]?.quantityOnHand.toString() ?? "0", trackInventory: product.trackInventory,
+        productId: item.id, name: item.name, sku: product?.sku ?? null, kind: item.kind,
+        categoryId: catalog.category?.id ?? null, category: catalog.category?.name ?? null,
+        unit: item.unit.labelFa, unitPrecision: item.unit.precision,
+        salePriceRial: item.salePriceRial.toString(), taxRateBasisPoints: item.taxRateBasisPoints,
+        quantityOnHand: product?.balances[0]?.quantityOnHand.toString() ?? "0", trackInventory: product?.trackInventory ?? false,
         isConfigured: Boolean(row), priceInherited,
         listing: {
-          publicTitle: row?.publicTitle?.trim() || product.name,
+          publicTitle: row?.publicTitle?.trim() || item.name,
           publicDescription: row?.publicDescription ?? "",
-          publicPriceRial: row?.publicPriceRial?.toString() ?? product.salePriceRial.toString(),
+          publicPriceRial: row?.publicPriceRial?.toString() ?? item.salePriceRial.toString(),
           isPublished: row?.isPublished ?? false,
           canOrder: row?.canOrder ?? true,
-          stockPolicy: row?.stockPolicy ?? (product.trackInventory && store.showExactStock ? "EXACT" : "APPROXIMATE"),
+          stockPolicy: row?.stockPolicy ?? (product?.trackInventory && store.showExactStock ? "EXACT" : "APPROXIMATE"),
           minimumQuantity: row?.minimumQuantity.toString() ?? "1",
           maximumQuantity: row?.maximumQuantity?.toString() ?? "",
           displayOrder: row?.displayOrder ?? 0,
         },
       };
     });
+    const safeItems = mappedItems.filter((item): item is NonNullable<typeof item> => item !== null);
     const totalPages = Math.max(1, Math.ceil(total / limit));
-    return { storefrontId: store.id, items, total, page, pageSize: limit, totalPages, categories };
+    return { storefrontId: store.id, items: safeItems, total, page, pageSize: limit, totalPages, categories };
   }
 
   async updateListing(user: AuthenticatedUser, productId: string, dto: StorefrontListingDto, request: AppRequest) {
     const scope = this.scope(user); this.requireRole(user, ["OWNER", "MANAGER"]);
     const store = await this.requireStore(scope);
-    const product = await this.prisma.product.findFirst({ where: { id: productId, businessId: scope.businessId, isActive: true, archivedAt: null }, select: { id: true, salePriceRial: true, name: true, unit: { select: { precision: true } } } });
+    const product = await this.prisma.catalogItem.findFirst({ where: { id: productId, businessId: scope.businessId, isActive: true, archivedAt: null }, select: { id: true, kind: true, salePriceRial: true, name: true, unit: { select: { precision: true } } } });
     if (!product) throw new NotFoundException("کالا یا خدمت فعال پیدا نشد.");
     const price = dto.publicPriceRial ? parseMoney(dto.publicPriceRial, "قیمت عمومی") : null;
     const minimum = quantityMilliForPrecision(dto.minimumQuantity, product.unit.precision);
@@ -408,25 +465,26 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         if (!grants) throw new UnauthorizedException("تأیید شمارهٔ موبایل پایان یافته است؛ دوباره شماره را تأیید کنید.");
         const [business, listings] = await Promise.all([
           tx.business.findUniqueOrThrow({ where: { id: store.businessId }, select: { inventoryEnabled: true } }),
-          tx.storefrontListing.findMany({ where: { id: { in: input.lines.map((line) => line.listingId) }, storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, isPublished: true, canOrder: true, product: { isActive: true, archivedAt: null } }, include: { product: { include: { unit: true, balances: { where: { branchId: store.branchId }, select: { quantityOnHand: true } } } } } }),
+          tx.storefrontListing.findMany({ where: { id: { in: input.lines.map((line) => line.listingId) }, storefrontId: store.id, businessId: store.businessId, branchId: store.branchId, isPublished: true, canOrder: true, catalogItem: { is: { isActive: true, archivedAt: null } } }, include: { catalogItem: { include: { unit: true, product: { include: { balances: { where: { branchId: store.branchId }, select: { quantityOnHand: true } } } } } } } }),
         ]);
         if (listings.length !== input.lines.length) throw new ConflictException("یک یا چند کالا دیگر برای سفارش در دسترس نیست.");
         const listingMap = new Map(listings.map((row) => [row.id, row]));
         const priceChanges: Array<{ listingId: string; title: string; expectedPriceRial: string; currentPriceRial: string; expectedTaxRateBasisPoints: number; currentTaxRateBasisPoints: number }> = [];
         const computed = input.lines.map((line) => {
           const listing = listingMap.get(line.listingId)!;
-          const quantity = quantityMilliForPrecision(line.quantity, listing.product.unit.precision);
-          const minimum = quantityMilliForPrecision(listing.minimumQuantity.toString(), listing.product.unit.precision);
-          const maximum = listing.maximumQuantity ? quantityMilliForPrecision(listing.maximumQuantity.toString(), listing.product.unit.precision) : null;
-          if (quantity < minimum || (maximum !== null && quantity > maximum)) throw new BadRequestException(`تعداد «${listing.publicTitle ?? listing.product.name}» خارج از محدودهٔ سفارش است.`);
-          const currentPrice = listing.publicPriceRial ?? listing.product.salePriceRial;
+          const item = listing.catalogItem;
+          const quantity = quantityMilliForPrecision(line.quantity, item.unit.precision);
+          const minimum = quantityMilliForPrecision(listing.minimumQuantity.toString(), item.unit.precision);
+          const maximum = listing.maximumQuantity ? quantityMilliForPrecision(listing.maximumQuantity.toString(), item.unit.precision) : null;
+          if (quantity < minimum || (maximum !== null && quantity > maximum)) throw new BadRequestException(`تعداد «${listing.publicTitle ?? item.name}» خارج از محدودهٔ سفارش است.`);
+          const currentPrice = listing.publicPriceRial ?? item.salePriceRial;
           const expectedPrice = parseMoney(line.expectedUnitPriceRial, "قیمت کالا");
-          if (expectedPrice !== currentPrice || line.expectedTaxRateBasisPoints !== listing.product.taxRateBasisPoints) priceChanges.push({
-            listingId: listing.id, title: listing.publicTitle ?? listing.product.name,
+          if (expectedPrice !== currentPrice || line.expectedTaxRateBasisPoints !== item.taxRateBasisPoints) priceChanges.push({
+            listingId: listing.id, title: listing.publicTitle ?? item.name,
             expectedPriceRial: expectedPrice.toString(), currentPriceRial: currentPrice.toString(),
-            expectedTaxRateBasisPoints: line.expectedTaxRateBasisPoints, currentTaxRateBasisPoints: listing.product.taxRateBasisPoints,
+            expectedTaxRateBasisPoints: line.expectedTaxRateBasisPoints, currentTaxRateBasisPoints: item.taxRateBasisPoints,
           });
-          return { line, listing, quantity, unitPrice: currentPrice, base: extensionRial(quantity, currentPrice), taxRate: listing.product.taxRateBasisPoints };
+          return { line, listing, item, quantity, unitPrice: currentPrice, base: extensionRial(quantity, currentPrice), taxRate: item.taxRateBasisPoints };
         });
         if (input.deliveryMethod === "PICKUP" && !currentStore.acceptsPickup) throw new BadRequestException("تحویل حضوری برای این فروشگاه فعال نیست.");
         if (input.deliveryMethod === "LOCAL_DELIVERY" && !currentStore.acceptsLocalDelivery) throw new BadRequestException("ارسال محلی برای این فروشگاه فعال نیست.");
@@ -443,10 +501,10 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
           changes: priceChanges, expectedTotalRial: expectedTotal.toString(), currentTotalRial: currentTotal.toString(),
         });
         for (const item of computed) {
-          const product = item.listing.product;
-          if (business.inventoryEnabled && product.kind === "STOCK" && product.trackInventory && item.listing.stockPolicy !== "INQUIRY") {
-            const available = await this.availableStock(tx, store.businessId, store.branchId, product.id, product.balances[0]?.quantityOnHand.toString() ?? "0", new Date());
-            if (available < item.quantity) throw new ConflictException({ code: "STOCK_CHANGED", message: `موجودی «${item.listing.publicTitle ?? product.name}» تغییر کرده است؛ سبد را تازه کنید.` });
+          const product = item.item.product;
+          if (business.inventoryEnabled && product?.trackInventory && item.listing.stockPolicy !== "INQUIRY") {
+            const available = await this.availableStock(tx, store.businessId, store.branchId, item.item.id, product.balances[0]?.quantityOnHand.toString() ?? "0", new Date());
+            if (available < item.quantity) throw new ConflictException({ code: "STOCK_CHANGED", message: `موجودی «${item.listing.publicTitle ?? item.item.name}» تغییر کرده است؛ سبد را تازه کنید.` });
           }
         }
         const id = randomUUID();
@@ -454,6 +512,11 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         const trackingToken = trackingTokenForOrder(id, store.businessId);
         const consumed = await tx.storefrontOtpGrant.updateMany({ where: { id: grants.id, consumedAt: null, expiresAt: { gt: new Date() } }, data: { consumedAt: new Date() } });
         if (consumed.count !== 1) throw new UnauthorizedException("تأیید شمارهٔ موبایل پیش‌تر استفاده شده یا منقضی است.");
+        await tx.storefrontCustomerProfile.upsert({
+          where: { phone },
+          create: { phone, fullName: input.name, address: input.deliveryAddress },
+          update: { fullName: input.name, ...(input.deliveryAddress ? { address: input.deliveryAddress } : {}) },
+        });
         const created = await tx.storefrontOrder.create({ data: {
           id, businessId: store.businessId, branchId: store.branchId, storefrontId: store.id, publicCode,
           trackingTokenHash: hash(trackingToken), idempotencyKey: key, requestHash,
@@ -463,8 +526,8 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
           paymentStatus: "NOT_DUE", status: "SUBMITTED",
           items: { create: computed.map((item, index) => ({
             listingId: item.listing.id,
-            productId: item.listing.product.id, titleSnapshot: item.listing.publicTitle?.trim() || item.listing.product.name,
-            skuSnapshot: item.listing.product.sku, unitCodeSnapshot: item.listing.product.unit.code,
+            productId: item.item.id, titleSnapshot: item.listing.publicTitle?.trim() || item.item.name,
+            skuSnapshot: item.item.product?.sku ?? null, unitCodeSnapshot: item.item.unit.code,
             quantity: new Prisma.Decimal(quantityText(item.quantity)), unitPriceRial: item.unitPrice,
             taxRateBasisPoints: item.taxRate, taxRial: taxes[index], lineTotalRial: item.base + taxes[index],
           })) },
@@ -510,14 +573,18 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async requireCustomerSession(storefrontId: string, token: string | undefined) {
+  private customerProfileView(profile: { fullName: string | null; phone: string; address: string | null }) {
+    return { fullName: profile.fullName, phone: profile.phone, address: profile.address };
+  }
+
+  private async requireCustomerSession(token: string | undefined) {
     if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new UnauthorizedException("برای دیدن سفارش‌ها دوباره با شمارهٔ موبایل وارد شوید.");
     const session = await this.prisma.storefrontCustomerSession.findFirst({
-      where: { storefrontId, tokenHash: hash(token), revokedAt: null, expiresAt: { gt: new Date() } },
-      select: { id: true, phone: true },
+      where: { tokenHash: hash(token), revokedAt: null, expiresAt: { gt: new Date() } },
+      select: { id: true, customerId: true, customer: { select: { fullName: true, phone: true, address: true } } },
     });
     if (!session) throw new UnauthorizedException("نشست مشتری پایان یافته است؛ دوباره با شمارهٔ موبایل وارد شوید.");
-    return session;
+    return { id: session.id, customerId: session.customerId, phone: session.customer.phone, customer: session.customer };
   }
 
   async cancelByCustomer(token: string, ipAddress?: string) {
@@ -633,12 +700,12 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
         if (order.status !== "SUBMITTED") throw new ConflictException("فقط سفارش جدید را می‌توان پذیرفت.");
         const activeCardCount = await tx.storePaymentCard.count({ where: { ...scope, isActive: true, financeAccount: { isActive: true, kind: "BANK" } } });
         if (!activeCardCount) throw new ConflictException("پیش از پذیرش سفارش، مالک باید یک کارت مقصد فعال به حساب بانکی فعال همین شعبه وصل کند.");
-        const products = order.business.inventoryEnabled ? await tx.product.findMany({ where: { id: { in: order.items.map((item) => item.productId!).filter(Boolean) }, businessId: scope.businessId }, select: { id: true, kind: true, trackInventory: true, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } } } }) : [];
+        const products = order.business.inventoryEnabled ? await tx.product.findMany({ where: { id: { in: order.items.map((item) => item.productId!).filter(Boolean) }, businessId: scope.businessId }, select: { id: true, trackInventory: true, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } } } }) : [];
         const productMap = new Map(products.map((product) => [product.id, product]));
         const needed = new Map<string, bigint>();
         for (const item of order.items) {
           const product = item.productId ? productMap.get(item.productId) : undefined;
-          if (!product || product.kind !== "STOCK" || !product.trackInventory) continue;
+          if (!product || !product.trackInventory) continue;
           needed.set(product.id, (needed.get(product.id) ?? 0n) + quantityMilli(item.quantity.toString()));
         }
         for (const [productId, quantity] of [...needed.entries()].sort(([a], [b]) => a.localeCompare(b))) {
@@ -938,9 +1005,14 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async customerParty(tx: Prisma.TransactionClient, businessId: string, name: string, phone: string) {
-    const existing = await tx.party.findFirst({ where: { businessId, phone, archivedAt: null, type: { in: ["CUSTOMER", "BOTH"] } } });
-    if (existing) return existing;
-    return tx.party.create({ data: { businessId, type: "CUSTOMER", name: name.trim(), normalizedName: normalizePersianSearch(name), phone } });
+    const existing = await tx.party.findFirst({ where: { businessId, phone, archivedAt: null }, include: { customer: true } });
+    if (existing) {
+      if (!existing.customer) await tx.customer.create({ data: { id: existing.id, businessId } });
+      return existing;
+    }
+    const party = await tx.party.create({ data: { businessId, name: name.trim(), normalizedName: normalizePersianSearch(name), phone } });
+    await tx.customer.create({ data: { id: party.id, businessId } });
+    return party;
   }
 
   private async findOrderByTrackingToken(token: string) {

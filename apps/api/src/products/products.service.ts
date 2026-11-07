@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
 import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { CreateProductCategoryDto, CreateProductDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
+import type { UpdateCatalogCategoryDto } from "./services.dto.js";
 import { UNIT_GROUPS, unitGroupLabel } from "./unit-catalog.js";
 import { assertUuid } from "../common/uuid-param.pipe.js";
 import { AccountingService } from "../finance/accounting.service.js";
@@ -35,30 +36,30 @@ export class ProductsService {
 
   async list(user: AuthenticatedUser, search?: string, onlyLow?: string, cursor?: string, requestedLimit?: string, kind?: string) {
     const businessId = this.business(user);
-    if (kind !== undefined && kind !== "STOCK" && kind !== "SERVICE") throw new BadRequestException("نوع کالا معتبر نیست.");
+    if (kind !== undefined && kind !== "STOCK") throw new BadRequestException("برای فهرست خدمات از مسیر اختصاصی خدمات استفاده کنید.");
     assertUuid(cursor, "نشانگر صفحه برای فهرست کالا معتبر نیست.");
     const q = search ? normalizePersianSearch(search) : undefined;
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     if (pageMode && onlyLow === "true") throw new BadRequestException("فیلتر موجودی کم با صفحه‌بندی این فهرست سازگار نیست؛ از گزارش موجودی استفاده کنید.");
     const limit = pageMode ? pageLimit(requestedLimit) : 200;
-    const where = { businessId, isActive: true, ...(kind ? { kind: kind as "STOCK" | "SERVICE" } : {}), ...(q ? { OR: [{ normalizedName: { contains: q } }, { sku: { contains: q, mode: "insensitive" as const } }, { barcode: { contains: q } }] } : {}) };
+    const where = { businessId, catalogItem: { isActive: true, ...(q ? { OR: [{ normalizedName: { contains: q } }, { name: { contains: search!.trim(), mode: "insensitive" as const } }] } : {}) }, ...(q ? { OR: [{ sku: { contains: q, mode: "insensitive" as const } }, { barcode: { contains: q } }] } : {}) };
     if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست کالا معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
     const rows = await this.prisma.product.findMany({
       where,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } },
-      orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: limit + (pageMode ? 1 : 0),
+      include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } },
+      orderBy: [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }], take: limit + (pageMode ? 1 : 0),
     });
-    const mapped = rows.map((row) => ({ id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, reorderPoint: row.reorderPoint?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) }));
+    const mapped = rows.map((row) => ({ id: row.id, name: row.catalogItem.name, sku: row.sku, barcode: row.barcode, kind: "STOCK" as const, unit: row.catalogItem.unit, category: row.category, salePriceRial: row.catalogItem.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, reorderPoint: row.reorderPoint?.toString() ?? null, taxRateBasisPoints: row.catalogItem.taxRateBasisPoints, trackInventory: row.trackInventory, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) }));
     const filtered = onlyLow === "true" ? mapped.filter((row) => row.reorderPoint !== null && Number(row.quantityOnHand) <= Number(row.reorderPoint)) : mapped;
     return pageMode ? cursorPage(filtered, limit, (row) => row.id) : filtered;
   }
 
   async get(user: AuthenticatedUser, id: string) {
     const businessId = this.business(user);
-    const row = await this.prisma.product.findFirst({ where: { id, businessId }, include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true, averageCostRial: true, inventoryValueRial: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } } });
+    const row = await this.prisma.product.findFirst({ where: { id, businessId }, include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, category: { select: { id: true, name: true } }, balances: { where: { branchId: user.branchId ?? "" }, select: { quantityOnHand: true, averageCostRial: true, inventoryValueRial: true } }, images: { where: { branchId: user.branchId ?? "" }, orderBy: { position: "asc" }, select: { id: true, position: true } } } });
     if (!row) throw new NotFoundException("کالا پیدا نشد.");
-    return { id: row.id, name: row.name, sku: row.sku, barcode: row.barcode, kind: row.kind, unit: row.unit, category: row.category, salePriceRial: row.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.taxRateBasisPoints, trackInventory: row.trackInventory, isActive: row.isActive, reorderPoint: row.reorderPoint?.toString() ?? null, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", averageCostRial: row.balances[0]?.averageCostRial.toString() ?? null, inventoryValueRial: row.balances[0]?.inventoryValueRial.toString() ?? null, images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) };
+    return { id: row.id, name: row.catalogItem.name, sku: row.sku, barcode: row.barcode, kind: "STOCK", unit: row.catalogItem.unit, category: row.category, salePriceRial: row.catalogItem.salePriceRial.toString(), defaultCostRial: row.defaultCostRial?.toString() ?? null, taxRateBasisPoints: row.catalogItem.taxRateBasisPoints, trackInventory: row.trackInventory, isActive: row.catalogItem.isActive, reorderPoint: row.reorderPoint?.toString() ?? null, quantityOnHand: row.balances[0]?.quantityOnHand.toString() ?? "0", averageCostRial: row.balances[0]?.averageCostRial.toString() ?? null, inventoryValueRial: row.balances[0]?.inventoryValueRial.toString() ?? null, images: row.images.map((image) => ({ id: image.id, position: image.position, path: productImagePath(row.id, image.id) })) };
   }
 
   async create(user: AuthenticatedUser, dto: CreateProductDto, request: AppRequest) {
@@ -74,7 +75,7 @@ export class ProductsService {
     if (!unit) throw new BadRequestException("واحد انتخاب‌شده معتبر یا برای نمایش فعال نیست.");
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده معتبر نیست.");
     const initialQuantityMilli = dto.initialQuantity === undefined ? 0n : parseInitialQuantity(dto.initialQuantity, unit.precision);
-    if (dto.kind === "SERVICE" && initialQuantityMilli > 0n) throw new BadRequestException("برای خدمت نمی‌توان موجودی انبار ثبت کرد.");
+    if (dto.kind && dto.kind !== "STOCK") throw new BadRequestException("برای ثبت خدمت از مسیر اختصاصی خدمات استفاده کنید.");
     const branchId = user.branchId;
     if (initialQuantityMilli > 0n && !branchId) throw new BadRequestException("برای ثبت موجودی اولیه، ابتدا یک شعبه را انتخاب کنید.");
     if (initialQuantityMilli > 0n) {
@@ -84,7 +85,8 @@ export class ProductsService {
     const name = dto.name.trim();
     const defaultCostRial = dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null;
     return this.prisma.$transaction(async (tx) => {
-      const product = await tx.product.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, kind: dto.kind, unitId: unit.id, categoryId: dto.categoryId || null, salePriceRial: parseMoney(dto.salePriceRial), defaultCostRial, reorderPoint: dto.reorderPoint ?? null, taxRateBasisPoints: dto.taxRateBasisPoints ?? 0, trackInventory: dto.kind === "STOCK" } });
+      const catalogItem = await tx.catalogItem.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), kind: "STOCK", unitId: unit.id, salePriceRial: parseMoney(dto.salePriceRial), taxRateBasisPoints: dto.taxRateBasisPoints ?? 0 } });
+      const product = await tx.product.create({ data: { id: catalogItem.id, businessId, sku: dto.sku?.trim() || null, barcode: dto.barcode?.trim() || null, categoryId: dto.categoryId || null, defaultCostRial, reorderPoint: dto.reorderPoint ?? null, trackInventory: true } });
       let openingValueRial = 0n;
       if (initialQuantityMilli > 0n && branchId) {
         const unitCostRial = defaultCostRial ?? 0n;
@@ -98,23 +100,23 @@ export class ProductsService {
         if (openingValueRial > 0n) {
           const inventoryAccountId = await this.accounting.account(tx, businessId, "inventory");
           const equityAccountId = await this.accounting.account(tx, businessId, "equity");
-          await this.accounting.createJournal(tx, { businessId, branchId, date: openingDate, sourceType: "PRODUCT_OPENING", sourceId: product.id, memo: `موجودی اولیهٔ ${product.name}`, actorId: user.id, lines: [
-            { ledgerAccountId: inventoryAccountId, debitRial: openingValueRial, description: `موجودی اولیهٔ ${product.name}` },
+        await this.accounting.createJournal(tx, { businessId, branchId, date: openingDate, sourceType: "PRODUCT_OPENING", sourceId: product.id, memo: `موجودی اولیهٔ ${catalogItem.name}`, actorId: user.id, lines: [
+            { ledgerAccountId: inventoryAccountId, debitRial: openingValueRial, description: `موجودی اولیهٔ ${catalogItem.name}` },
             { ledgerAccountId: equityAccountId, creditRial: openingValueRial, description: "سرمایهٔ افتتاحیهٔ موجودی کالا" },
           ] });
         }
       }
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.created", entityType: "product", entityId: product.id, requestId: request.requestId ?? "unknown", afterJson: { name: product.name, sku: product.sku, salePriceRial: product.salePriceRial.toString(), initialQuantity: quantityText(initialQuantityMilli), openingValueRial: openingValueRial.toString() } } });
-      return this.serialize(product);
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "product.created", entityType: "product", entityId: product.id, requestId: request.requestId ?? "unknown", afterJson: { name: catalogItem.name, sku: product.sku, salePriceRial: catalogItem.salePriceRial.toString(), initialQuantity: quantityText(initialQuantityMilli), openingValueRial: openingValueRial.toString() } } });
+      return this.serialize({ ...catalogItem, ...product });
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
   }
 
   async update(user: AuthenticatedUser, id: string, dto: UpdateProductDto, request: AppRequest) {
     const businessId = this.business(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
-    const before = await this.prisma.product.findFirst({ where: { id, businessId, archivedAt: null } });
-    if (!before) throw new NotFoundException("کالا پیدا نشد.");
-    if (dto.unitId && dto.unitId !== before.unitId) {
+    const before = await this.prisma.product.findFirst({ where: { id, businessId }, include: { catalogItem: true } });
+    if (!before || before.catalogItem.archivedAt !== null) throw new NotFoundException("کالا پیدا نشد.");
+    if (dto.unitId && dto.unitId !== before.catalogItem.unitId) {
       const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId, businessId, isVisible: true }, select: { id: true } });
       if (!unit) throw new BadRequestException("واحد انتخاب‌شده متعلق به این کسب‌وکار نیست.");
       const hasMovements = await this.prisma.inventoryMovement.count({ where: { businessId, productId: id } });
@@ -124,8 +126,8 @@ export class ProductsService {
     let targetQuantityMilli: bigint | undefined;
     let quantityBranchId: string | undefined;
     if (dto.currentQuantity !== undefined) {
-      if (before.kind !== "STOCK" || !before.trackInventory) throw new BadRequestException("برای خدمت نمی‌توان موجودی انبار ثبت کرد.");
-      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId ?? before.unitId, businessId }, select: { precision: true } });
+      if (!before.trackInventory) throw new BadRequestException("برای این کالا مدیریت موجودی فعال نیست.");
+      const unit = await this.prisma.unit.findFirst({ where: { id: dto.unitId ?? before.catalogItem.unitId, businessId }, select: { precision: true } });
       if (!unit) throw new BadRequestException("واحد کالا برای ثبت موجودی معتبر نیست.");
       targetQuantityMilli = parseInitialQuantity(dto.currentQuantity, unit.precision);
       quantityBranchId = user.branchId;
@@ -135,12 +137,13 @@ export class ProductsService {
     }
     if (dto.categoryId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true }, select: { id: true } }))) throw new BadRequestException("دسته‌بندی انتخاب‌شده متعلق به این کسب‌وکار نیست.");
     const product = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.product.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, unitId: dto.unitId, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
-      if (targetQuantityMilli !== undefined && quantityBranchId) await this.adjustCurrentQuantity(tx, user, updated, quantityBranchId, targetQuantityMilli, request);
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.salePriceRial !== undefined ? "product.price.updated" : "product.updated", entityType: "product", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, salePriceRial: before.salePriceRial.toString(), isActive: before.isActive }, afterJson: { name: updated.name, salePriceRial: updated.salePriceRial.toString(), isActive: updated.isActive } } });
-      return updated;
+      const catalogItem = await tx.catalogItem.update({ where: { id }, data: { name: dto.name?.trim(), normalizedName: dto.name ? normalizePersianSearch(dto.name) : undefined, unitId: dto.unitId, salePriceRial: dto.salePriceRial ? parseMoney(dto.salePriceRial) : undefined, taxRateBasisPoints: dto.taxRateBasisPoints, isActive: dto.isActive, archivedAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined } });
+      const updated = await tx.product.update({ where: { id }, data: { sku: dto.sku === undefined ? undefined : dto.sku?.trim() || null, barcode: dto.barcode === undefined ? undefined : dto.barcode?.trim() || null, categoryId: dto.categoryId === undefined ? undefined : dto.categoryId || null, defaultCostRial: dto.defaultCostRial === undefined ? undefined : dto.defaultCostRial ? parseMoney(dto.defaultCostRial) : null, reorderPoint: dto.reorderPoint === undefined ? undefined : dto.reorderPoint || null } });
+      if (targetQuantityMilli !== undefined && quantityBranchId) await this.adjustCurrentQuantity(tx, user, { ...updated, name: catalogItem.name, kind: catalogItem.kind }, quantityBranchId, targetQuantityMilli, request);
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.salePriceRial !== undefined ? "product.price.updated" : "product.updated", entityType: "product", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.catalogItem.name, salePriceRial: before.catalogItem.salePriceRial.toString(), isActive: before.catalogItem.isActive }, afterJson: { name: catalogItem.name, salePriceRial: catalogItem.salePriceRial.toString(), isActive: catalogItem.isActive } } });
+      return this.serialize({ ...catalogItem, ...updated });
     }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 20_000 });
-    return this.serialize(product);
+    return product;
   }
 
   private async adjustCurrentQuantity(tx: Prisma.TransactionClient, user: AuthenticatedUser, product: { id: string; name: string; defaultCostRial: bigint | null; kind: string; trackInventory: boolean }, branchId: string, countedMilli: bigint, request: AppRequest) {
@@ -183,8 +186,8 @@ export class ProductsService {
     const { businessId, branchId } = this.scope(user);
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
     if (placement !== "PRIMARY" && placement !== "GALLERY") throw new BadRequestException("نوع جایگاه تصویر معتبر نیست.");
-    const product = await this.prisma.product.findFirst({ where: { id: productId, businessId, archivedAt: null }, select: { id: true, name: true } });
-    if (!product) throw new NotFoundException("کالا پیدا نشد.");
+    const product = await this.prisma.product.findFirst({ where: { id: productId, businessId }, include: { catalogItem: { select: { archivedAt: true, name: true } } } });
+    if (!product || product.catalogItem.archivedAt) throw new NotFoundException("کالا پیدا نشد.");
     const prepared = await prepareProductImage(file);
     const imageId = randomUUID();
     const storageScope = { businessId, branchId, productId, imageId };
@@ -286,9 +289,10 @@ export class ProductsService {
     return this.unitSettings(user);
   }
 
-  async categories(user: AuthenticatedUser) {
+  async categories(user: AuthenticatedUser, includeArchived = false) {
     const businessId = this.business(user);
-    return this.prisma.productCategory.findMany({ where: { businessId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } });
+    const rows = await this.prisma.productCategory.findMany({ where: { businessId, ...(includeArchived ? {} : { isActive: true }) }, include: { _count: { select: { products: true } }, parent: { select: { name: true } } }, orderBy: [{ isActive: "desc" }, { name: "asc" }] });
+    return rows.map(({ id, name, parentId, parent, isActive, _count }) => ({ id, name, parentId, parentName: parent?.name ?? null, isActive, productCount: _count.products }));
   }
 
   async createCategory(user: AuthenticatedUser, dto: CreateProductCategoryDto, request: AppRequest) {
@@ -303,6 +307,24 @@ export class ProductsService {
       return created;
     });
     return { id: category.id, name: category.name };
+  }
+
+  async updateCategory(user: AuthenticatedUser, id: string, dto: UpdateCatalogCategoryDto, request: AppRequest) {
+    const businessId = this.business(user);
+    this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
+    const before = await this.prisma.productCategory.findFirst({ where: { id, businessId } });
+    if (!before) throw new NotFoundException("دسته‌بندی کالا پیدا نشد.");
+    if (dto.parentId === id) throw new BadRequestException("دسته‌بندی نمی‌تواند والد خودش باشد.");
+    if (dto.parentId && !(await this.prisma.productCategory.findFirst({ where: { id: dto.parentId, businessId, isActive: true } }))) throw new BadRequestException("دسته‌بندی والد در دسترس نیست.");
+    if (dto.isActive === false && await this.prisma.productCategory.count({ where: { businessId, parentId: id, isActive: true } })) throw new BadRequestException("ابتدا دسته‌های زیرمجموعه را بایگانی کنید.");
+    const name = dto.name?.trim();
+    if (name && await this.prisma.productCategory.findFirst({ where: { businessId, id: { not: id }, name: { equals: name, mode: "insensitive" } } })) throw new BadRequestException("دسته‌بندی کالایی با این نام از قبل وجود دارد.");
+    const category = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.productCategory.update({ where: { id }, data: { name, parentId: dto.parentId === undefined ? undefined : dto.parentId || null, isActive: dto.isActive } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: dto.isActive === false ? "product_category.archived" : "product_category.updated", entityType: "product_category", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, isActive: before.isActive, parentId: before.parentId }, afterJson: { name: updated.name, isActive: updated.isActive, parentId: updated.parentId } } });
+      return updated;
+    });
+    return { id: category.id, name: category.name, parentId: category.parentId, isActive: category.isActive };
   }
 
   private serialize(product: { id: string; name: string; sku: string | null; barcode: string | null; kind: string; salePriceRial: bigint; defaultCostRial: bigint | null; taxRateBasisPoints: number; trackInventory: boolean }) { return { id: product.id, name: product.name, sku: product.sku, barcode: product.barcode, kind: product.kind, salePriceRial: product.salePriceRial.toString(), defaultCostRial: product.defaultCostRial?.toString() ?? null, taxRateBasisPoints: product.taxRateBasisPoints, trackInventory: product.trackInventory }; }

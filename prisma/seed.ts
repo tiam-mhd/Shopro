@@ -49,20 +49,33 @@ async function main() {
     await tx.expenseCategory.upsert({ where: { businessId_name: { businessId: business.id, name: "هزینه عمومی" } }, update: {}, create: { businessId: business.id, name: "هزینه عمومی", expenseLedgerAccountId: ledgerIds.get("general_expense")! } });
 
     const party = await tx.party.findFirst({ where: { businessId: business.id, normalizedName: "مشتری نمونه" } });
-    if (!party) await tx.party.create({ data: { businessId: business.id, type: "CUSTOMER", name: "مشتری نمونه", normalizedName: "مشتری نمونه" } });
+    const customerParty = party ?? await tx.party.create({ data: { businessId: business.id, name: "مشتری نمونه", normalizedName: "مشتری نمونه" } });
+    await tx.customer.upsert({ where: { id: customerParty.id }, update: {}, create: { id: customerParty.id, businessId: business.id } });
 
     const samples = [
-      { sku: "DEV-001", name: "دفتر یادداشت", salePriceRial: 6500000n, defaultCostRial: 4000000n, quantity: 12n },
-      { sku: "DEV-002", name: "خودکار آبی", salePriceRial: 1200000n, defaultCostRial: 700000n, quantity: 24n },
-      { sku: "DEV-003", name: "خدمت بسته‌بندی", kind: "SERVICE" as const, salePriceRial: 500000n, defaultCostRial: null, quantity: 0n },
+      { sku: "DEV-001", name: "دفتر یادداشت", kind: "STOCK" as const, salePriceRial: 6500000n, defaultCostRial: 4000000n, quantity: 12n },
+      { sku: "DEV-002", name: "خودکار آبی", kind: "STOCK" as const, salePriceRial: 1200000n, defaultCostRial: 700000n, quantity: 24n },
+      { sku: null, name: "خدمت بسته‌بندی", kind: "SERVICE" as const, salePriceRial: 500000n, defaultCostRial: null, quantity: 0n },
     ];
-    const productIds: string[] = [];
+    const catalogItemIds: string[] = [];
     for (const sample of samples) {
-      const product = await tx.product.upsert({
-        where: { businessId_sku: { businessId: business.id, sku: sample.sku } }, update: {},
-        create: { businessId: business.id, sku: sample.sku, name: sample.name, normalizedName: sample.name, kind: sample.kind ?? "STOCK", unitId: unit.id, salePriceRial: sample.salePriceRial, defaultCostRial: sample.defaultCostRial, trackInventory: sample.kind !== "SERVICE" },
+      const existing = sample.sku
+        ? await tx.product.findFirst({ where: { businessId: business.id, sku: sample.sku }, select: { id: true } })
+        : await tx.catalogItem.findFirst({ where: { businessId: business.id, kind: "SERVICE", name: sample.name }, select: { id: true } });
+      const catalogItemId = existing?.id ?? randomUUID();
+      await tx.catalogItem.upsert({
+        where: { id: catalogItemId }, update: {},
+        create: { id: catalogItemId, businessId: business.id, name: sample.name, normalizedName: sample.name, kind: sample.kind, unitId: unit.id, salePriceRial: sample.salePriceRial },
       });
-      productIds.push(product.id);
+      if (sample.kind === "STOCK") {
+        await tx.product.upsert({
+          where: { id: catalogItemId }, update: {},
+          create: { id: catalogItemId, businessId: business.id, sku: sample.sku, defaultCostRial: sample.defaultCostRial, trackInventory: true },
+        });
+      } else {
+        await tx.service.upsert({ where: { id: catalogItemId }, update: {}, create: { id: catalogItemId, businessId: business.id } });
+      }
+      catalogItemIds.push(catalogItemId);
     }
     const opening = await tx.journalEntry.findFirst({ where: { businessId: business.id, sourceType: "SEED_OPENING", sourceId: business.id } });
     if (!opening) {
@@ -71,8 +84,8 @@ async function main() {
         const sample = samples[index];
         if (sample.quantity === 0n) continue;
         const value = sample.quantity * (sample.defaultCostRial ?? 0n);
-        await tx.inventoryBalance.create({ data: { businessId: business.id, branchId: branch.id, productId: productIds[index], quantityOnHand: sample.quantity.toString(), inventoryValueRial: value, averageCostRial: sample.defaultCostRial ?? 0n } });
-        await tx.inventoryMovement.create({ data: { businessId: business.id, branchId: branch.id, productId: productIds[index], txnDate: new Date("2026-01-01T00:00:00.000Z"), sourceType: "SEED_OPENING", sourceId: business.id, quantityDelta: sample.quantity.toString(), unitCostRial: sample.defaultCostRial ?? 0n, valueDeltaRial: value, createdBy: user.id } });
+        await tx.inventoryBalance.create({ data: { businessId: business.id, branchId: branch.id, productId: catalogItemIds[index], quantityOnHand: sample.quantity.toString(), inventoryValueRial: value, averageCostRial: sample.defaultCostRial ?? 0n } });
+        await tx.inventoryMovement.create({ data: { businessId: business.id, branchId: branch.id, productId: catalogItemIds[index], txnDate: new Date("2026-01-01T00:00:00.000Z"), sourceType: "SEED_OPENING", sourceId: business.id, quantityDelta: sample.quantity.toString(), unitCostRial: sample.defaultCostRial ?? 0n, valueDeltaRial: value, createdBy: user.id } });
         inventoryLines.push({ ledgerAccountId: ledgerIds.get("inventory")!, branchId: branch.id, debitRial: value, creditRial: 0n, description: `موجودی نمونه ${sample.name}` });
         inventoryLines.push({ ledgerAccountId: ledgerIds.get("equity")!, branchId: branch.id, debitRial: 0n, creditRial: value, description: "سرمایهٔ افتتاحیهٔ نمونه" });
       }

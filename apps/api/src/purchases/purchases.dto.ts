@@ -26,6 +26,8 @@ export class CreatePurchaseDto {
   supplierId?: string;
   @IsString() @Length(10, 10)
   txnDate!: string;
+  @IsOptional() @IsString() @Length(10, 10)
+  dueDate?: string;
   @IsOptional() @IsString() @Length(0, 1000)
   note?: string;
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => PurchaseLineDto)

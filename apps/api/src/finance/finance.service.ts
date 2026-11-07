@@ -306,8 +306,8 @@ export class FinanceService {
       let counterLedgerId: string;
       let description: string;
       if (dto.partyId) {
-        const party = await tx.party.findFirst({ where: { id: dto.partyId, businessId, archivedAt: null } });
-        if (!party || (kind === "RECEIPT" && !["CUSTOMER", "BOTH"].includes(party.type)) || (kind === "PAYMENT" && !["SUPPLIER", "BOTH"].includes(party.type))) throw new BadRequestException("طرف‌حساب با نوع این عملیات سازگار نیست.");
+        const party = await tx.party.findFirst({ where: { id: dto.partyId, businessId, archivedAt: null }, include: { customer: { select: { id: true } }, supplier: { select: { id: true } } } });
+        if (!party || (kind === "RECEIPT" && !party.customer) || (kind === "PAYMENT" && !party.supplier)) throw new BadRequestException("طرف‌حساب با نوع این عملیات سازگار نیست.");
         partyId = party.id;
         counterLedgerId = await this.accounting.account(tx, businessId, kind === "RECEIPT" ? "accounts_receivable" : "accounts_payable");
         description = kind === "RECEIPT" ? `دریافت از ${party.name}` : `پرداخت به ${party.name}`;

@@ -7,6 +7,7 @@ import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import { CreateProductCategoryDto, CreateProductDto, UpdateProductDto, UpdateUnitsVisibilityDto } from "./products.dto.js";
 import { ProductsService } from "./products.service.js";
 import { MAX_PRODUCT_IMAGE_UPLOAD_BYTES } from "./product-image-files.js";
+import { UpdateCatalogCategoryDto } from "./services.dto.js";
 
 type UploadedProductImage = { originalname: string; buffer: Buffer; size: number };
 
@@ -17,7 +18,8 @@ export class ProductsController {
   @Get("units") units(@CurrentUser() user: AuthenticatedUser) { return this.products.units(user); }
   @Get("units/settings") unitSettings(@CurrentUser() user: AuthenticatedUser) { return this.products.unitSettings(user); }
   @Patch("units/settings") updateUnitSettings(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateUnitsVisibilityDto, @Req() request: AppRequest) { return this.products.updateUnitSettings(user, dto, request); }
-  @Get("categories") categories(@CurrentUser() user: AuthenticatedUser) { return this.products.categories(user); }
+  @Get("categories") categories(@CurrentUser() user: AuthenticatedUser, @Query("includeArchived") includeArchived?: string) { return this.products.categories(user, includeArchived === "true"); }
+  @Patch("categories/:id") updateCategory(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateCatalogCategoryDto, @Req() request: AppRequest) { return this.products.updateCategory(user, id, dto, request); }
   @Get(":id/images/:imageId") @Header("Content-Type", "image/webp") @Header("X-Content-Type-Options", "nosniff") @Header("Cache-Control", "private, max-age=300")
   async image(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Param("imageId", UuidParamPipe) imageId: string, @Res() response: Response) {
     const image = await this.products.readImage(user, id, imageId);

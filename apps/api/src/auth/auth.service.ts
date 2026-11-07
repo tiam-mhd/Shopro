@@ -118,15 +118,30 @@ export class AuthService {
       const consumed = await tx.otpChallenge.updateMany({ where: { id: result.id, consumedAt: null, expiresAt: { gt: now }, attempts: { lt: 5 } }, data: { consumedAt: now } });
       if (consumed.count !== 1) throw new ConflictException("این کد پیش‌تر استفاده شده یا منقضی شده است.");
       const rawToken = randomBytes(32).toString("base64url");
+      const customerToken = randomBytes(32).toString("base64url");
+      const customerExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const customer = await tx.storefrontCustomerProfile.upsert({
+        where: { phone }, update: {}, create: { phone },
+        select: { id: true, fullName: true, phone: true, address: true },
+      });
+      await tx.storefrontCustomerSession.create({ data: {
+        customerId: customer.id,
+        tokenHash: hash(customerToken), expiresAt: customerExpiresAt,
+      } });
       await tx.storefrontOtpGrant.create({ data: {
         businessId: storefront.businessId, branchId: storefront.branchId, storefrontId: storefront.id,
         phone, tokenHash: hash(rawToken), expiresAt: new Date(now.getTime() + 15 * 60 * 1000),
       } });
-      return { checkoutToken: rawToken, phone, expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() };
+      return {
+        checkoutToken: rawToken, customerToken, phone,
+        expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+        customerExpiresAt: customerExpiresAt.toISOString(),
+        customer: { fullName: customer.fullName, phone: customer.phone, address: customer.address },
+      };
     });
   }
 
-  async verifyStorefrontCustomerOtp(inputPhone: string, inputCode: string, storefront: { storefrontId: string; businessId: string; branchId: string }) {
+  async verifyStorefrontCustomerOtp(inputPhone: string, inputCode: string) {
     const phone = normalizePhone(inputPhone);
     const result = await this.verifyChallenge(phone, inputCode, "STOREFRONT_CUSTOMER");
     if (!result) throw new BadRequestException("کد واردشده درست نیست یا مهلت آن تمام شده است.");
@@ -136,10 +151,14 @@ export class AuthService {
       if (consumed.count !== 1) throw new ConflictException("این کد قبلاً استفاده شده یا منقضی شده است.");
       const customerToken = randomBytes(32).toString("base64url");
       const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const customer = await tx.storefrontCustomerProfile.upsert({
+        where: { phone }, update: {}, create: { phone },
+        select: { id: true, fullName: true, phone: true, address: true },
+      });
       await tx.storefrontCustomerSession.create({ data: {
-        ...storefront, phone, tokenHash: hash(customerToken), expiresAt,
+        customerId: customer.id, tokenHash: hash(customerToken), expiresAt,
       } });
-      return { customerToken, phone, expiresAt: expiresAt.toISOString() };
+      return { customerToken, customer, phone, expiresAt: expiresAt.toISOString() };
     });
   }
 

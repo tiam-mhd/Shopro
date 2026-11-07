@@ -58,10 +58,17 @@ try {
   const financeAccounts = await Promise.all(business.branches.map(({ id }, index) => prisma.financeAccount.create({
     data: { businessId, branchId: id, ledgerAccountId: accountId.get("cash"), name: `Test cash ${index + 1}`, kind: "CASH" },
   })));
-  const customer = await prisma.party.create({ data: { businessId, type: "CUSTOMER", name: "Test customer", normalizedName: "test customer" } });
-  const supplier = await prisma.party.create({ data: { businessId, type: "SUPPLIER", name: "Test supplier", normalizedName: "test supplier" } });
+  const customerParty = await prisma.party.create({ data: { businessId, name: "Test customer", normalizedName: "test customer" } });
+  const supplierParty = await prisma.party.create({ data: { businessId, name: "Test supplier", normalizedName: "test supplier" } });
+  const [customer, supplier] = await Promise.all([
+    prisma.customer.create({ data: { id: customerParty.id, businessId } }),
+    prisma.supplier.create({ data: { id: supplierParty.id, businessId } }),
+  ]);
+  const catalogItem = await prisma.catalogItem.create({
+    data: { businessId, name: "Test stock", normalizedName: "test stock", unitId: unit.id, kind: "STOCK", salePriceRial: 1_500_000n },
+  });
   const product = await prisma.product.create({
-    data: { businessId, sku: "FIN-POST-1", name: "Test stock", normalizedName: "test stock", unitId: unit.id, kind: "STOCK", salePriceRial: 1_500_000n, defaultCostRial: 1_000_000n, trackInventory: true },
+    data: { id: catalogItem.id, businessId, sku: "FIN-POST-1", defaultCostRial: 1_000_000n, trackInventory: true },
   });
   const openingSourceId = randomUUID();
   const quantityMilli = (value) => {
@@ -457,6 +464,7 @@ try {
       await tx.auditEvent.deleteMany({ where: { businessId } });
       await tx.financeAccount.deleteMany({ where: { businessId } });
       await tx.product.deleteMany({ where: { businessId } });
+      await tx.catalogItem.deleteMany({ where: { businessId } });
       await tx.party.deleteMany({ where: { businessId } });
       await tx.unit.deleteMany({ where: { businessId } });
       await tx.ledgerAccount.deleteMany({ where: { businessId } });

@@ -36,6 +36,7 @@ export function buildPartyBalanceQuery(input: { businessId: string; branchId: st
   const afterName = input.cursor?.normalizedName ?? null;
   const afterId = input.cursor?.id ?? "00000000-0000-0000-0000-000000000000";
   const receivable = input.type === "receivable";
+  const roleTable = receivable ? Prisma.raw('"customers"') : Prisma.raw('"suppliers"');
   return Prisma.sql`
     SELECT p.id, p.name, p.phone, p.normalized_name AS "normalizedName",
       (CASE WHEN ${receivable}
@@ -51,6 +52,7 @@ export function buildPartyBalanceQuery(input: { businessId: string; branchId: st
       ON je.id = jl.journal_entry_id AND je.business_id = jl.business_id
     WHERE p.business_id = ${input.businessId}::uuid
       AND p.archived_at IS NULL
+      AND EXISTS (SELECT 1 FROM ${roleTable} role_party WHERE role_party.id = p.id AND role_party.business_id = p.business_id)
       AND jl.business_id = ${input.businessId}::uuid
       AND jl.branch_id = ${input.branchId}::uuid
       AND je.branch_id = ${input.branchId}::uuid
@@ -81,18 +83,18 @@ export class ReportsService {
       this.prisma.expense.aggregate({ where: { businessId, branchId, status: "POSTED", txnDate: range }, _sum: { amountRial: true, taxRial: true }, _count: { id: true } }),
       this.prisma.cashTransaction.aggregate({ where: { businessId, branchId, kind: "RECEIPT", status: "POSTED", txnDate: range, journalEntry: { status: "POSTED" } }, _sum: { amountRial: true } }),
       this.prisma.financeAccount.findMany({ where: { businessId, branchId, isActive: true }, select: { id: true, name: true, ledgerAccountId: true, kind: true } }),
-      this.prisma.product.findMany({ where: { businessId, isActive: true, trackInventory: true, reorderPoint: { not: null } }, include: { unit: { select: { labelFa: true } }, balances: { where: { branchId }, select: { quantityOnHand: true } } }, take: 500 }),
+      this.prisma.product.findMany({ where: { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true, reorderPoint: { not: null } }, include: { catalogItem: { include: { unit: { select: { labelFa: true } } } }, balances: { where: { branchId }, select: { quantityOnHand: true } } }, take: 500 }),
       this.prisma.salesInvoice.findMany({ where: { businessId, branchId, status: "POSTED", txnDate: range }, select: { id: true, txnDate: true, totalRial: true, allocations: { select: { amountRial: true } } } }),
-      this.prisma.salesInvoiceLine.findMany({ where: { businessId, invoice: { businessId, branchId, status: "POSTED", txnDate: range } }, select: { cogsRial: true, product: { select: { kind: true, trackInventory: true } }, lineTotalRial: true, discountRial: true, taxRial: true } }),
+      this.prisma.salesInvoiceLine.findMany({ where: { businessId, invoice: { businessId, branchId, status: "POSTED", txnDate: range } }, select: { cogsRial: true, catalogItem: { select: { kind: true, product: { select: { trackInventory: true } } } }, lineTotalRial: true, discountRial: true, taxRial: true } }),
       this.prisma.salesInvoice.groupBy({ by: ["txnDate"], where: { businessId, branchId, status: "POSTED", txnDate: range }, _sum: { totalRial: true }, orderBy: { txnDate: "asc" } }),
       this.prisma.salesInvoice.count({ where: { businessId, branchId, status: "POSTED", returnOfId: null, txnDate: range } }),
     ]);
     const accountSums = await this.prisma.journalLine.groupBy({ by: ["ledgerAccountId"], where: { businessId, branchId, ledgerAccountId: { in: accounts.map((account) => account.ledgerAccountId) }, journalEntry: { status: { in: ["POSTED", "REVERSED"] } } }, _sum: { debitRial: true, creditRial: true } });
     const cashByLedger = new Map(accountSums.map((item) => [item.ledgerAccountId, (item._sum.debitRial ?? 0n) - (item._sum.creditRial ?? 0n)]));
-    const cogsUnknown = business.inventoryEnabled && lines.some((line) => line.product?.kind === "STOCK" && line.product.trackInventory && line.cogsRial === null);
+    const cogsUnknown = business.inventoryEnabled && lines.some((line) => line.catalogItem?.kind === "STOCK" && line.catalogItem.product?.trackInventory && line.cogsRial === null);
     const cogs = lines.reduce((sum, line) => sum + (line.cogsRial ?? 0n), 0n);
     const netSales = (sales._sum.subtotalRial ?? 0n) - (sales._sum.discountRial ?? 0n);
-    const lowItems = lowStock.filter((product) => Number(product.balances[0]?.quantityOnHand ?? 0) <= Number(product.reorderPoint ?? 0)).map((product) => ({ id: product.id, name: product.name, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? "0", unit: product.unit.labelFa }));
+    const lowItems = lowStock.filter((product) => Number(product.balances[0]?.quantityOnHand ?? 0) <= Number(product.reorderPoint ?? 0)).map((product) => ({ id: product.id, name: product.catalogItem.name, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? "0", unit: product.catalogItem.unit.labelFa }));
     return {
       range: { from: from ?? this.iso(range.gte), to: to ?? this.iso(range.lte) },
       displayCurrency: business.displayCurrency,
@@ -166,10 +168,10 @@ export class ReportsService {
     assertUuid(cursor, "نشانگر صفحه برای گزارش موجودی معتبر نیست.");
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 500;
-    const where = { businessId, isActive: true, kind: "STOCK" as const, trackInventory: true };
+    const where = { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true };
     if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای گزارش موجودی معتبر نیست؛ گزارش را دوباره بارگذاری کنید.");
-    const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { unit: { select: { labelFa: true } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = products.map((product) => { const balance = product.balances[0]; const quantity = balance?.quantityOnHand ?? 0; return { productId: product.id, name: product.name, sku: product.sku, unit: product.unit.labelFa, quantity: quantity.toString(), averageCostRial: balance?.averageCostRial.toString() ?? "0", valueRial: balance?.inventoryValueRial.toString() ?? "0", low: product.reorderPoint !== null && quantity.lte(product.reorderPoint) }; });
+    const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { catalogItem: { include: { unit: { select: { labelFa: true } } } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = products.map((product) => { const balance = product.balances[0]; const quantity = balance?.quantityOnHand ?? 0; return { productId: product.id, name: product.catalogItem.name, sku: product.sku, unit: product.catalogItem.unit.labelFa, quantity: quantity.toString(), averageCostRial: balance?.averageCostRial.toString() ?? "0", valueRial: balance?.inventoryValueRial.toString() ?? "0", low: product.reorderPoint !== null && quantity.lte(product.reorderPoint) }; });
     return pageMode ? cursorPage(mapped, limit, (product) => product.productId) : mapped;
   }
 

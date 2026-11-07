@@ -6,7 +6,7 @@ import { Public } from "../common/public.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import { MAX_ATTACHMENT_BYTES } from "../expenses/attachment-files.js";
-import { CreateStorePaymentCardDto, CreateStorefrontOrderDto, CreateStorefrontReceiptDto, RejectStorefrontOrderDto, RejectStorefrontPaymentDto, ResolveStorefrontOverpaymentDto, SetStorePaymentCardActiveDto, StorefrontListingDto, StorefrontOtpDto, StorefrontSettingsDto, TransitionStorefrontOrderDto, VerifyStorefrontOtpDto, VerifyStorefrontPaymentDto } from "./storefront.dto.js";
+import { CreateStorePaymentCardDto, CreateStorefrontOrderDto, CreateStorefrontReceiptDto, RejectStorefrontOrderDto, RejectStorefrontPaymentDto, ResolveStorefrontOverpaymentDto, SetStorePaymentCardActiveDto, StorefrontListingDto, StorefrontOtpDto, StorefrontSettingsDto, TransitionStorefrontOrderDto, UpdateStorefrontCustomerProfileDto, VerifyStorefrontOtpDto, VerifyStorefrontPaymentDto } from "./storefront.dto.js";
 import { StorefrontService } from "./storefront.service.js";
 
 type UploadedReceipt = { originalname: string; buffer: Buffer; size: number };
@@ -24,6 +24,12 @@ export class PublicStorefrontController {
   @Public() @Get("stores/:slug/customer") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
   customerAccount(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Req() request: AppRequest) { return this.storefront.customerAccount(slug, token, request.ip); }
 
+  @Public() @Patch("stores/:slug/customer/profile") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  updateCustomerProfile(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Body() dto: UpdateStorefrontCustomerProfileDto, @Req() request: AppRequest) { return this.storefront.updateCustomerProfile(slug, token, dto, request.ip); }
+
+  @Public() @Post("stores/:slug/customer/checkout-token") @HttpCode(HttpStatus.OK) @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
+  issueCustomerCheckoutToken(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Req() request: AppRequest) { return this.storefront.issueCustomerCheckoutToken(slug, token, request.ip); }
+
   @Public() @Get("stores/:slug/customer/orders") @Header("Cache-Control", "no-store") @Header("Referrer-Policy", "no-referrer")
   customerOrders(@Param("slug") slug: string, @Headers("x-storefront-customer-token") token: string | undefined, @Query("cursor") cursor: string | undefined, @Query("limit") limit: string | undefined, @Req() request: AppRequest) { return this.storefront.customerOrders(slug, token, cursor, limit, request.ip); }
 
@@ -39,6 +45,17 @@ export class PublicStorefrontController {
   @Public() @Get("stores/:slug/products/:productId/images/:imageId") @Header("Content-Type", "image/webp") @Header("Cache-Control", "public, max-age=3600, immutable") @Header("X-Content-Type-Options", "nosniff") @Header("Cross-Origin-Resource-Policy", "cross-origin")
   async productImage(@Param("slug") slug: string, @Param("productId", UuidParamPipe) productId: string, @Param("imageId", UuidParamPipe) imageId: string, @Req() request: AppRequest, @Res() response: Response) {
     const image = await this.storefront.publicProductImage(slug, productId, imageId, request.ip);
+    response.setHeader("Content-Type", "image/webp");
+    response.setHeader("Content-Length", String(image.byteLength));
+    response.setHeader("Cache-Control", "public, max-age=3600, immutable");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    response.send(image);
+  }
+
+  @Public() @Get("stores/:slug/services/:serviceId/images/:imageId") @Header("Content-Type", "image/webp") @Header("Cache-Control", "public, max-age=3600, immutable") @Header("X-Content-Type-Options", "nosniff") @Header("Cross-Origin-Resource-Policy", "cross-origin")
+  async serviceImage(@Param("slug") slug: string, @Param("serviceId", UuidParamPipe) serviceId: string, @Param("imageId", UuidParamPipe) imageId: string, @Req() request: AppRequest, @Res() response: Response) {
+    const image = await this.storefront.publicServiceImage(slug, serviceId, imageId, request.ip);
     response.setHeader("Content-Type", "image/webp");
     response.setHeader("Content-Length", String(image.byteLength));
     response.setHeader("Cache-Control", "public, max-age=3600, immutable");

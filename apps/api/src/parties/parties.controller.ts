@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Req } from "@nestjs/c
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
-import { CreatePartyDto, UpdatePartyDto } from "./parties.dto.js";
+import { CreateCustomerDto, CreatePartyDto, CreateSupplierDto, UpdateCustomerDto, UpdatePartyDto, UpdateSupplierDto } from "./parties.dto.js";
 import { PartiesService } from "./parties.service.js";
 
 @Controller("parties")
@@ -12,4 +12,20 @@ export class PartiesController {
   @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreatePartyDto, @Req() request: AppRequest) { return this.parties.create(user, dto, request); }
   @Get(":id/statement") statement(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Query("through") through?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.parties.statement(user, id, through, cursor, limit ?? 100); }
   @Patch(":id") update(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdatePartyDto, @Req() request: AppRequest) { return this.parties.update(user, id, dto, request); }
+}
+
+@Controller("customers")
+export class CustomersController {
+  constructor(private readonly parties: PartiesService) {}
+  @Get() list(@CurrentUser() user: AuthenticatedUser, @Query("q") q?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.parties.list(user, q, "CUSTOMER", cursor, limit); }
+  @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateCustomerDto, @Req() request: AppRequest) { return this.parties.createCustomer(user, dto, request); }
+  @Patch(":id") update(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateCustomerDto, @Req() request: AppRequest) { return this.parties.updateCustomer(user, id, dto, request); }
+}
+
+@Controller("suppliers")
+export class SuppliersController {
+  constructor(private readonly parties: PartiesService) {}
+  @Get() list(@CurrentUser() user: AuthenticatedUser, @Query("q") q?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.parties.list(user, q, "SUPPLIER", cursor, limit); }
+  @Post() create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateSupplierDto, @Req() request: AppRequest) { return this.parties.createSupplier(user, dto, request); }
+  @Patch(":id") update(@CurrentUser() user: AuthenticatedUser, @Param("id", UuidParamPipe) id: string, @Body() dto: UpdateSupplierDto, @Req() request: AppRequest) { return this.parties.updateSupplier(user, id, dto, request); }
 }

@@ -74,31 +74,31 @@ try {
       sequence++;
       const id = randomUUID();
       const sortKey = `balance-${String(index).padStart(5, "0")}-${branchCode.toLowerCase()}`;
-      partySpecs.push({ id, businessId, type: "CUSTOMER", name: `مشتری ${sortKey}`, normalizedName: sortKey });
+      partySpecs.push({ id, role: "CUSTOMER", businessId, name: `مشتری ${sortKey}`, normalizedName: sortKey });
       appendEntry({ branchId: branchIdByCode.get(branchCode), partyId: id, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: BigInt((index % 97) + 1), entryNo: `R-${String(sequence).padStart(8, "0")}` });
     }
   }
   for (const count of statementSizes) {
     const id = randomUUID();
     statementPartyIds.set(count, id);
-    partySpecs.push({ id, businessId, type: "CUSTOMER", name: `گردش ${count}`, normalizedName: `statement-${count}` });
+    partySpecs.push({ id, role: "CUSTOMER", businessId, name: `گردش ${count}`, normalizedName: `statement-${count}` });
     for (let index = 0; index < count; index++) {
       appendEntry({ branchId: branchIdByCode.get("BAL-STATEMENT"), partyId: id, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: 100n, entryNo: `T-${String(++sequence).padStart(8, "0")}` });
     }
   }
 
   const isolationPartyId = randomUUID();
-  partySpecs.push({ id: isolationPartyId, businessId, type: "CUSTOMER", name: "طرف‌حساب جداسازی شعبه", normalizedName: "scope-party" });
+  partySpecs.push({ id: isolationPartyId, role: "CUSTOMER", businessId, name: "طرف‌حساب جداسازی شعبه", normalizedName: "scope-party" });
   appendEntry({ branchId: branchIdByCode.get("BAL-SOURCE"), partyId: isolationPartyId, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: 123n, entryNo: `R-${String(++sequence).padStart(8, "0")}` });
   appendEntry({ branchId: branchIdByCode.get("BAL-SCOPE"), partyId: isolationPartyId, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: 987n, entryNo: `R-${String(++sequence).padStart(8, "0")}` });
 
   const tiedPartyIds = ["10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002", "10000000-0000-4000-8000-000000000003"];
   for (const [index, id] of tiedPartyIds.entries()) {
-    partySpecs.push({ id, businessId, type: "CUSTOMER", name: `نام مشترک ${index + 1}`, normalizedName: "نام مشترک" });
+    partySpecs.push({ id, role: "CUSTOMER", businessId, name: `نام مشترک ${index + 1}`, normalizedName: "نام مشترک" });
     appendEntry({ branchId: branchIdByCode.get("BAL-TIE"), partyId: id, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: BigInt(index + 1), entryNo: `R-${String(++sequence).padStart(8, "0")}` });
   }
   const zeroBalancePartyId = randomUUID();
-  partySpecs.push({ id: zeroBalancePartyId, businessId, type: "CUSTOMER", name: "مانده صفر پس از ابطال", normalizedName: "zero-after-reversal" });
+  partySpecs.push({ id: zeroBalancePartyId, role: "CUSTOMER", businessId, name: "مانده صفر پس از ابطال", normalizedName: "zero-after-reversal" });
   const reversedEntryId = appendEntry({ branchId: branchIdByCode.get("BAL-1"), partyId: zeroBalancePartyId, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: 777n, entryNo: `R-${String(++sequence).padStart(8, "0")}`, status: "REVERSED" });
   const reversalId = randomUUID();
   entrySpecs.push({ id: reversalId, businessId, branchId: branchIdByCode.get("BAL-1"), entryNo: `R-${String(++sequence).padStart(8, "0")}`, txnDate: new Date("2026-11-02T00:00:00.000Z"), sourceType: "TEST_REVERSAL", sourceId: randomUUID(), memo: "synthetic reversal", status: "POSTED", reversalOfId: reversedEntryId, postedBy: randomUUID() });
@@ -109,30 +109,39 @@ try {
 
   for (let index = 1; index <= 3; index++) {
     const id = randomUUID();
-    partySpecs.push({ id, businessId, type: "SUPPLIER", name: `تأمین‌کننده ${index}`, normalizedName: `supplier-${index}` });
+    partySpecs.push({ id, role: "SUPPLIER", businessId, name: `تأمین‌کننده ${index}`, normalizedName: `supplier-${index}` });
     appendEntry({ branchId: branchIdByCode.get("BAL-1"), partyId: id, accountId: accountId.get("accounts_payable"), partySide: "credit", amountRial: BigInt(index * 250), entryNo: `P-${String(index).padStart(6, "0")}` });
   }
 
   const noisePartyId = randomUUID();
-  partySpecs.push({ id: noisePartyId, businessId, type: "CUSTOMER", name: "پروندهٔ ظرفیت", normalizedName: "capacity-fixture" });
+  partySpecs.push({ id: noisePartyId, role: "CUSTOMER", businessId, name: "پروندهٔ ظرفیت", normalizedName: "capacity-fixture" });
   for (let index = 1; index <= 27_000; index++) {
     appendEntry({ branchId: branchIdByCode.get("BAL-STATEMENT"), partyId: noisePartyId, accountId: accountId.get("accounts_receivable"), partySide: "debit", amountRial: 1n, entryNo: `N-${String(index).padStart(8, "0")}` });
   }
 
-  for (let offset = 0; offset < partySpecs.length; offset += 2_000) await prisma.party.createMany({ data: partySpecs.slice(offset, offset + 2_000) });
+  for (let offset = 0; offset < partySpecs.length; offset += 2_000) {
+    const batch = partySpecs.slice(offset, offset + 2_000);
+    await prisma.party.createMany({ data: batch.map(({ role: _role, ...party }) => party) });
+    await prisma.customer.createMany({ data: batch.filter(({ role }) => role === "CUSTOMER").map(({ id, businessId: rowBusinessId }) => ({ id, businessId: rowBusinessId })) });
+    await prisma.supplier.createMany({ data: batch.filter(({ role }) => role === "SUPPLIER").map(({ id, businessId: rowBusinessId }) => ({ id, businessId: rowBusinessId })) });
+  }
   for (let offset = 0; offset < entrySpecs.length; offset += 1_500) await prisma.journalEntry.createMany({ data: entrySpecs.slice(offset, offset + 1_500) });
   for (let offset = 0; offset < lineSpecs.length; offset += 2_500) await prisma.journalLine.createMany({ data: lineSpecs.slice(offset, offset + 2_500) });
   const performanceUnit = await prisma.unit.create({ data: { businessId, code: "perf-unit", labelFa: "واحد آزمایش ظرفیت", precision: 0, groupKey: "count", isVisible: true } });
-  const productSpecs = Array.from({ length: 10_000 }, (_, index) => {
+  const serviceSpecs = Array.from({ length: 10_000 }, (_, index) => {
     const suffix = String(index + 1).padStart(5, "0");
-    return { businessId, unitId: performanceUnit.id, sku: `PERF-${suffix}`, name: `کالای ظرفیت ${suffix}`, normalizedName: `perf product ${suffix}`, kind: "SERVICE", salePriceRial: 1_000n, trackInventory: false };
+    return { id: randomUUID(), businessId, unitId: performanceUnit.id, name: `خدمت ظرفیت ${suffix}`, normalizedName: `perf service ${suffix}`, kind: "SERVICE", salePriceRial: 1_000n };
   });
-  for (let offset = 0; offset < productSpecs.length; offset += 2_000) await prisma.product.createMany({ data: productSpecs.slice(offset, offset + 2_000) });
-  const perfProduct = await prisma.product.findFirstOrThrow({ where: { businessId, sku: "PERF-00001" }, select: { id: true } });
+  for (let offset = 0; offset < serviceSpecs.length; offset += 2_000) {
+    const batch = serviceSpecs.slice(offset, offset + 2_000);
+    await prisma.catalogItem.createMany({ data: batch });
+    await prisma.service.createMany({ data: batch.map(({ id }) => ({ id, businessId })) });
+  }
+  const perfCatalogItem = await prisma.catalogItem.findFirstOrThrow({ where: { businessId, kind: "SERVICE", name: "خدمت ظرفیت 00001" }, select: { id: true } });
   assert.ok(lineSpecs.length >= 100_000, "capacity fixture must contain at least 100,000 journal lines");
-  assert.equal(productSpecs.length, 10_000);
+  assert.equal(serviceSpecs.length, 10_000);
   assert.ok(partySpecs.length >= 10_000, "capacity fixture must contain at least 10,000 parties");
-  console.log(`Synthetic report fixture contains ${productSpecs.length.toLocaleString("en-US")} products, ${partySpecs.length.toLocaleString("en-US")} parties and ${lineSpecs.length.toLocaleString("en-US")} journal lines.`);
+  console.log(`Synthetic report fixture contains ${serviceSpecs.length.toLocaleString("en-US")} services, ${partySpecs.length.toLocaleString("en-US")} parties and ${lineSpecs.length.toLocaleString("en-US")} journal lines.`);
   await prisma.$executeRawUnsafe("ANALYZE parties");
   await prisma.$executeRawUnsafe("ANALYZE journal_lines");
   await prisma.$executeRawUnsafe("ANALYZE journal_entries");
@@ -250,7 +259,7 @@ try {
       branchId: branchIdByCode.get("BAL-10000"),
       customerId: statementPartyIds.get(10_000),
       statementPartyId: statementPartyIds.get(10_000),
-      productId: perfProduct.id,
+      productId: perfCatalogItem.id,
     });
   }
 } finally {

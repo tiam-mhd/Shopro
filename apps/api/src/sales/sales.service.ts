@@ -59,25 +59,25 @@ export class SalesService {
       ...(status && ["DRAFT", "POSTED", "VOIDED"].includes(status) ? { status: status as "DRAFT" | "POSTED" | "VOIDED" } : {}),
       ...(q ? { OR: [
         { invoiceNo: { contains: q, mode: "insensitive" as const } },
-        { customer: { name: { contains: q, mode: "insensitive" as const } } },
+        { customer: { is: { party: { name: { contains: q, mode: "insensitive" as const } } } } },
       ] } : {}),
     };
     if (cursor && !(await this.prisma.salesInvoice.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست فاکتورها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
-    const rows = await this.prisma.salesInvoice.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { customer: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = rows.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), customer: row.customer?.name ?? null, subtotalRial: row.subtotalRial.toString(), discountRial: row.discountRial.toString(), taxRial: row.taxRial.toString(), totalRial: row.totalRial.toString(), status: row.status, documentType: row.returnOfId ? "RETURN" : "SALE", returnReason: row.returnReason }));
+    const rows = await this.prisma.salesInvoice.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { customer: { select: { party: { select: { name: true } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), customer: row.customer?.party.name ?? null, subtotalRial: row.subtotalRial.toString(), discountRial: row.discountRial.toString(), taxRial: row.taxRial.toString(), totalRial: row.totalRial.toString(), status: row.status, documentType: row.returnOfId ? "RETURN" : "SALE", returnReason: row.returnReason }));
     return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async get(user: AuthenticatedUser, id: string) {
     const { businessId, branchId } = this.scope(user);
-    const invoice = await this.prisma.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { customer: { select: { id: true, name: true, phone: true } }, lines: { include: { product: { select: { kind: true, trackInventory: true } } } }, allocations: { include: { cashTransaction: { select: { amountRial: true, method: true } } } }, returns: { where: { status: "POSTED" }, include: { lines: true }, orderBy: { txnDate: "desc" } }, returnOf: { select: { id: true, invoiceNo: true } } } });
+    const invoice = await this.prisma.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { customer: { select: { id: true, party: { select: { name: true, phone: true } } } }, lines: { include: { catalogItem: { select: { kind: true, product: { select: { trackInventory: true } } } } } }, allocations: { include: { cashTransaction: { select: { amountRial: true, method: true } } } }, returns: { where: { status: "POSTED" }, include: { lines: true }, orderBy: { txnDate: "desc" } }, returnOf: { select: { id: true, invoiceNo: true } } } });
     if (!invoice) throw new NotFoundException("فاکتور پیدا نشد.");
     const returned = new Map<string, { quantity: bigint; discount: bigint; tax: bigint }>();
     for (const returnInvoice of invoice.returns) for (const line of returnInvoice.lines) if (line.returnOfLineId) {
       const prior = returned.get(line.returnOfLineId) ?? { quantity: 0n, discount: 0n, tax: 0n };
       returned.set(line.returnOfLineId, { quantity: prior.quantity + signedQuantityMilli(line.quantity.toString()), discount: prior.discount - line.discountRial, tax: prior.tax - line.taxRial });
     }
-    return { id: invoice.id, invoiceNo: invoice.invoiceNo, date: invoice.txnDate.toISOString().slice(0, 10), customerId: invoice.customerId, customer: invoice.customer, status: invoice.status, documentType: invoice.returnOfId ? "RETURN" : "SALE", returnOf: invoice.returnOf, returnReason: invoice.returnReason, subtotalRial: invoice.subtotalRial.toString(), discountRial: invoice.discountRial.toString(), taxRial: invoice.taxRial.toString(), totalRial: invoice.totalRial.toString(), note: invoice.note, lines: invoice.lines.map((line) => { const prior = returned.get(line.id); return { id: line.id, productId: line.productId, description: line.descriptionSnapshot, sku: line.skuSnapshot, quantity: line.quantity.toString(), returnedQuantity: (prior?.quantity ?? 0n).toString(), returnedDiscountRial: (prior?.discount ?? 0n).toString(), returnedTaxRial: (prior?.tax ?? 0n).toString(), restockAllowed: line.product?.kind === "STOCK" && line.product.trackInventory, unitCode: line.unitCodeSnapshot, unitPriceRial: line.unitPriceRial.toString(), discountRial: line.discountRial.toString(), taxRateBasisPoints: line.taxRateBasisPoints, taxRial: line.taxRial.toString(), totalRial: line.lineTotalRial.toString(), cogsRial: line.cogsRial?.toString() ?? null }; }), payments: invoice.allocations.map((allocation) => ({ amountRial: allocation.amountRial.toString(), method: allocation.cashTransaction.method })), returns: invoice.returnOfId ? [] : invoice.returns.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), reason: row.returnReason, totalRial: row.totalRial.toString(), lines: row.lines.length })) };
+    return { id: invoice.id, invoiceNo: invoice.invoiceNo, date: invoice.txnDate.toISOString().slice(0, 10), customerId: invoice.customerId, customer: invoice.customer ? { id: invoice.customer.id, ...invoice.customer.party } : null, status: invoice.status, documentType: invoice.returnOfId ? "RETURN" : "SALE", returnOf: invoice.returnOf, returnReason: invoice.returnReason, subtotalRial: invoice.subtotalRial.toString(), discountRial: invoice.discountRial.toString(), taxRial: invoice.taxRial.toString(), totalRial: invoice.totalRial.toString(), note: invoice.note, lines: invoice.lines.map((line) => { const prior = returned.get(line.id); return { id: line.id, productId: line.productId, description: line.descriptionSnapshot, sku: line.skuSnapshot, quantity: line.quantity.toString(), returnedQuantity: (prior?.quantity ?? 0n).toString(), returnedDiscountRial: (prior?.discount ?? 0n).toString(), returnedTaxRial: (prior?.tax ?? 0n).toString(), restockAllowed: line.catalogItem?.kind === "STOCK" && line.catalogItem.product?.trackInventory === true, unitCode: line.unitCodeSnapshot, unitPriceRial: line.unitPriceRial.toString(), discountRial: line.discountRial.toString(), taxRateBasisPoints: line.taxRateBasisPoints, taxRial: line.taxRial.toString(), totalRial: line.lineTotalRial.toString(), cogsRial: line.cogsRial?.toString() ?? null }; }), payments: invoice.allocations.map((allocation) => ({ amountRial: allocation.amountRial.toString(), method: allocation.cashTransaction.method })), returns: invoice.returnOfId ? [] : invoice.returns.map((row) => ({ id: row.id, invoiceNo: row.invoiceNo, date: row.txnDate.toISOString().slice(0, 10), reason: row.returnReason, totalRial: row.totalRial.toString(), lines: row.lines.length })) };
   }
 
   async returnSale(user: AuthenticatedUser, id: string, dto: CreateSalesReturnDto, key: string | undefined, request: AppRequest) {
@@ -235,11 +235,11 @@ export class SalesService {
     const previous = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
     if (previous) return previous;
     const date = this.date(dto.txnDate);
-    if (dto.customerId && !(await this.prisma.party.findFirst({ where: { id: dto.customerId, businessId, archivedAt: null, type: { in: ["CUSTOMER", "BOTH"] } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
-    const products = await this.prisma.product.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true } });
+    if (dto.customerId && !(await this.prisma.customer.findFirst({ where: { id: dto.customerId, businessId, party: { is: { archivedAt: null } } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
     const productMap = new Map(products.map((product) => [product.id, product]));
     if (productMap.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا/خدمت پیدا نشد.");
-    const lines = dto.lines.map((line) => this.calculateDraftLine(user, line, productMap.get(line.productId)!));
+    const lines = dto.lines.map((line) => { const item = productMap.get(line.productId)!; return this.calculateDraftLine(user, line, { ...item, sku: item.product?.sku ?? null }); });
     const subtotal = lines.reduce((sum, line) => sum + line.base, 0n);
     const discounts = lines.reduce((sum, line) => sum + line.discount, 0n);
     const tax = lines.reduce((sum, line) => sum + line.tax, 0n);
@@ -285,11 +285,11 @@ export class SalesService {
     const before = await this.prisma.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, include: { lines: true } });
     if (!before) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
     const date = this.date(dto.txnDate);
-    if (dto.customerId && !(await this.prisma.party.findFirst({ where: { id: dto.customerId, businessId, archivedAt: null, type: { in: ["CUSTOMER", "BOTH"] } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
-    const products = await this.prisma.product.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true } });
+    if (dto.customerId && !(await this.prisma.customer.findFirst({ where: { id: dto.customerId, businessId, party: { is: { archivedAt: null } } } }))) throw new BadRequestException("مشتری انتخاب‌شده معتبر نیست.");
+    const products = await this.prisma.catalogItem.findMany({ where: { id: { in: [...new Set(dto.lines.map((line) => line.productId))] }, businessId, isActive: true }, include: { unit: true, product: { select: { sku: true, trackInventory: true } } } });
     const productMap = new Map(products.map((product) => [product.id, product]));
     if (productMap.size !== new Set(dto.lines.map((line) => line.productId)).size) throw new BadRequestException("یک یا چند کالا/خدمت پیدا نشد.");
-    const lines = dto.lines.map((line) => this.calculateDraftLine(user, line, productMap.get(line.productId)!));
+    const lines = dto.lines.map((line) => { const item = productMap.get(line.productId)!; return this.calculateDraftLine(user, line, { ...item, sku: item.product?.sku ?? null }); });
     const subtotal = lines.reduce((sum, line) => sum + line.base, 0n);
     const discounts = lines.reduce((sum, line) => sum + line.discount, 0n);
     const tax = lines.reduce((sum, line) => sum + line.tax, 0n);
@@ -379,7 +379,7 @@ export class SalesService {
 
     try {
       return await this.retrySerializationConflicts(() => this.prisma.$transaction(async (tx) => {
-        const invoice = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { include: { unit: true } } } }, customer: true } });
+        const invoice = await tx.salesInvoice.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { catalogItem: { include: { unit: true, product: true } } } }, customer: true } });
         if (!invoice) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
         if (invoice.status !== "DRAFT") throw new ConflictException("این فاکتور قبلاً ثبت یا باطل شده است.");
         if (invoice.totalRial < 0n) throw new BadRequestException("مبلغ فاکتور معتبر نیست.");
@@ -399,12 +399,13 @@ export class SalesService {
         const revenueLines: JournalLineInput[] = [];
         let cogs = 0n;
         for (const line of invoice.lines) {
-          const product = line.product;
-          if (!product || product.kind !== "STOCK" || !product.trackInventory || !product.businessId || !product) continue;
+          const item = line.catalogItem;
+          const product = item?.product;
+          if (!item || item.kind !== "STOCK" || !product?.trackInventory) continue;
           const qtyMilli = quantityMilli(line.quantity.toString());
           const balance = await tx.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId, productId: product.id } } });
           const onHandMilli = balance ? quantityMilli(balance.quantityOnHand.toString()) : 0n;
-          if (!invoice.businessId || !product.trackInventory) continue;
+          if (!invoice.businessId) continue;
           const business = await tx.business.findUniqueOrThrow({ where: { id: businessId }, select: { inventoryEnabled: true, negativeStockAllowed: true } });
           if (business.inventoryEnabled && !business.negativeStockAllowed) {
             const now = new Date();
@@ -416,7 +417,7 @@ export class SalesService {
             const reservedMilli = quantityMilliOrZero(reserved._sum.quantity?.toString() ?? "0");
             const ownReservedMilli = quantityMilliOrZero(ownReservation._sum.quantity?.toString() ?? "0");
             const availableMilli = onHandMilli - reservedMilli + ownReservedMilli;
-            if (availableMilli < qtyMilli) throw new ConflictException(`موجودی آزاد «${product.name}» برای این فروش کافی نیست.`);
+            if (availableMilli < qtyMilli) throw new ConflictException(`موجودی آزاد «${item.name}» برای این فروش کافی نیست.`);
           }
           if (business.inventoryEnabled) {
             const avgCost = balance?.averageCostRial ?? product.defaultCostRial ?? 0n;

@@ -84,11 +84,15 @@ try {
 
   const unitA = await prisma.unit.create({ data: { businessId: businessA.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
   const unitB = await prisma.unit.create({ data: { businessId: businessB.id, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } });
-  const productA = await prisma.product.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n, trackInventory: false } });
-  const stockProductA = await prisma.product.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Countable A", normalizedName: "countable a", kind: "STOCK", salePriceRial: 100n, defaultCostRial: 100n, trackInventory: true } });
+  const serviceItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Private A", normalizedName: "private a", kind: "SERVICE", salePriceRial: 100n } });
+  const productA = await prisma.service.create({ data: { id: serviceItemA.id, businessId: businessA.id } });
+  const stockItemA = await prisma.catalogItem.create({ data: { businessId: businessA.id, unitId: unitA.id, name: "Countable A", normalizedName: "countable a", kind: "STOCK", salePriceRial: 100n } });
+  const stockProductA = await prisma.product.create({ data: { id: stockItemA.id, businessId: businessA.id, defaultCostRial: 100n, trackInventory: true } });
   await prisma.inventoryBalance.create({ data: { businessId: businessA.id, branchId: branchA1.id, productId: stockProductA.id, quantityOnHand: "12", inventoryValueRial: 1200n, averageCostRial: 100n } });
-  await prisma.product.create({ data: { businessId: businessB.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n, trackInventory: false } });
-  const auditParty = await prisma.party.create({ data: { businessId: businessA.id, type: "CUSTOMER", name: "Audit target", normalizedName: "audit target" } });
+  const serviceItemB = await prisma.catalogItem.create({ data: { businessId: businessB.id, unitId: unitB.id, name: "Private B", normalizedName: "private b", kind: "SERVICE", salePriceRial: 200n } });
+  await prisma.service.create({ data: { id: serviceItemB.id, businessId: businessB.id } });
+  const auditParty = await prisma.party.create({ data: { businessId: businessA.id, name: "Audit target", normalizedName: "audit target" } });
+  await prisma.customer.create({ data: { id: auditParty.id, businessId: businessA.id } });
   await Promise.all([
     prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-CASH", name: "HTTP cash", type: "ASSET", systemKey: "cash" } }),
     prisma.ledgerAccount.create({ data: { businessId: businessA.id, code: "HTTP-AR", name: "HTTP receivable", type: "ASSET", systemKey: "accounts_receivable" } }),
@@ -181,7 +185,7 @@ try {
 
   const scopedList = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(scopedList.status, 200);
-  assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Countable A", "Private A"], "list results must not leak a different tenant's products");
+  assert.deepEqual(scopedList.payload.map(({ name }) => name), ["Countable A"], "product listings must contain only this tenant's stock items");
 
   const storefrontScope = { auth: owner, businessId: businessA.id, branchId: branchA1.id };
   const missingStorefront = await request("/storefront", storefrontScope);
@@ -418,12 +422,12 @@ try {
   });
   assert.equal(accountantBranch.status, 403, "accountants may not create branches");
   assert.equal(await prisma.branch.count({ where: { businessId: businessA.id } }), branchCountBeforeDeniedCreate, "denied branch creation must not persist a branch");
-  for (const [auth, name] of [[manager, "Manager-created product"], [accountant, "Accountant-created product"]]) {
-    const productWrite = await request("/products", {
+  for (const [auth, name] of [[manager, "Manager-created service"], [accountant, "Accountant-created service"]]) {
+    const productWrite = await request("/services", {
       auth, businessId: businessA.id, branchId: branchA1.id, method: "POST",
-      body: { name, kind: "SERVICE", salePriceRial: "500", unitId: unitA.id },
+      body: { name, salePriceRial: "500", unitId: unitA.id },
     });
-    assert.equal(productWrite.status, 201, `${auth === manager ? "managers" : "accountants"} may create products`);
+    assert.equal(productWrite.status, 201, `${auth === manager ? "managers" : "accountants"} may create services`);
     assert.equal(productWrite.payload.name, name);
   }
 
@@ -444,12 +448,12 @@ try {
   assert.equal(cashierBusinessAudit.status, 403, "only owners may read business audit events");
   const cashierReport = await request("/reports/cash-flow", { auth: cashier, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(cashierReport.status, 403, "cashiers must not read financial reports");
-  const viewerProductWrite = await request("/products", {
+  const viewerProductWrite = await request("/services", {
     auth: viewer, businessId: businessA.id, branchId: branchA1.id, method: "POST",
-    body: { name: "Viewer must not create", kind: "SERVICE", salePriceRial: "500", unitId: unitA.id },
+    body: { name: "Viewer must not create", salePriceRial: "500", unitId: unitA.id },
   });
-  assert.equal(viewerProductWrite.status, 403, "viewers must not mutate product records");
-  assert.equal(await prisma.product.count({ where: { businessId: businessA.id, name: "Viewer must not create" } }), 0);
+  assert.equal(viewerProductWrite.status, 403, "viewers must not mutate service records");
+  assert.equal(await prisma.catalogItem.count({ where: { businessId: businessA.id, name: "Viewer must not create" } }), 0);
 
   const viewerSaleWrite = await request("/sales", {
     auth: viewer, businessId: businessA.id, branchId: branchA1.id, method: "POST",
@@ -481,7 +485,7 @@ try {
     body: { customerId: auditParty.id, txnDate: "2026-11-04", lines: [{ productId: productA.id, quantity: "1", discountRial: "1" }] },
   });
   assert.equal(cashierDiscount.status, 403, "cashiers must not apply a sale discount");
-  const cashierSensitiveProductFields = await request(`/products/${productA.id}`, {
+  const cashierSensitiveProductFields = await request(`/products/${stockProductA.id}`, {
     auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
     body: { salePriceRial: "999", defaultCostRial: "1", taxRateBasisPoints: 2500, sku: "HACKED", barcode: "1234", isActive: false },
   });
@@ -503,28 +507,28 @@ try {
   assert.equal(cashierResultView.payload.activationComplete, true, "activation result must not depend on an analytics event");
   assert.equal(await prisma.onboardingEvent.count({ where: { userId: cashier.user.id, businessId: businessA.id, branchId: branchA1.id, eventName: "dashboard_viewed_after_first_document" } }), 0, "result progress must remain available while analytics is absent");
 
-  const crossTenantId = await request(`/products/${productA.id}`, { auth: outsider, businessId: businessB.id, branchId: branchB1.id });
+  const crossTenantId = await request(`/services/${productA.id}`, { auth: outsider, businessId: businessB.id, branchId: branchB1.id });
   assert.equal(crossTenantId.status, 404, "a valid user must not read another tenant's record by guessing its UUID");
 
-  const forbiddenSensitiveUpdate = await request(`/products/${productA.id}`, {
+  const forbiddenSensitiveUpdate = await request(`/products/${stockProductA.id}`, {
     auth: cashier, businessId: businessA.id, branchId: branchA1.id, method: "PATCH", body: { defaultCostRial: "999" },
   });
   assert.equal(forbiddenSensitiveUpdate.status, 403, "cashiers must not change product cost");
-  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: productA.id } })).defaultCostRial, null, "denied HTTP mutation must not change the database");
+  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: stockProductA.id } })).defaultCostRial, 100n, "denied HTTP mutation must not change the database");
 
-  const csrfDenied = await request("/products", {
+  const csrfDenied = await request("/services", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", csrf: false,
-    body: { name: "Must not exist", kind: "SERVICE", salePriceRial: "500", unitId: unitA.id },
+    body: { name: "Must not exist", salePriceRial: "500", unitId: unitA.id },
   });
   assert.equal(csrfDenied.status, 403, "cookie-authenticated writes must require CSRF proof");
-  assert.equal(await prisma.product.count({ where: { businessId: businessA.id, name: "Must not exist" } }), 0, "CSRF rejection must not create data");
+  assert.equal(await prisma.catalogItem.count({ where: { businessId: businessA.id, name: "Must not exist" } }), 0, "CSRF rejection must not create data");
 
   const malformedId = await request("/products/not-a-uuid", { auth: owner, businessId: businessA.id, branchId: branchA1.id });
   assert.equal(malformedId.status, 400, "malformed resource IDs must be rejected as client input");
 
-  const ownerWrite = await request("/products", {
+  const ownerWrite = await request("/services", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
-    body: { name: "Owner-created fixture", kind: "SERVICE", salePriceRial: "500", unitId: unitA.id },
+    body: { name: "Owner-created fixture", salePriceRial: "500", unitId: unitA.id },
   });
   assert.equal(ownerWrite.status, 201, `owner write should succeed; received ${JSON.stringify(ownerWrite.payload)}`);
   assert.equal(ownerWrite.payload.name, "Owner-created fixture");
@@ -603,21 +607,21 @@ try {
   const inactiveBranchAccess = await request("/products", { auth: owner, businessId: businessA.id, branchId: branchA2.id });
   assert.equal(inactiveBranchAccess.status, 403, "a branch that is no longer active must not authorize API access");
 
-  await prisma.$executeRawUnsafe(`CREATE FUNCTION shopro_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('product.created', 'product.price.updated', 'party.created', 'party.updated', 'expense_category.created', 'expense.draft.created') THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`);
+  await prisma.$executeRawUnsafe(`CREATE FUNCTION shopro_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('product.created', 'product.price.updated', 'service.created', 'service.price.updated', 'party.created', 'party.updated', 'expense_category.created', 'expense.draft.created') THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$`);
   await prisma.$executeRawUnsafe("CREATE TRIGGER shopro_test_reject_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION shopro_test_reject_audit()");
   auditFailureTriggerInstalled = true;
-  const auditFailure = await request("/products", {
+  const auditFailure = await request("/services", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
-    body: { name: "Audit rollback fixture", kind: "SERVICE", salePriceRial: "600", unitId: unitA.id },
+    body: { name: "Audit rollback fixture", salePriceRial: "600", unitId: unitA.id },
   });
-  assert.equal(auditFailure.status, 500, "an audit insert failure must fail the originating product mutation");
-  assert.equal(await prisma.product.count({ where: { businessId: businessA.id, name: "Audit rollback fixture" } }), 0, "the product insert must roll back when its audit insert fails");
-  const productUpdateAuditFailure = await request(`/products/${productA.id}`, {
+  assert.equal(auditFailure.status, 500, "an audit insert failure must fail the originating service mutation");
+  assert.equal(await prisma.catalogItem.count({ where: { businessId: businessA.id, name: "Audit rollback fixture" } }), 0, "the service insert must roll back when its audit insert fails");
+  const productUpdateAuditFailure = await request(`/products/${stockProductA.id}`, {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "PATCH",
     body: { salePriceRial: "999" },
   });
   assert.equal(productUpdateAuditFailure.status, 500, "a product-update audit failure must fail the price mutation");
-  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: productA.id } })).salePriceRial, 100n, "the product update must roll back when its audit insert fails");
+  assert.equal((await prisma.catalogItem.findUniqueOrThrow({ where: { id: stockProductA.id } })).salePriceRial, 100n, "the product update must roll back when its audit insert fails");
   const partyCreateAuditFailure = await request("/parties", {
     auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST",
     body: { type: "CUSTOMER", name: "Audit rollback party" },

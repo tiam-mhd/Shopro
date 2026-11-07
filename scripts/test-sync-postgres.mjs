@@ -33,13 +33,13 @@ try {
   });
   businessId = business.id;
   const [branchA, branchB] = business.branches;
-  const [unit, customer] = await Promise.all([
+  const [unit, customerParty] = await Promise.all([
     prisma.unit.create({ data: { businessId, code: "pcs", labelFa: "عدد", precision: 0, groupKey: "count", isVisible: true } }),
-    prisma.party.create({ data: { businessId, type: "CUSTOMER", name: "Sync customer", normalizedName: "sync customer" } }),
+    prisma.party.create({ data: { businessId, name: "Sync customer", normalizedName: "sync customer" } }),
   ]);
-  const product = await prisma.product.create({
-    data: { businessId, sku: "SYNC-SERVICE", name: "Sync service", normalizedName: "sync service", unitId: unit.id, kind: "SERVICE", salePriceRial: 25_000n, trackInventory: false },
-  });
+  const customer = await prisma.customer.create({ data: { id: customerParty.id, businessId } });
+  const catalogItem = await prisma.catalogItem.create({ data: { businessId, name: "Sync service", normalizedName: "sync service", unitId: unit.id, kind: "SERVICE", salePriceRial: 25_000n } });
+  const service = await prisma.service.create({ data: { id: catalogItem.id, businessId } });
   await Promise.all([
     prisma.ledgerAccount.create({ data: { businessId, code: "SYNC-AR", name: "Sync receivable", type: "ASSET", systemKey: "accounts_receivable" } }),
     prisma.ledgerAccount.create({ data: { businessId, code: "SYNC-REV", name: "Sync revenue", type: "REVENUE", systemKey: "sales_revenue" } }),
@@ -54,7 +54,7 @@ try {
     deviceId: randomUUID(),
     clientOperationId: randomUUID(),
     operationType: "SALE_CREATE_AND_POST",
-    sale: { customerId: customer.id, txnDate: "2026-11-04", lines: [{ productId: product.id, quantity: "1" }] },
+    sale: { customerId: customer.id, txnDate: "2026-11-04", lines: [{ productId: service.id, quantity: "1" }] },
   };
 
   const concurrentResults = await Promise.all([

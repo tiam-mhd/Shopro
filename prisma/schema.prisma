@@ -88,12 +88,6 @@ enum ProductKind {
   SERVICE
 }
 
-enum PartyType {
-  CUSTOMER
-  SUPPLIER
-  BOTH
-}
-
 enum AccountType {
   ASSET
   LIABILITY
@@ -202,39 +196,39 @@ enum SubscriptionPeriodSource {
 }
 
 model User {
-  id                 String              @id @default(uuid()) @db.Uuid
-  phone              String              @unique @db.VarChar(20)
-  displayName        String?             @db.VarChar(120)
-  isActive           Boolean             @default(true) @map("is_active")
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  sessions           UserSession[]
-  memberships        BusinessMember[]
-  auditEvents        AuditEvent[]        @relation("AuditActor")
-  idempotencyRecords IdempotencyRecord[]
-  syncRecords        SyncRecord[]
-  subscriptionOrders SubscriptionOrder[]
+  id                       String                                @id @default(uuid()) @db.Uuid
+  phone                    String                                @unique @db.VarChar(20)
+  displayName              String?                               @db.VarChar(120)
+  isActive                 Boolean                               @default(true) @map("is_active")
+  createdAt                DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions                 UserSession[]
+  memberships              BusinessMember[]
+  auditEvents              AuditEvent[]                          @relation("AuditActor")
+  idempotencyRecords       IdempotencyRecord[]
+  syncRecords              SyncRecord[]
+  subscriptionOrders       SubscriptionOrder[]
   manualPaymentSubmissions SubscriptionManualPaymentSubmission[]
   businessCreationRequests BusinessCreationRequest[]
-  onboardingEvents OnboardingEvent[]
-  onboardingResultViews OnboardingResultView[]
+  onboardingEvents         OnboardingEvent[]
+  onboardingResultViews    OnboardingResultView[]
 
   @@map("users")
 }
 
 model SystemAdmin {
-  id                         String                       @id @default(uuid()) @db.Uuid
-  phone                      String                       @unique @db.VarChar(20)
-  displayName                String                       @map("display_name") @db.VarChar(120)
-  isActive                   Boolean                      @default(true) @map("is_active")
-  createdAt                  DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  sessions                   SystemAdminSession[]
-  auditEvents                SystemAdminAuditEvent[]
-  subscriptionPriceVersions  SubscriptionPriceVersion[]
-  subscriptionPeriods        SubscriptionPeriod[]
-  subscriptionRolloutUpdates SubscriptionRolloutSetting[] @relation("SubscriptionRolloutUpdater")
-  manualPaymentSettingsUpdates SubscriptionManualPaymentSettings[] @relation("ManualPaymentSettingsUpdater")
-  reviewedManualPayments      SubscriptionManualPaymentSubmission[] @relation("ManualPaymentReviewer")
+  id                           String                                @id @default(uuid()) @db.Uuid
+  phone                        String                                @unique @db.VarChar(20)
+  displayName                  String                                @map("display_name") @db.VarChar(120)
+  isActive                     Boolean                               @default(true) @map("is_active")
+  createdAt                    DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  sessions                     SystemAdminSession[]
+  auditEvents                  SystemAdminAuditEvent[]
+  subscriptionPriceVersions    SubscriptionPriceVersion[]
+  subscriptionPeriods          SubscriptionPeriod[]
+  subscriptionRolloutUpdates   SubscriptionRolloutSetting[]          @relation("SubscriptionRolloutUpdater")
+  manualPaymentSettingsUpdates SubscriptionManualPaymentSettings[]   @relation("ManualPaymentSettingsUpdater")
+  reviewedManualPayments       SubscriptionManualPaymentSubmission[] @relation("ManualPaymentReviewer")
 
   @@map("system_admins")
 }
@@ -299,64 +293,67 @@ model OtpChallenge {
 }
 
 model Business {
-  id                   String               @id @default(uuid()) @db.Uuid
-  displayName          String               @map("display_name") @db.VarChar(160)
-  businessType         String               @map("business_type") @db.VarChar(80)
-  timezone             String               @default("Asia/Tehran") @db.VarChar(64)
-  baseCurrency         String               @default("IRR") @map("base_currency") @db.Char(3)
-  displayCurrency      DisplayCurrency      @default(IRT) @map("display_currency")
-  locale               String               @default("fa-IR") @db.VarChar(12)
-  calendar             String               @default("jalali") @db.VarChar(12)
-  inventoryEnabled     Boolean              @default(true) @map("inventory_enabled")
-  negativeStockAllowed Boolean              @default(false) @map("negative_stock_allowed")
-  settingsVersion      Int                  @default(1) @map("settings_version")
-  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  members              BusinessMember[]
-  branches             Branch[]
-  units                Unit[]
-  categories           ProductCategory[]
-  products             Product[]
-  productImages        ProductImage[]
-  parties              Party[]
-  financeAccounts      FinanceAccount[]
-  ledgerAccounts       LedgerAccount[]
-  salesInvoices        SalesInvoice[]
-  salesInvoiceLines    SalesInvoiceLine[]
-  purchases            Purchase[]
-  purchaseLines        PurchaseLine[]
-  expenses             Expense[]
-  expenseCategories    ExpenseCategory[]
-  cashTransactions     CashTransaction[]
-  inventoryMovements   InventoryMovement[]
-  inventoryBalances    InventoryBalance[]
-  stockCounts          StockCount[]
-  journalEntries       JournalEntry[]
-  journalLines         JournalLine[]
-  auditEvents          AuditEvent[]
-  idempotencyRecords   IdempotencyRecord[]
-  syncRecords          SyncRecord[]
-  sequences            DocumentSequence[]
-  closedPeriods        ClosedPeriod[]
-  attachments          Attachment[]
-  cashCloses           CashClose[]
-  branchSubscriptions  BranchSubscription[]
-  subscriptionOrders   SubscriptionOrder[]
-  subscriptionPeriods  SubscriptionPeriod[]
-  onboardingProgress   OnboardingProgress[]
-  onboardingEvents     OnboardingEvent[]
-  onboardingResultViews OnboardingResultView[]
-  businessCreationRequests BusinessCreationRequest[]
-  storefronts            Storefront[]
-  storefrontListings     StorefrontListing[]
-  storefrontOrders       StorefrontOrder[]
-  storefrontPaymentCards StorePaymentCard[]
-  storefrontOtpGrants    StorefrontOtpGrant[]
-  storefrontCustomerSessions StorefrontCustomerSession[]
-  storefrontReservations StorefrontReservation[]
-  storefrontOrderItems   StorefrontOrderItem[]
-  storefrontPaymentAttempts StorefrontPaymentAttempt[]
-  storefrontOrderEvents  StorefrontOrderEvent[]
+  id                         String                      @id @default(uuid()) @db.Uuid
+  displayName                String                      @map("display_name") @db.VarChar(160)
+  businessType               String                      @map("business_type") @db.VarChar(80)
+  timezone                   String                      @default("Asia/Tehran") @db.VarChar(64)
+  baseCurrency               String                      @default("IRR") @map("base_currency") @db.Char(3)
+  displayCurrency            DisplayCurrency             @default(IRT) @map("display_currency")
+  locale                     String                      @default("fa-IR") @db.VarChar(12)
+  calendar                   String                      @default("jalali") @db.VarChar(12)
+  inventoryEnabled           Boolean                     @default(true) @map("inventory_enabled")
+  negativeStockAllowed       Boolean                     @default(false) @map("negative_stock_allowed")
+  settingsVersion            Int                         @default(1) @map("settings_version")
+  createdAt                  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  members                    BusinessMember[]
+  branches                   Branch[]
+  units                      Unit[]
+  categories                 ProductCategory[]
+  serviceCategories          ServiceCategory[]
+  catalogItems               CatalogItem[]
+  products                   Product[]
+  services                   Service[]
+  productImages              ProductImage[]
+  serviceImages              ServiceImage[]
+  parties                    Party[]
+  financeAccounts            FinanceAccount[]
+  ledgerAccounts             LedgerAccount[]
+  salesInvoices              SalesInvoice[]
+  salesInvoiceLines          SalesInvoiceLine[]
+  purchases                  Purchase[]
+  purchaseLines              PurchaseLine[]
+  expenses                   Expense[]
+  expenseCategories          ExpenseCategory[]
+  cashTransactions           CashTransaction[]
+  inventoryMovements         InventoryMovement[]
+  inventoryBalances          InventoryBalance[]
+  stockCounts                StockCount[]
+  journalEntries             JournalEntry[]
+  journalLines               JournalLine[]
+  auditEvents                AuditEvent[]
+  idempotencyRecords         IdempotencyRecord[]
+  syncRecords                SyncRecord[]
+  sequences                  DocumentSequence[]
+  closedPeriods              ClosedPeriod[]
+  attachments                Attachment[]
+  cashCloses                 CashClose[]
+  branchSubscriptions        BranchSubscription[]
+  subscriptionOrders         SubscriptionOrder[]
+  subscriptionPeriods        SubscriptionPeriod[]
+  onboardingProgress         OnboardingProgress[]
+  onboardingEvents           OnboardingEvent[]
+  onboardingResultViews      OnboardingResultView[]
+  businessCreationRequests   BusinessCreationRequest[]
+  storefronts                Storefront[]
+  storefrontListings         StorefrontListing[]
+  storefrontOrders           StorefrontOrder[]
+  storefrontPaymentCards     StorePaymentCard[]
+  storefrontOtpGrants        StorefrontOtpGrant[]
+  storefrontReservations     StorefrontReservation[]
+  storefrontOrderItems       StorefrontOrderItem[]
+  storefrontPaymentAttempts  StorefrontPaymentAttempt[]
+  storefrontOrderEvents      StorefrontOrderEvent[]
 
   @@map("businesses")
 }
@@ -379,41 +376,41 @@ model BusinessMember {
 }
 
 model Branch {
-  id                  String               @id @default(uuid()) @db.Uuid
-  businessId          String               @map("business_id") @db.Uuid
-  name                String               @db.VarChar(120)
-  code                String               @db.VarChar(24)
-  isActive            Boolean              @default(true) @map("is_active")
-  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  business            Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  members             MemberBranch[]
-  invoices            SalesInvoice[]
-  purchases           Purchase[]
-  expenses            Expense[]
-  accounts            FinanceAccount[]
-  cashTx              CashTransaction[]
-  balances            InventoryBalance[]
-  movements           InventoryMovement[]
-  stockCounts         StockCount[]
-  journals            JournalEntry[]
-  journalLines        JournalLine[]
-  cashCloses          CashClose[]
-  subscription        BranchSubscription[]
-  subscriptionOrders  SubscriptionOrder[]
-  subscriptionPeriods SubscriptionPeriod[]
-  syncRecords         SyncRecord[]
-  onboardingProgress  OnboardingProgress[]
-  onboardingEvents    OnboardingEvent[]
-  onboardingResultViews OnboardingResultView[]
-  businessCreationRequests BusinessCreationRequest[]
-  storefront               Storefront?
-  storefrontListings       StorefrontListing[]
-  storefrontOrders         StorefrontOrder[]
-  storefrontPaymentCards   StorePaymentCard[]
-  storefrontOtpGrants      StorefrontOtpGrant[]
-  storefrontCustomerSessions StorefrontCustomerSession[]
-  productImages            ProductImage[]
-  storefrontReservations   StorefrontReservation[]
+  id                         String                      @id @default(uuid()) @db.Uuid
+  businessId                 String                      @map("business_id") @db.Uuid
+  name                       String                      @db.VarChar(120)
+  code                       String                      @db.VarChar(24)
+  isActive                   Boolean                     @default(true) @map("is_active")
+  createdAt                  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  business                   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  members                    MemberBranch[]
+  invoices                   SalesInvoice[]
+  purchases                  Purchase[]
+  expenses                   Expense[]
+  accounts                   FinanceAccount[]
+  cashTx                     CashTransaction[]
+  balances                   InventoryBalance[]
+  movements                  InventoryMovement[]
+  stockCounts                StockCount[]
+  journals                   JournalEntry[]
+  journalLines               JournalLine[]
+  cashCloses                 CashClose[]
+  subscription               BranchSubscription[]
+  subscriptionOrders         SubscriptionOrder[]
+  subscriptionPeriods        SubscriptionPeriod[]
+  syncRecords                SyncRecord[]
+  onboardingProgress         OnboardingProgress[]
+  onboardingEvents           OnboardingEvent[]
+  onboardingResultViews      OnboardingResultView[]
+  businessCreationRequests   BusinessCreationRequest[]
+  storefront                 Storefront?
+  storefrontListings         StorefrontListing[]
+  storefrontOrders           StorefrontOrder[]
+  storefrontPaymentCards     StorePaymentCard[]
+  storefrontOtpGrants        StorefrontOtpGrant[]
+  productImages              ProductImage[]
+  serviceImages              ServiceImage[]
+  storefrontReservations     StorefrontReservation[]
 
   @@unique([businessId, code])
   @@unique([id, businessId])
@@ -481,33 +478,32 @@ model OnboardingResultView {
 }
 
 model Storefront {
-  id                     String             @id @default(uuid()) @db.Uuid
-  businessId             String             @map("business_id") @db.Uuid
-  branchId               String             @unique @map("branch_id") @db.Uuid
-  slug                   String             @unique @db.VarChar(80)
-  status                 StorefrontStatus   @default(DRAFT)
-  publicName             String             @map("public_name") @db.VarChar(120)
-  description            String?            @db.VarChar(1000)
-  phone                  String?            @db.VarChar(20)
-  address                String?            @db.VarChar(500)
-  showAddress            Boolean            @default(false) @map("show_address")
-  acceptsPickup          Boolean            @default(true) @map("accepts_pickup")
-  acceptsLocalDelivery   Boolean            @default(false) @map("accepts_local_delivery")
-  deliveryFeeRial        BigInt             @default(0) @map("delivery_fee_rial")
-  showExactStock         Boolean            @default(false) @map("show_exact_stock")
-  preparationMinutes     Int?               @map("preparation_minutes")
-  paymentInstructions    String?            @map("payment_instructions") @db.VarChar(1000)
-  cancellationPolicy     String?            @map("cancellation_policy") @db.VarChar(1000)
-  createdBy              String             @map("created_by") @db.Uuid
-  updatedBy              String             @map("updated_by") @db.Uuid
-  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business               Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch                 Branch             @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  listings               StorefrontListing[]
-  orders                 StorefrontOrder[]
-  otpGrants              StorefrontOtpGrant[]
-  customerSessions       StorefrontCustomerSession[]
+  id                   String                      @id @default(uuid()) @db.Uuid
+  businessId           String                      @map("business_id") @db.Uuid
+  branchId             String                      @unique @map("branch_id") @db.Uuid
+  slug                 String                      @unique @db.VarChar(80)
+  status               StorefrontStatus            @default(DRAFT)
+  publicName           String                      @map("public_name") @db.VarChar(120)
+  description          String?                     @db.VarChar(1000)
+  phone                String?                     @db.VarChar(20)
+  address              String?                     @db.VarChar(500)
+  showAddress          Boolean                     @default(false) @map("show_address")
+  acceptsPickup        Boolean                     @default(true) @map("accepts_pickup")
+  acceptsLocalDelivery Boolean                     @default(false) @map("accepts_local_delivery")
+  deliveryFeeRial      BigInt                      @default(0) @map("delivery_fee_rial")
+  showExactStock       Boolean                     @default(false) @map("show_exact_stock")
+  preparationMinutes   Int?                        @map("preparation_minutes")
+  paymentInstructions  String?                     @map("payment_instructions") @db.VarChar(1000)
+  cancellationPolicy   String?                     @map("cancellation_policy") @db.VarChar(1000)
+  createdBy            String                      @map("created_by") @db.Uuid
+  updatedBy            String                      @map("updated_by") @db.Uuid
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business             Business                    @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch               Branch                      @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  listings             StorefrontListing[]
+  orders               StorefrontOrder[]
+  otpGrants            StorefrontOtpGrant[]
 
   @@unique([id, branchId])
   @@unique([id, businessId])
@@ -517,27 +513,27 @@ model Storefront {
 }
 
 model StorefrontListing {
-  id                 String                    @id @default(uuid()) @db.Uuid
-  businessId         String                    @map("business_id") @db.Uuid
-  branchId           String                    @map("branch_id") @db.Uuid
-  storefrontId       String                    @map("storefront_id") @db.Uuid
-  productId          String                    @map("product_id") @db.Uuid
-  publicTitle        String?                   @map("public_title") @db.VarChar(160)
-  publicDescription  String?                   @map("public_description") @db.VarChar(1000)
-  publicPriceRial    BigInt?                   @map("public_price_rial")
-  isPublished        Boolean                   @default(false) @map("is_published")
-  canOrder           Boolean                   @default(true) @map("can_order")
-  stockPolicy        StorefrontListingStockPolicy @default(APPROXIMATE) @map("stock_policy")
-  minimumQuantity    Decimal                   @default(1) @map("minimum_quantity") @db.Decimal(18, 3)
-  maximumQuantity    Decimal?                  @map("maximum_quantity") @db.Decimal(18, 3)
-  displayOrder       Int                       @default(0) @map("display_order")
-  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business           Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch             Branch                    @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  storefront         Storefront                @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
-  product            Product                   @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
-  orderItems         StorefrontOrderItem[]
+  id                String                       @id @default(uuid()) @db.Uuid
+  businessId        String                       @map("business_id") @db.Uuid
+  branchId          String                       @map("branch_id") @db.Uuid
+  storefrontId      String                       @map("storefront_id") @db.Uuid
+  productId         String                       @map("product_id") @db.Uuid
+  publicTitle       String?                      @map("public_title") @db.VarChar(160)
+  publicDescription String?                      @map("public_description") @db.VarChar(1000)
+  publicPriceRial   BigInt?                      @map("public_price_rial")
+  isPublished       Boolean                      @default(false) @map("is_published")
+  canOrder          Boolean                      @default(true) @map("can_order")
+  stockPolicy       StorefrontListingStockPolicy @default(APPROXIMATE) @map("stock_policy")
+  minimumQuantity   Decimal                      @default(1) @map("minimum_quantity") @db.Decimal(18, 3)
+  maximumQuantity   Decimal?                     @map("maximum_quantity") @db.Decimal(18, 3)
+  displayOrder      Int                          @default(0) @map("display_order")
+  createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business          Business                     @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch            Branch                       @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  storefront        Storefront                   @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
+  catalogItem       CatalogItem                  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  orderItems        StorefrontOrderItem[]
 
   @@unique([branchId, productId])
   @@unique([id, businessId, branchId])
@@ -547,26 +543,26 @@ model StorefrontListing {
 }
 
 model StorePaymentCard {
-  id                String         @id @default(uuid()) @db.Uuid
-  businessId        String         @map("business_id") @db.Uuid
-  branchId          String         @map("branch_id") @db.Uuid
-  financeAccountId  String         @map("finance_account_id") @db.Uuid
-  bankName          String         @map("bank_name") @db.VarChar(80)
-  holderName        String         @map("holder_name") @db.VarChar(120)
-  cardNumberEncrypted String       @map("card_number_encrypted") @db.VarChar(512)
-  cardLast4         String         @map("card_last4") @db.Char(4)
-  label             String?        @db.VarChar(80)
-  instructions      String?        @db.VarChar(500)
-  displayOrder      Int            @default(0) @map("display_order")
-  isActive          Boolean        @default(true) @map("is_active")
-  createdBy         String         @map("created_by") @db.Uuid
-  updatedBy         String         @map("updated_by") @db.Uuid
-  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business          Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch            Branch         @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  financeAccount    FinanceAccount @relation(fields: [financeAccountId, businessId], references: [id, businessId], onDelete: Restrict)
-  attempts          StorefrontPaymentAttempt[]
+  id                  String                     @id @default(uuid()) @db.Uuid
+  businessId          String                     @map("business_id") @db.Uuid
+  branchId            String                     @map("branch_id") @db.Uuid
+  financeAccountId    String                     @map("finance_account_id") @db.Uuid
+  bankName            String                     @map("bank_name") @db.VarChar(80)
+  holderName          String                     @map("holder_name") @db.VarChar(120)
+  cardNumberEncrypted String                     @map("card_number_encrypted") @db.VarChar(512)
+  cardLast4           String                     @map("card_last4") @db.Char(4)
+  label               String?                    @db.VarChar(80)
+  instructions        String?                    @db.VarChar(500)
+  displayOrder        Int                        @default(0) @map("display_order")
+  isActive            Boolean                    @default(true) @map("is_active")
+  createdBy           String                     @map("created_by") @db.Uuid
+  updatedBy           String                     @map("updated_by") @db.Uuid
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business            Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch              Branch                     @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  financeAccount      FinanceAccount             @relation(fields: [financeAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  attempts            StorefrontPaymentAttempt[]
 
   @@unique([id, businessId])
   @@index([businessId, branchId, isActive, displayOrder])
@@ -574,24 +570,6 @@ model StorePaymentCard {
 }
 
 model StorefrontOtpGrant {
-  id          String      @id @default(uuid()) @db.Uuid
-  businessId  String      @map("business_id") @db.Uuid
-  branchId    String      @map("branch_id") @db.Uuid
-  storefrontId String     @map("storefront_id") @db.Uuid
-  phone       String      @db.VarChar(20)
-  tokenHash   String      @unique @map("token_hash") @db.Char(64)
-  expiresAt   DateTime    @map("expires_at") @db.Timestamptz(6)
-  consumedAt  DateTime?   @map("consumed_at") @db.Timestamptz(6)
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  business    Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch      Branch      @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
-  storefront  Storefront  @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Cascade)
-
-  @@index([storefrontId, phone, expiresAt])
-  @@map("storefront_otp_grants")
-}
-
-model StorefrontCustomerSession {
   id           String     @id @default(uuid()) @db.Uuid
   businessId   String     @map("business_id") @db.Uuid
   branchId     String     @map("branch_id") @db.Uuid
@@ -599,21 +577,46 @@ model StorefrontCustomerSession {
   phone        String     @db.VarChar(20)
   tokenHash    String     @unique @map("token_hash") @db.Char(64)
   expiresAt    DateTime   @map("expires_at") @db.Timestamptz(6)
-  revokedAt    DateTime?  @map("revoked_at") @db.Timestamptz(6)
+  consumedAt   DateTime?  @map("consumed_at") @db.Timestamptz(6)
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   business     Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch       Branch     @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
   storefront   Storefront @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Cascade)
 
   @@index([storefrontId, phone, expiresAt])
+  @@map("storefront_otp_grants")
+}
+
+model StorefrontCustomerSession {
+  id         String                   @id @default(uuid()) @db.Uuid
+  customerId String                   @map("customer_id") @db.Uuid
+  tokenHash  String                   @unique @map("token_hash") @db.Char(64)
+  expiresAt  DateTime                 @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime?                @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer   StorefrontCustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, expiresAt])
   @@index([expiresAt])
   @@map("storefront_customer_sessions")
 }
 
+model StorefrontCustomerProfile {
+  id        String                    @id @default(uuid()) @db.Uuid
+  phone     String                    @unique @db.VarChar(20)
+  fullName  String?                   @map("full_name") @db.VarChar(120)
+  address   String?                   @db.VarChar(500)
+  createdAt DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions  StorefrontCustomerSession[]
+
+  @@map("storefront_customer_profiles")
+}
+
 model StorefrontRateLimitBucket {
-  fingerprint String   @db.Char(64)
-  bucketStart DateTime @map("bucket_start") @db.Timestamptz(6)
-  requestCount Int     @default(0) @map("request_count")
+  fingerprint  String   @db.Char(64)
+  bucketStart  DateTime @map("bucket_start") @db.Timestamptz(6)
+  requestCount Int      @default(0) @map("request_count")
 
   @@id([fingerprint, bucketStart])
   @@index([bucketStart])
@@ -621,40 +624,40 @@ model StorefrontRateLimitBucket {
 }
 
 model StorefrontOrder {
-  id                   String                    @id @default(uuid()) @db.Uuid
-  businessId           String                    @map("business_id") @db.Uuid
-  branchId             String                    @map("branch_id") @db.Uuid
-  storefrontId         String                    @map("storefront_id") @db.Uuid
-  publicCode           String                    @unique @map("public_code") @db.VarChar(32)
-  trackingTokenHash    String                    @unique @map("tracking_token_hash") @db.Char(64)
-  idempotencyKey       String                    @map("idempotency_key") @db.VarChar(128)
-  requestHash          String                    @map("request_hash") @db.Char(64)
-  customerName         String                    @map("customer_name") @db.VarChar(120)
-  customerPhone        String                    @map("customer_phone") @db.VarChar(20)
-  customerPartyId      String?                   @map("customer_party_id") @db.Uuid
-  deliveryMethod       StorefrontDeliveryMethod  @map("delivery_method")
-  deliveryAddress      String?                   @map("delivery_address") @db.VarChar(500)
-  customerNote         String?                   @map("customer_note") @db.VarChar(500)
-  status               StorefrontOrderStatus     @default(SUBMITTED)
-  paymentStatus        StorefrontPaymentStatus   @default(NOT_DUE) @map("payment_status")
-  subtotalRial         BigInt                    @map("subtotal_rial")
-  taxRial              BigInt                    @map("tax_rial")
-  deliveryFeeRial      BigInt                    @map("delivery_fee_rial")
-  totalRial            BigInt                    @map("total_rial")
-  paymentDueAt         DateTime?                 @map("payment_due_at") @db.Timestamptz(6)
-  reservationExpiresAt DateTime?                 @map("reservation_expires_at") @db.Timestamptz(6)
-  acceptedAt           DateTime?                 @map("accepted_at") @db.Timestamptz(6)
-  completedAt          DateTime?                 @map("completed_at") @db.Timestamptz(6)
-  createdAt            DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business             Business                  @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch               Branch                    @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  storefront           Storefront                @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
-  customerParty        Party?                    @relation(fields: [customerPartyId, businessId], references: [id, businessId], onDelete: Restrict)
+  id                   String                     @id @default(uuid()) @db.Uuid
+  businessId           String                     @map("business_id") @db.Uuid
+  branchId             String                     @map("branch_id") @db.Uuid
+  storefrontId         String                     @map("storefront_id") @db.Uuid
+  publicCode           String                     @unique @map("public_code") @db.VarChar(32)
+  trackingTokenHash    String                     @unique @map("tracking_token_hash") @db.Char(64)
+  idempotencyKey       String                     @map("idempotency_key") @db.VarChar(128)
+  requestHash          String                     @map("request_hash") @db.Char(64)
+  customerName         String                     @map("customer_name") @db.VarChar(120)
+  customerPhone        String                     @map("customer_phone") @db.VarChar(20)
+  customerPartyId      String?                    @map("customer_party_id") @db.Uuid
+  deliveryMethod       StorefrontDeliveryMethod   @map("delivery_method")
+  deliveryAddress      String?                    @map("delivery_address") @db.VarChar(500)
+  customerNote         String?                    @map("customer_note") @db.VarChar(500)
+  status               StorefrontOrderStatus      @default(SUBMITTED)
+  paymentStatus        StorefrontPaymentStatus    @default(NOT_DUE) @map("payment_status")
+  subtotalRial         BigInt                     @map("subtotal_rial")
+  taxRial              BigInt                     @map("tax_rial")
+  deliveryFeeRial      BigInt                     @map("delivery_fee_rial")
+  totalRial            BigInt                     @map("total_rial")
+  paymentDueAt         DateTime?                  @map("payment_due_at") @db.Timestamptz(6)
+  reservationExpiresAt DateTime?                  @map("reservation_expires_at") @db.Timestamptz(6)
+  acceptedAt           DateTime?                  @map("accepted_at") @db.Timestamptz(6)
+  completedAt          DateTime?                  @map("completed_at") @db.Timestamptz(6)
+  createdAt            DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business             Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch               Branch                     @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  storefront           Storefront                 @relation(fields: [storefrontId, branchId], references: [id, branchId], onDelete: Restrict)
+  customerParty        Customer?                  @relation(fields: [customerPartyId, businessId], references: [id, businessId], onDelete: Restrict)
   items                StorefrontOrderItem[]
   paymentAttempts      StorefrontPaymentAttempt[]
   events               StorefrontOrderEvent[]
-  reservations          StorefrontReservation[]
+  reservations         StorefrontReservation[]
   salesInvoice         SalesInvoice?
 
   @@unique([businessId, branchId, idempotencyKey])
@@ -666,53 +669,53 @@ model StorefrontOrder {
 }
 
 model StorefrontOrderItem {
-  id                  String             @id @default(uuid()) @db.Uuid
-  businessId          String             @map("business_id") @db.Uuid
-  branchId            String             @map("branch_id") @db.Uuid
-  orderId             String             @map("order_id") @db.Uuid
-  listingId           String?            @map("listing_id") @db.Uuid
-  productId           String?            @map("product_id") @db.Uuid
-  titleSnapshot       String             @map("title_snapshot") @db.VarChar(160)
-  skuSnapshot         String?            @map("sku_snapshot") @db.VarChar(48)
-  unitCodeSnapshot    String             @map("unit_code_snapshot") @db.VarChar(20)
-  quantity            Decimal            @db.Decimal(18, 3)
-  unitPriceRial       BigInt             @map("unit_price_rial")
-  taxRateBasisPoints  Int                @map("tax_rate_basis_points")
-  taxRial             BigInt             @map("tax_rial")
-  lineTotalRial       BigInt             @map("line_total_rial")
-  business            Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  order               StorefrontOrder    @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  listing             StorefrontListing? @relation(fields: [listingId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  product             Product?           @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  id                 String             @id @default(uuid()) @db.Uuid
+  businessId         String             @map("business_id") @db.Uuid
+  branchId           String             @map("branch_id") @db.Uuid
+  orderId            String             @map("order_id") @db.Uuid
+  listingId          String?            @map("listing_id") @db.Uuid
+  productId          String?            @map("product_id") @db.Uuid
+  titleSnapshot      String             @map("title_snapshot") @db.VarChar(160)
+  skuSnapshot        String?            @map("sku_snapshot") @db.VarChar(48)
+  unitCodeSnapshot   String             @map("unit_code_snapshot") @db.VarChar(20)
+  quantity           Decimal            @db.Decimal(18, 3)
+  unitPriceRial      BigInt             @map("unit_price_rial")
+  taxRateBasisPoints Int                @map("tax_rate_basis_points")
+  taxRial            BigInt             @map("tax_rial")
+  lineTotalRial      BigInt             @map("line_total_rial")
+  business           Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order              StorefrontOrder    @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  listing            StorefrontListing? @relation(fields: [listingId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  catalogItem        CatalogItem?       @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@index([businessId, orderId])
   @@map("storefront_order_items")
 }
 
 model StorefrontPaymentAttempt {
-  id                    String                          @id @default(uuid()) @db.Uuid
-  businessId            String                          @map("business_id") @db.Uuid
-  branchId              String                          @map("branch_id") @db.Uuid
-  orderId               String                          @map("order_id") @db.Uuid
-  cardId                String?                         @map("card_id") @db.Uuid
-  cardSnapshot          Json                            @map("card_snapshot")
-  submittedAmountRial   BigInt                          @map("submitted_amount_rial")
-  customerTransactionReference String?                  @map("customer_transaction_reference") @db.VarChar(120)
-  submissionNote        String?                         @map("submission_note") @db.VarChar(300)
-  verifiedAmountRial    BigInt?                         @map("verified_amount_rial")
-  transactionReference String?                         @map("transaction_reference") @db.VarChar(120)
-  transferredAt        DateTime?                       @map("transferred_at") @db.Timestamptz(6)
-  status                StorefrontPaymentAttemptStatus @default(UNDER_REVIEW)
-  reviewerId            String?                         @map("reviewer_id") @db.Uuid
-  reviewedAt            DateTime?                       @map("reviewed_at") @db.Timestamptz(6)
-  rejectionReason       String?                         @map("rejection_reason") @db.VarChar(500)
-  cashTransactionId     String?                         @unique @map("cash_transaction_id") @db.Uuid
-  createdAt             DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
-  business              Business                        @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  order                 StorefrontOrder                 @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  card                  StorePaymentCard?               @relation(fields: [cardId, businessId], references: [id, businessId], onDelete: Restrict)
-  cashTransaction       CashTransaction?                @relation(fields: [cashTransactionId, businessId], references: [id, businessId], onDelete: Restrict)
-  receipt               StorefrontReceipt?
+  id                           String                         @id @default(uuid()) @db.Uuid
+  businessId                   String                         @map("business_id") @db.Uuid
+  branchId                     String                         @map("branch_id") @db.Uuid
+  orderId                      String                         @map("order_id") @db.Uuid
+  cardId                       String?                        @map("card_id") @db.Uuid
+  cardSnapshot                 Json                           @map("card_snapshot")
+  submittedAmountRial          BigInt                         @map("submitted_amount_rial")
+  customerTransactionReference String?                        @map("customer_transaction_reference") @db.VarChar(120)
+  submissionNote               String?                        @map("submission_note") @db.VarChar(300)
+  verifiedAmountRial           BigInt?                        @map("verified_amount_rial")
+  transactionReference         String?                        @map("transaction_reference") @db.VarChar(120)
+  transferredAt                DateTime?                      @map("transferred_at") @db.Timestamptz(6)
+  status                       StorefrontPaymentAttemptStatus @default(UNDER_REVIEW)
+  reviewerId                   String?                        @map("reviewer_id") @db.Uuid
+  reviewedAt                   DateTime?                      @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason              String?                        @map("rejection_reason") @db.VarChar(500)
+  cashTransactionId            String?                        @unique @map("cash_transaction_id") @db.Uuid
+  createdAt                    DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  business                     Business                       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order                        StorefrontOrder                @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  card                         StorePaymentCard?              @relation(fields: [cardId, businessId], references: [id, businessId], onDelete: Restrict)
+  cashTransaction              CashTransaction?               @relation(fields: [cashTransactionId, businessId], references: [id, businessId], onDelete: Restrict)
+  receipt                      StorefrontReceipt?
 
   @@unique([businessId, transactionReference])
   @@unique([cashTransactionId, businessId])
@@ -722,51 +725,51 @@ model StorefrontPaymentAttempt {
 }
 
 model StorefrontReceipt {
-  id                String                   @id @default(uuid()) @db.Uuid
-  paymentAttemptId  String                   @unique @map("payment_attempt_id") @db.Uuid
-  storageKey        String                   @unique @map("storage_key") @db.VarChar(80)
-  mimeType          String                   @map("mime_type") @db.VarChar(80)
-  bytes             BigInt
-  checksum          String                   @unique @db.Char(64)
-  uploadedAt        DateTime                 @default(now()) @map("uploaded_at") @db.Timestamptz(6)
-  paymentAttempt    StorefrontPaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  id               String                   @id @default(uuid()) @db.Uuid
+  paymentAttemptId String                   @unique @map("payment_attempt_id") @db.Uuid
+  storageKey       String                   @unique @map("storage_key") @db.VarChar(80)
+  mimeType         String                   @map("mime_type") @db.VarChar(80)
+  bytes            BigInt
+  checksum         String                   @unique @db.Char(64)
+  uploadedAt       DateTime                 @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+  paymentAttempt   StorefrontPaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
 
   @@map("storefront_receipts")
 }
 
 model StorefrontOrderEvent {
-  id                  String                 @id @default(uuid()) @db.Uuid
-  businessId          String                 @map("business_id") @db.Uuid
-  branchId            String                 @map("branch_id") @db.Uuid
-  orderId             String                 @map("order_id") @db.Uuid
-  previousStatus      StorefrontOrderStatus? @map("previous_status")
-  newStatus           StorefrontOrderStatus  @map("new_status")
-  actorId             String?                @map("actor_id") @db.Uuid
-  actorType           String                 @map("actor_type") @db.VarChar(16)
-  reason              String?                @db.VarChar(500)
-  customerMessage     String?                @map("customer_message") @db.VarChar(500)
-  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  business            Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  order               StorefrontOrder        @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  id              String                 @id @default(uuid()) @db.Uuid
+  businessId      String                 @map("business_id") @db.Uuid
+  branchId        String                 @map("branch_id") @db.Uuid
+  orderId         String                 @map("order_id") @db.Uuid
+  previousStatus  StorefrontOrderStatus? @map("previous_status")
+  newStatus       StorefrontOrderStatus  @map("new_status")
+  actorId         String?                @map("actor_id") @db.Uuid
+  actorType       String                 @map("actor_type") @db.VarChar(16)
+  reason          String?                @db.VarChar(500)
+  customerMessage String?                @map("customer_message") @db.VarChar(500)
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  business        Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  order           StorefrontOrder        @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
 
   @@index([businessId, branchId, orderId, createdAt])
   @@map("storefront_order_events")
 }
 
 model StorefrontReservation {
-  id          String          @id @default(uuid()) @db.Uuid
-  businessId  String          @map("business_id") @db.Uuid
-  branchId    String          @map("branch_id") @db.Uuid
-  orderId     String          @map("order_id") @db.Uuid
-  productId   String          @map("product_id") @db.Uuid
-  quantity    Decimal         @db.Decimal(18, 3)
-  expiresAt   DateTime        @map("expires_at") @db.Timestamptz(6)
-  releasedAt  DateTime?       @map("released_at") @db.Timestamptz(6)
-  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  business    Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch      Branch          @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  order       StorefrontOrder @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  product     Product         @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  id         String          @id @default(uuid()) @db.Uuid
+  businessId String          @map("business_id") @db.Uuid
+  branchId   String          @map("branch_id") @db.Uuid
+  orderId    String          @map("order_id") @db.Uuid
+  productId  String          @map("product_id") @db.Uuid
+  quantity   Decimal         @db.Decimal(18, 3)
+  expiresAt  DateTime        @map("expires_at") @db.Timestamptz(6)
+  releasedAt DateTime?       @map("released_at") @db.Timestamptz(6)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch     Branch          @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  order      StorefrontOrder @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  product    Product         @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([orderId, productId])
   @@index([businessId, branchId, productId, expiresAt, releasedAt])
@@ -774,18 +777,18 @@ model StorefrontReservation {
 }
 
 model OnboardingEvent {
-  id         String     @id @default(uuid()) @db.Uuid
-  userId     String     @map("user_id") @db.Uuid
-  businessId String?    @map("business_id") @db.Uuid
-  branchId   String?    @map("branch_id") @db.Uuid
-  eventName  String     @map("event_name") @db.VarChar(64)
-  stepName   String?    @map("step_name") @db.VarChar(32)
+  id         String      @id @default(uuid()) @db.Uuid
+  userId     String      @map("user_id") @db.Uuid
+  businessId String?     @map("business_id") @db.Uuid
+  branchId   String?     @map("branch_id") @db.Uuid
+  eventName  String      @map("event_name") @db.VarChar(64)
+  stepName   String?     @map("step_name") @db.VarChar(32)
   role       MemberRole?
-  deviceType String     @map("device_type") @db.VarChar(16)
-  occurredAt DateTime   @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  business   Business?  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  deviceType String      @map("device_type") @db.VarChar(16)
+  occurredAt DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business?   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch?     @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@index([userId, occurredAt])
   @@index([businessId, branchId, occurredAt])
@@ -793,15 +796,15 @@ model OnboardingEvent {
 }
 
 model Unit {
-  id         String    @id @default(uuid()) @db.Uuid
-  businessId String    @map("business_id") @db.Uuid
-  code       String    @db.VarChar(20)
-  labelFa    String    @map("label_fa") @db.VarChar(40)
-  precision  Int       @default(0)
-  groupKey   String    @default("count") @map("group_key") @db.VarChar(24)
-  isVisible  Boolean   @default(false) @map("is_visible")
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  products   Product[]
+  id           String        @id @default(uuid()) @db.Uuid
+  businessId   String        @map("business_id") @db.Uuid
+  code         String        @db.VarChar(20)
+  labelFa      String        @map("label_fa") @db.VarChar(40)
+  precision    Int           @default(0)
+  groupKey     String        @default("count") @map("group_key") @db.VarChar(24)
+  isVisible    Boolean       @default(false) @map("is_visible")
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  catalogItems CatalogItem[]
 
   @@unique([businessId, code])
   @@unique([id, businessId])
@@ -824,43 +827,87 @@ model ProductCategory {
   @@map("product_categories")
 }
 
-model Product {
-  id                 String              @id @default(uuid()) @db.Uuid
-  businessId         String              @map("business_id") @db.Uuid
-  sku                String?             @db.VarChar(48)
-  barcode            String?             @db.VarChar(64)
-  name               String              @db.VarChar(160)
-  normalizedName     String              @map("normalized_name") @db.VarChar(200)
-  kind               ProductKind         @default(STOCK)
-  unitId             String              @map("unit_id") @db.Uuid
-  categoryId         String?             @map("category_id") @db.Uuid
-  salePriceRial      BigInt              @default(0) @map("sale_price_rial")
-  defaultCostRial    BigInt?             @map("default_cost_rial")
-  reorderPoint       Decimal?            @map("reorder_point") @db.Decimal(18, 3)
-  taxRateBasisPoints Int                 @default(0) @map("tax_rate_basis_points")
-  trackInventory     Boolean             @default(true) @map("track_inventory")
-  isActive           Boolean             @default(true) @map("is_active")
-  archivedAt         DateTime?           @map("archived_at") @db.Timestamptz(6)
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  unit               Unit                @relation(fields: [unitId, businessId], references: [id, businessId], onDelete: Restrict)
-  category           ProductCategory?    @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
-  salesLines         SalesInvoiceLine[]
-  purchaseLines      PurchaseLine[]
-  movements          InventoryMovement[]
-  balances           InventoryBalance[]
-  stockCountLines    StockCountLine[]
-  storefrontListings StorefrontListing[]
+model ServiceCategory {
+  id         String            @id @default(uuid()) @db.Uuid
+  businessId String            @map("business_id") @db.Uuid
+  parentId   String?           @map("parent_id") @db.Uuid
+  name       String            @db.VarChar(100)
+  isActive   Boolean           @default(true) @map("is_active")
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parent     ServiceCategory?  @relation("ServiceCategoryTree", fields: [parentId, businessId], references: [id, businessId], onDelete: Restrict)
+  children   ServiceCategory[] @relation("ServiceCategoryTree")
+  services   Service[]
+
+  @@unique([id, businessId])
+  @@index([businessId, isActive])
+  @@map("service_categories")
+}
+
+model CatalogItem {
+  id                   String                @id @default(uuid()) @db.Uuid
+  businessId           String                @map("business_id") @db.Uuid
+  name                 String                @db.VarChar(160)
+  normalizedName       String                @map("normalized_name") @db.VarChar(200)
+  kind                 ProductKind
+  unitId               String                @map("unit_id") @db.Uuid
+  salePriceRial        BigInt                @default(0) @map("sale_price_rial")
+  taxRateBasisPoints   Int                   @default(0) @map("tax_rate_basis_points")
+  isActive             Boolean               @default(true) @map("is_active")
+  archivedAt           DateTime?             @map("archived_at") @db.Timestamptz(6)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business             Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  unit                 Unit                  @relation(fields: [unitId, businessId], references: [id, businessId], onDelete: Restrict)
+  product              Product?
+  service              Service?
+  salesLines           SalesInvoiceLine[]
+  purchaseLines        PurchaseLine[]
+  storefrontListings   StorefrontListing[]
   storefrontOrderItems StorefrontOrderItem[]
+
+  @@unique([id, businessId])
+  @@index([businessId, kind, isActive, normalizedName])
+  @@map("catalog_items")
+}
+
+model Product {
+  id                     String                  @id @db.Uuid
+  businessId             String                  @map("business_id") @db.Uuid
+  sku                    String?                 @db.VarChar(48)
+  barcode                String?                 @db.VarChar(64)
+  categoryId             String?                 @map("category_id") @db.Uuid
+  defaultCostRial        BigInt?                 @map("default_cost_rial")
+  reorderPoint           Decimal?                @map("reorder_point") @db.Decimal(18, 3)
+  trackInventory         Boolean                 @default(true) @map("track_inventory")
+  business               Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  catalogItem            CatalogItem             @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
+  category               ProductCategory?        @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
+  movements              InventoryMovement[]
+  balances               InventoryBalance[]
+  stockCountLines        StockCountLine[]
   storefrontReservations StorefrontReservation[]
-  images             ProductImage[]
+  images                 ProductImage[]
 
   @@unique([id, businessId])
   @@unique([businessId, sku])
   @@unique([businessId, barcode])
-  @@index([businessId, isActive, normalizedName])
+  @@index([businessId, categoryId])
   @@map("products")
+}
+
+model Service {
+  id          String           @id @db.Uuid
+  businessId  String           @map("business_id") @db.Uuid
+  categoryId  String?          @map("category_id") @db.Uuid
+  description String?          @db.VarChar(1000)
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  catalogItem CatalogItem      @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
+  category    ServiceCategory? @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
+  images      ServiceImage[]
+
+  @@unique([id, businessId])
+  @@index([businessId, categoryId])
+  @@map("services")
 }
 
 model ProductImage {
@@ -881,32 +928,72 @@ model ProductImage {
   @@map("product_images")
 }
 
+model ServiceImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  serviceId  String   @map("service_id") @db.Uuid
+  position   Int      @default(0)
+  bytes      BigInt
+  checksum   String   @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch   @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Cascade)
+  service    Service  @relation(fields: [serviceId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, branchId, serviceId, position])
+  @@index([businessId, branchId, serviceId])
+  @@map("service_images")
+}
+
 model Party {
   id               String            @id @default(uuid()) @db.Uuid
   businessId       String            @map("business_id") @db.Uuid
-  type             PartyType
   name             String            @db.VarChar(160)
   normalizedName   String            @map("normalized_name") @db.VarChar(200)
   phone            String?           @db.VarChar(20)
   email            String?           @db.VarChar(254)
   nationalId       String?           @map("national_id") @db.VarChar(20)
   address          String?           @db.VarChar(500)
-  creditLimitRial  BigInt?           @map("credit_limit_rial")
   archivedAt       DateTime?         @map("archived_at") @db.Timestamptz(6)
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  salesInvoices    SalesInvoice[]    @relation("SalesCustomer")
-  storefrontOrders StorefrontOrder[]
-  purchases        Purchase[]        @relation("PurchaseSupplier")
+  customer         Customer?
+  supplier         Supplier?
   cashTransactions CashTransaction[]
   journalLines     JournalLine[]
-  expenses         Expense[]
 
   @@unique([id, businessId])
   @@index([businessId, normalizedName])
   @@index([businessId, phone])
   @@map("parties")
+}
+
+model Customer {
+  id               String            @id @db.Uuid
+  businessId       String            @map("business_id") @db.Uuid
+  creditLimitRial  BigInt?           @map("credit_limit_rial")
+  party            Party             @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
+  salesInvoices    SalesInvoice[]
+  storefrontOrders StorefrontOrder[]
+
+  @@unique([id, businessId])
+  @@index([businessId, id])
+  @@map("customers")
+}
+
+model Supplier {
+  id               String     @id @db.Uuid
+  businessId       String     @map("business_id") @db.Uuid
+  paymentTermsDays Int?       @map("payment_terms_days")
+  party            Party      @relation(fields: [id, businessId], references: [id, businessId], onDelete: Cascade)
+  purchases        Purchase[]
+  expenses         Expense[]
+
+  @@unique([id, businessId])
+  @@index([businessId, id])
+  @@map("suppliers")
 }
 
 model LedgerAccount {
@@ -932,20 +1019,20 @@ model LedgerAccount {
 }
 
 model FinanceAccount {
-  id              String             @id @default(uuid()) @db.Uuid
-  businessId      String             @map("business_id") @db.Uuid
-  branchId        String             @map("branch_id") @db.Uuid
-  ledgerAccountId String             @map("ledger_account_id") @db.Uuid
-  name            String             @db.VarChar(100)
-  kind            FinanceAccountKind
-  isActive        Boolean            @default(true) @map("is_active")
-  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  business        Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch          Branch             @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  ledgerAccount   LedgerAccount      @relation(fields: [ledgerAccountId, businessId], references: [id, businessId], onDelete: Restrict)
-  outgoing        CashTransaction[]  @relation("CashFromAccount")
-  incoming        CashTransaction[]  @relation("CashToAccount")
-  cashCloses      CashClose[]
+  id                     String             @id @default(uuid()) @db.Uuid
+  businessId             String             @map("business_id") @db.Uuid
+  branchId               String             @map("branch_id") @db.Uuid
+  ledgerAccountId        String             @map("ledger_account_id") @db.Uuid
+  name                   String             @db.VarChar(100)
+  kind                   FinanceAccountKind
+  isActive               Boolean            @default(true) @map("is_active")
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  business               Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch                 Branch             @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  ledgerAccount          LedgerAccount      @relation(fields: [ledgerAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  outgoing               CashTransaction[]  @relation("CashFromAccount")
+  incoming               CashTransaction[]  @relation("CashToAccount")
+  cashCloses             CashClose[]
   storefrontPaymentCards StorePaymentCard[]
 
   @@unique([id, businessId])
@@ -954,36 +1041,36 @@ model FinanceAccount {
 }
 
 model SalesInvoice {
-  id           String              @id @default(uuid()) @db.Uuid
-  businessId   String              @map("business_id") @db.Uuid
-  branchId     String              @map("branch_id") @db.Uuid
-  customerId   String?             @map("customer_id") @db.Uuid
-  invoiceNo    String?             @map("invoice_no") @db.VarChar(32)
-  txnDate      DateTime            @map("txn_date") @db.Date
-  dueDate      DateTime?           @map("due_date") @db.Date
-  status       InvoiceStatus       @default(DRAFT)
-  subtotalRial BigInt              @default(0) @map("subtotal_rial")
-  discountRial BigInt              @default(0) @map("discount_rial")
-  taxRial      BigInt              @default(0) @map("tax_rial")
-  totalRial    BigInt              @default(0) @map("total_rial")
-  note         String?             @db.VarChar(1000)
-  postedAt     DateTime?           @map("posted_at") @db.Timestamptz(6)
-  postedBy     String?             @map("posted_by") @db.Uuid
-  voidReason   String?             @map("void_reason") @db.VarChar(500)
-  returnOfId   String?             @map("return_of_id") @db.Uuid
-  returnReason String?             @map("return_reason") @db.VarChar(500)
-  version      Int                 @default(1)
-  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  business     Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch       Branch              @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  customer     Party?              @relation("SalesCustomer", fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
-  returnOf     SalesInvoice?       @relation("SalesInvoiceReturns", fields: [returnOfId, businessId], references: [id, businessId], onDelete: Restrict)
-  returns      SalesInvoice[]      @relation("SalesInvoiceReturns")
-  lines        SalesInvoiceLine[]
-  allocations  PaymentAllocation[]
-  storefrontOrderId String?          @unique @map("storefront_order_id") @db.Uuid
-  storefrontOrder   StorefrontOrder? @relation(fields: [storefrontOrderId, businessId], references: [id, businessId], onDelete: Restrict)
+  id                String              @id @default(uuid()) @db.Uuid
+  businessId        String              @map("business_id") @db.Uuid
+  branchId          String              @map("branch_id") @db.Uuid
+  customerId        String?             @map("customer_id") @db.Uuid
+  invoiceNo         String?             @map("invoice_no") @db.VarChar(32)
+  txnDate           DateTime            @map("txn_date") @db.Date
+  dueDate           DateTime?           @map("due_date") @db.Date
+  status            InvoiceStatus       @default(DRAFT)
+  subtotalRial      BigInt              @default(0) @map("subtotal_rial")
+  discountRial      BigInt              @default(0) @map("discount_rial")
+  taxRial           BigInt              @default(0) @map("tax_rial")
+  totalRial         BigInt              @default(0) @map("total_rial")
+  note              String?             @db.VarChar(1000)
+  postedAt          DateTime?           @map("posted_at") @db.Timestamptz(6)
+  postedBy          String?             @map("posted_by") @db.Uuid
+  voidReason        String?             @map("void_reason") @db.VarChar(500)
+  returnOfId        String?             @map("return_of_id") @db.Uuid
+  returnReason      String?             @map("return_reason") @db.VarChar(500)
+  version           Int                 @default(1)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business          Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch            Branch              @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  customer          Customer?           @relation(fields: [customerId, businessId], references: [id, businessId], onDelete: Restrict)
+  returnOf          SalesInvoice?       @relation("SalesInvoiceReturns", fields: [returnOfId, businessId], references: [id, businessId], onDelete: Restrict)
+  returns           SalesInvoice[]      @relation("SalesInvoiceReturns")
+  lines             SalesInvoiceLine[]
+  allocations       PaymentAllocation[]
+  storefrontOrderId String?             @unique @map("storefront_order_id") @db.Uuid
+  storefrontOrder   StorefrontOrder?    @relation(fields: [storefrontOrderId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([businessId, invoiceNo])
   @@unique([id, businessId])
@@ -1012,7 +1099,7 @@ model SalesInvoiceLine {
   invoice             SalesInvoice       @relation(fields: [invoiceId, businessId], references: [id, businessId], onDelete: Cascade)
   returnOfLine        SalesInvoiceLine?  @relation("SalesLineReturns", fields: [returnOfLineId, businessId], references: [id, businessId], onDelete: Restrict)
   returnedLines       SalesInvoiceLine[] @relation("SalesLineReturns")
-  product             Product?           @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  catalogItem         CatalogItem?       @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([id, businessId])
   @@index([businessId, invoiceId])
@@ -1040,7 +1127,7 @@ model Purchase {
   updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
   business     Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch       Branch              @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  supplier     Party?              @relation("PurchaseSupplier", fields: [supplierId, businessId], references: [id, businessId], onDelete: Restrict)
+  supplier     Supplier?           @relation(fields: [supplierId, businessId], references: [id, businessId], onDelete: Restrict)
   lines        PurchaseLine[]
   allocations  PaymentAllocation[]
 
@@ -1051,20 +1138,20 @@ model Purchase {
 }
 
 model PurchaseLine {
-  id                  String   @id @default(uuid()) @db.Uuid
-  businessId          String   @map("business_id") @db.Uuid
-  purchaseId          String   @map("purchase_id") @db.Uuid
-  productId           String?  @map("product_id") @db.Uuid
-  descriptionSnapshot String   @map("description_snapshot") @db.VarChar(200)
-  quantity            Decimal  @db.Decimal(18, 3)
-  unitCostRial        BigInt   @map("unit_cost_rial")
-  discountRial        BigInt   @default(0) @map("discount_rial")
-  taxRateBasisPoints  Int      @default(0) @map("tax_rate_basis_points")
-  taxRial             BigInt   @default(0) @map("tax_rial")
-  lineTotalRial       BigInt   @map("line_total_rial")
-  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  purchase            Purchase @relation(fields: [purchaseId, businessId], references: [id, businessId], onDelete: Cascade)
-  product             Product? @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
+  id                  String       @id @default(uuid()) @db.Uuid
+  businessId          String       @map("business_id") @db.Uuid
+  purchaseId          String       @map("purchase_id") @db.Uuid
+  productId           String?      @map("product_id") @db.Uuid
+  descriptionSnapshot String       @map("description_snapshot") @db.VarChar(200)
+  quantity            Decimal      @db.Decimal(18, 3)
+  unitCostRial        BigInt       @map("unit_cost_rial")
+  discountRial        BigInt       @default(0) @map("discount_rial")
+  taxRateBasisPoints  Int          @default(0) @map("tax_rate_basis_points")
+  taxRial             BigInt       @default(0) @map("tax_rial")
+  lineTotalRial       BigInt       @map("line_total_rial")
+  business            Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  purchase            Purchase     @relation(fields: [purchaseId, businessId], references: [id, businessId], onDelete: Cascade)
+  catalogItem         CatalogItem? @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@index([businessId, purchaseId])
   @@map("purchase_lines")
@@ -1105,7 +1192,7 @@ model Expense {
   business           Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch             Branch          @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
   category           ExpenseCategory @relation(fields: [categoryId, businessId], references: [id, businessId], onDelete: Restrict)
-  payee              Party?          @relation(fields: [payeeId, businessId], references: [id, businessId], onDelete: Restrict)
+  payee              Supplier?       @relation(fields: [payeeId, businessId], references: [id, businessId], onDelete: Restrict)
   attachment         Attachment?     @relation(fields: [attachmentId, businessId], references: [id, businessId], onDelete: Restrict)
 
   @@unique([businessId, expenseNo])
@@ -1132,29 +1219,29 @@ model Attachment {
 }
 
 model CashTransaction {
-  id             String              @id @default(uuid()) @db.Uuid
-  businessId     String              @map("business_id") @db.Uuid
-  branchId       String              @map("branch_id") @db.Uuid
-  kind           CashTransactionKind
-  txnDate        DateTime            @map("txn_date") @db.Date
-  amountRial     BigInt              @map("amount_rial")
-  fromAccountId  String?             @map("from_account_id") @db.Uuid
-  toAccountId    String?             @map("to_account_id") @db.Uuid
-  partyId        String?             @map("party_id") @db.Uuid
-  method         PaymentMethod
-  reference      String?             @db.VarChar(120)
-  status         JournalStatus       @default(POSTED)
-  journalEntryId String?             @map("journal_entry_id") @db.Uuid
-  idempotencyKey String              @map("idempotency_key") @db.VarChar(128)
-  createdBy      String              @map("created_by") @db.Uuid
-  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  business       Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch         Branch              @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  fromAccount    FinanceAccount?     @relation("CashFromAccount", fields: [fromAccountId, businessId], references: [id, businessId], onDelete: Restrict)
-  toAccount      FinanceAccount?     @relation("CashToAccount", fields: [toAccountId, businessId], references: [id, businessId], onDelete: Restrict)
-  party          Party?              @relation(fields: [partyId, businessId], references: [id, businessId], onDelete: Restrict)
-  journalEntry   JournalEntry?       @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
-  allocations    PaymentAllocation[]
+  id                       String                    @id @default(uuid()) @db.Uuid
+  businessId               String                    @map("business_id") @db.Uuid
+  branchId                 String                    @map("branch_id") @db.Uuid
+  kind                     CashTransactionKind
+  txnDate                  DateTime                  @map("txn_date") @db.Date
+  amountRial               BigInt                    @map("amount_rial")
+  fromAccountId            String?                   @map("from_account_id") @db.Uuid
+  toAccountId              String?                   @map("to_account_id") @db.Uuid
+  partyId                  String?                   @map("party_id") @db.Uuid
+  method                   PaymentMethod
+  reference                String?                   @db.VarChar(120)
+  status                   JournalStatus             @default(POSTED)
+  journalEntryId           String?                   @map("journal_entry_id") @db.Uuid
+  idempotencyKey           String                    @map("idempotency_key") @db.VarChar(128)
+  createdBy                String                    @map("created_by") @db.Uuid
+  createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  business                 Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch                   Branch                    @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  fromAccount              FinanceAccount?           @relation("CashFromAccount", fields: [fromAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  toAccount                FinanceAccount?           @relation("CashToAccount", fields: [toAccountId, businessId], references: [id, businessId], onDelete: Restrict)
+  party                    Party?                    @relation(fields: [partyId, businessId], references: [id, businessId], onDelete: Restrict)
+  journalEntry             JournalEntry?             @relation(fields: [journalEntryId, businessId], references: [id, businessId], onDelete: Restrict)
+  allocations              PaymentAllocation[]
   storefrontPaymentAttempt StorefrontPaymentAttempt?
 
   @@unique([id, businessId])
@@ -1464,34 +1551,34 @@ model BranchSubscription {
 }
 
 model SubscriptionOrder {
-  id                   String                       @id @default(uuid()) @db.Uuid
-  businessId           String                       @map("business_id") @db.Uuid
-  branchId             String                       @map("branch_id") @db.Uuid
-  branchSubscriptionId String                       @map("branch_subscription_id") @db.Uuid
-  planId               String                       @map("plan_id") @db.Uuid
-  priceVersionId       String                       @map("price_version_id") @db.Uuid
-  createdById          String                       @map("created_by_id") @db.Uuid
-  idempotencyKey       String                       @map("idempotency_key") @db.VarChar(128)
-  planCodeSnapshot     String                       @map("plan_code_snapshot") @db.VarChar(24)
-  planNameFaSnapshot   String                       @map("plan_name_fa_snapshot") @db.VarChar(80)
-  durationMonths       Int                          @map("duration_months")
-  amountRial           BigInt                       @map("amount_rial")
-  currency             String                       @default("IRR") @db.Char(3)
-  status               SubscriptionOrderStatus      @default(PENDING)
-  providerReference    String?                      @unique @map("provider_reference") @db.VarChar(160)
-  manualPaymentSettingsSnapshot Json?                 @map("manual_payment_settings_snapshot")
-  createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  paidAt               DateTime?                    @map("paid_at") @db.Timestamptz(6)
-  business             Business                     @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  branch               Branch                       @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
-  branchSubscription   BranchSubscription           @relation(fields: [branchSubscriptionId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
-  plan                 SubscriptionPlan             @relation(fields: [planId], references: [id], onDelete: Restrict)
-  priceVersion         SubscriptionPriceVersion     @relation(fields: [priceVersionId], references: [id], onDelete: Restrict)
-  createdBy            User                         @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  attempts             SubscriptionPaymentAttempt[]
-  periods              SubscriptionPeriod[]
-  manualPaymentSubmissions SubscriptionManualPaymentSubmission[]
+  id                            String                                @id @default(uuid()) @db.Uuid
+  businessId                    String                                @map("business_id") @db.Uuid
+  branchId                      String                                @map("branch_id") @db.Uuid
+  branchSubscriptionId          String                                @map("branch_subscription_id") @db.Uuid
+  planId                        String                                @map("plan_id") @db.Uuid
+  priceVersionId                String                                @map("price_version_id") @db.Uuid
+  createdById                   String                                @map("created_by_id") @db.Uuid
+  idempotencyKey                String                                @map("idempotency_key") @db.VarChar(128)
+  planCodeSnapshot              String                                @map("plan_code_snapshot") @db.VarChar(24)
+  planNameFaSnapshot            String                                @map("plan_name_fa_snapshot") @db.VarChar(80)
+  durationMonths                Int                                   @map("duration_months")
+  amountRial                    BigInt                                @map("amount_rial")
+  currency                      String                                @default("IRR") @db.Char(3)
+  status                        SubscriptionOrderStatus               @default(PENDING)
+  providerReference             String?                               @unique @map("provider_reference") @db.VarChar(160)
+  manualPaymentSettingsSnapshot Json?                                 @map("manual_payment_settings_snapshot")
+  createdAt                     DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                     DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  paidAt                        DateTime?                             @map("paid_at") @db.Timestamptz(6)
+  business                      Business                              @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch                        Branch                                @relation(fields: [branchId, businessId], references: [id, businessId], onDelete: Restrict)
+  branchSubscription            BranchSubscription                    @relation(fields: [branchSubscriptionId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  plan                          SubscriptionPlan                      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  priceVersion                  SubscriptionPriceVersion              @relation(fields: [priceVersionId], references: [id], onDelete: Restrict)
+  createdBy                     User                                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  attempts                      SubscriptionPaymentAttempt[]
+  periods                       SubscriptionPeriod[]
+  manualPaymentSubmissions      SubscriptionManualPaymentSubmission[]
 
   @@unique([businessId, branchId, idempotencyKey])
   @@unique([id, businessId, branchId])
@@ -1517,32 +1604,32 @@ model SubscriptionManualPaymentSettings {
 }
 
 model SubscriptionManualPaymentSubmission {
-  id                String                    @id @default(uuid()) @db.Uuid
-  orderId           String                    @map("order_id") @db.Uuid
-  paymentAttemptId  String                    @unique @map("payment_attempt_id") @db.Uuid
-  submittedById     String                    @map("submitted_by_id") @db.Uuid
-  reviewStatus      ManualPaymentReviewStatus @default(PENDING_REVIEW) @map("review_status")
-  trackingCode      String?                   @map("tracking_code") @db.VarChar(120)
-  storageKey        String                    @unique @map("storage_key") @db.VarChar(500)
-  fileName          String                    @map("file_name") @db.VarChar(255)
-  mimeType          String                    @map("mime_type") @db.VarChar(120)
+  id                String                     @id @default(uuid()) @db.Uuid
+  orderId           String                     @map("order_id") @db.Uuid
+  paymentAttemptId  String                     @unique @map("payment_attempt_id") @db.Uuid
+  submittedById     String                     @map("submitted_by_id") @db.Uuid
+  reviewStatus      ManualPaymentReviewStatus  @default(PENDING_REVIEW) @map("review_status")
+  trackingCode      String?                    @map("tracking_code") @db.VarChar(120)
+  storageKey        String                     @unique @map("storage_key") @db.VarChar(500)
+  fileName          String                     @map("file_name") @db.VarChar(255)
+  mimeType          String                     @map("mime_type") @db.VarChar(120)
   bytes             BigInt
-  checksum          String                    @db.Char(64)
-  telegramStatus    TelegramDeliveryStatus    @default(NOT_CONFIGURED) @map("telegram_status")
-  telegramMessageId String?                   @map("telegram_message_id") @db.VarChar(40)
-  telegramErrorCode String?                   @map("telegram_error_code") @db.VarChar(80)
-  reviewedByAdminId String?                   @map("reviewed_by_admin_id") @db.Uuid
-  rejectionReason   String?                   @map("rejection_reason") @db.VarChar(500)
-  submittedAt       DateTime                  @default(now()) @map("submitted_at") @db.Timestamptz(6)
-  reviewedAt        DateTime?                 @map("reviewed_at") @db.Timestamptz(6)
-  order             SubscriptionOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  checksum          String                     @db.Char(64)
+  telegramStatus    TelegramDeliveryStatus     @default(NOT_CONFIGURED) @map("telegram_status")
+  telegramMessageId String?                    @map("telegram_message_id") @db.VarChar(40)
+  telegramErrorCode String?                    @map("telegram_error_code") @db.VarChar(80)
+  reviewedByAdminId String?                    @map("reviewed_by_admin_id") @db.Uuid
+  rejectionReason   String?                    @map("rejection_reason") @db.VarChar(500)
+  submittedAt       DateTime                   @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  reviewedAt        DateTime?                  @map("reviewed_at") @db.Timestamptz(6)
+  order             SubscriptionOrder          @relation(fields: [orderId], references: [id], onDelete: Restrict)
   paymentAttempt    SubscriptionPaymentAttempt @relation(fields: [paymentAttemptId, orderId], references: [id, orderId], onDelete: Restrict)
-  submittedBy       User                      @relation(fields: [submittedById], references: [id], onDelete: Restrict)
-  reviewedByAdmin   SystemAdmin?              @relation("ManualPaymentReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
+  submittedBy       User                       @relation(fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedByAdmin   SystemAdmin?               @relation("ManualPaymentReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
 
+  @@unique([paymentAttemptId, orderId])
   @@index([reviewStatus, submittedAt])
   @@index([orderId, submittedAt])
-  @@unique([paymentAttemptId, orderId])
   @@map("subscription_manual_payment_submissions")
 }
 
@@ -1576,19 +1663,19 @@ model SubscriptionPeriod {
 }
 
 model SubscriptionPaymentAttempt {
-  id                 String                    @id @default(uuid()) @db.Uuid
-  businessId         String                    @map("business_id") @db.Uuid
-  branchId           String                    @map("branch_id") @db.Uuid
-  orderId            String                    @map("order_id") @db.Uuid
-  provider           String                    @db.VarChar(40)
-  providerExternalId String?                   @unique @map("provider_external_id") @db.VarChar(160)
-  amountRial         BigInt                    @map("amount_rial")
-  currency           String                    @default("IRR") @db.Char(3)
-  status             SubscriptionPaymentStatus @default(INITIATED)
-  safeErrorCode      String?                   @map("safe_error_code") @db.VarChar(80)
-  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
-  completedAt        DateTime?                 @map("completed_at") @db.Timestamptz(6)
-  order              SubscriptionOrder         @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
+  id                 String                               @id @default(uuid()) @db.Uuid
+  businessId         String                               @map("business_id") @db.Uuid
+  branchId           String                               @map("branch_id") @db.Uuid
+  orderId            String                               @map("order_id") @db.Uuid
+  provider           String                               @db.VarChar(40)
+  providerExternalId String?                              @unique @map("provider_external_id") @db.VarChar(160)
+  amountRial         BigInt                               @map("amount_rial")
+  currency           String                               @default("IRR") @db.Char(3)
+  status             SubscriptionPaymentStatus            @default(INITIATED)
+  safeErrorCode      String?                              @map("safe_error_code") @db.VarChar(80)
+  createdAt          DateTime                             @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt        DateTime?                            @map("completed_at") @db.Timestamptz(6)
+  order              SubscriptionOrder                    @relation(fields: [orderId, businessId, branchId], references: [id, businessId, branchId], onDelete: Restrict)
   manualSubmission   SubscriptionManualPaymentSubmission?
 
   @@unique([id, orderId])

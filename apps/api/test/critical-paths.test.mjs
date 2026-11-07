@@ -468,10 +468,10 @@ test("cursor pagination clamps page size and returns a stable continuation curso
 
 test("product list pages stay tenant-scoped and do not skip records with identical sort keys", async () => {
   let listQuery;
-  const product = (id) => ({ id, name: "کالای هم‌نام", sku: null, barcode: null, kind: "STOCK", unit: { id: "unit-a", code: "pcs", labelFa: "عدد", precision: 0 }, category: null, salePriceRial: 100n, defaultCostRial: null, reorderPoint: null, taxRateBasisPoints: 0, trackInventory: true, balances: [] });
+  const product = (id) => ({ id, sku: null, barcode: null, category: null, defaultCostRial: null, reorderPoint: null, trackInventory: true, balances: [], images: [], catalogItem: { name: "کالای هم‌نام", normalizedName: "کالای هم‌نام", kind: "STOCK", unit: { id: "unit-a", code: "pcs", labelFa: "عدد", precision: 0 }, salePriceRial: 100n, taxRateBasisPoints: 0 } });
   const service = new ProductsService({
     product: {
-      findFirst: async (query) => { assert.deepEqual(query.where, { businessId: "business-a", isActive: true, id: "00000000-0000-4000-8000-000000000014" }); return { id: "00000000-0000-4000-8000-000000000014" }; },
+      findFirst: async (query) => { assert.deepEqual(query.where, { businessId: "business-a", catalogItem: { isActive: true }, id: "00000000-0000-4000-8000-000000000014" }); return { id: "00000000-0000-4000-8000-000000000014" }; },
       findMany: async (query) => { listQuery = query; return [product("item-1"), product("item-2"), product("item-3")]; },
     },
   });
@@ -479,7 +479,7 @@ test("product list pages stay tenant-scoped and do not skip records with identic
   assert.equal(listQuery.where.businessId, "business-a");
   assert.deepEqual(listQuery.cursor, { id: "00000000-0000-4000-8000-000000000014" });
   assert.equal(listQuery.skip, 1);
-  assert.deepEqual(listQuery.orderBy, [{ normalizedName: "asc" }, { id: "asc" }]);
+  assert.deepEqual(listQuery.orderBy, [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }]);
   assert.equal(listQuery.take, 3);
   assert.deepEqual({ itemIds: page.items.map(({ id }) => id), nextCursor: page.nextCursor, hasMore: page.hasMore }, { itemIds: ["item-1", "item-2"], nextCursor: "item-2", hasMore: true });
 });
@@ -506,7 +506,7 @@ test("inventory cursor cannot be reused across a different business or branch", 
   let rowsQuery;
   const service = new InventoryService({
     product: {
-      findFirst: async ({ where }) => { assert.deepEqual(where, { businessId: "business-a", isActive: true, kind: "STOCK", trackInventory: true, id: "00000000-0000-4000-8000-000000000016" }); return { id: "00000000-0000-4000-8000-000000000016" }; },
+      findFirst: async ({ where }) => { assert.deepEqual(where, { businessId: "business-a", catalogItem: { is: { isActive: true } }, trackInventory: true, id: "00000000-0000-4000-8000-000000000016" }); return { id: "00000000-0000-4000-8000-000000000016" }; },
       findMany: async (query) => { rowsQuery = query; return []; },
     },
   }, {});
@@ -525,7 +525,8 @@ test("product creation propagates audit failure from the same transaction", asyn
     $transaction: async (operation) => {
       transactionStarted = true;
       return operation({
-        product: { create: async () => { productCreatedInTransaction = true; return { id: "product-a", name: "کالا", sku: null, barcode: null, kind: "STOCK", salePriceRial: 100n, defaultCostRial: null, taxRateBasisPoints: 0, trackInventory: true }; } },
+        catalogItem: { create: async () => ({ id: "product-a", businessId: "business-a", name: "کالا", kind: "STOCK", salePriceRial: 100n, taxRateBasisPoints: 0 }) },
+        product: { create: async () => { productCreatedInTransaction = true; return { id: "product-a", sku: null, barcode: null, defaultCostRial: null, trackInventory: true }; } },
         auditEvent: { create: async () => { throw new Error("synthetic audit insert failure"); } },
       });
     },

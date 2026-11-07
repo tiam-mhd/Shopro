@@ -53,6 +53,11 @@ export class VerifyStorefrontOtpDto extends StorefrontOtpDto {
   @IsString() @Length(4, 8) code!: string;
 }
 
+export class UpdateStorefrontCustomerProfileDto {
+  @IsOptional() @IsString() @Length(2, 120) fullName?: string;
+  @IsOptional() @IsString() @Length(0, 500) address?: string;
+}
+
 export class StorefrontOrderLineDto {
   @IsUUID() listingId!: string;
   @IsString() @Length(1, 32) quantity!: string;

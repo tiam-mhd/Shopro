@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { AccountingService } from "../finance/accounting.service.js";
 import type { AuthenticatedUser, AppRequest } from "../common/request-context.js";
 import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
-import type { CreateExpenseCategoryDto, CreateExpenseDto, PostExpenseDto, VoidExpenseDto } from "./expenses.dto.js";
+import type { CreateExpenseCategoryDto, CreateExpenseDto, PostExpenseDto, UpdateExpenseCategoryDto, VoidExpenseDto } from "./expenses.dto.js";
 import { prepareExpenseAttachment } from "./attachment-files.js";
 import { AttachmentStorageService } from "./attachment-storage.service.js";
 import { createAttachmentDownloadGrant, verifyAttachmentDownloadGrant } from "./attachment-download-token.js";
@@ -25,16 +25,16 @@ export class ExpensesService {
     const limit = pageMode ? pageLimit(requestedLimit) : 200;
     const where = { businessId, branchId };
     if (cursor && !(await this.prisma.expense.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای فهرست هزینه‌ها معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
-    const rows = await this.prisma.expense.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { category: { select: { name: true } }, payee: { select: { name: true } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = rows.map((row) => ({ id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRial: row.taxRial.toString(), category: row.category.name, payee: row.payee?.name ?? null, status: row.status, note: row.note }));
+    const rows = await this.prisma.expense.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { category: { select: { name: true } }, payee: { select: { party: { select: { name: true } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRial: row.taxRial.toString(), category: row.category.name, payee: row.payee?.party.name ?? null, status: row.status, note: row.note }));
     return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async get(user: AuthenticatedUser, id: string) {
     const { businessId, branchId } = this.scope(user);
-    const row = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, include: { category: { select: { name: true } }, payee: { select: { name: true, phone: true, email: true, address: true } }, attachment: { select: { fileName: true, mimeType: true, bytes: true, createdAt: true } } } });
+    const row = await this.prisma.expense.findFirst({ where: { id, businessId, branchId }, include: { category: { select: { name: true } }, payee: { select: { party: { select: { name: true, phone: true, email: true, address: true } } } }, attachment: { select: { fileName: true, mimeType: true, bytes: true, createdAt: true } } } });
     if (!row) throw new NotFoundException("هزینه پیدا نشد.");
-    return { id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRateBasisPoints: row.taxRateBasisPoints, taxRial: row.taxRial.toString(), categoryId: row.categoryId, category: row.category.name, payeeId: row.payeeId, payee: row.payee, status: row.status, note: row.note, postedAt: row.postedAt?.toISOString() ?? null, canManageAttachment: this.canManageExpense(user), attachment: row.attachment ? { fileName: row.attachment.fileName, mimeType: row.attachment.mimeType, bytes: row.attachment.bytes.toString(), uploadedAt: row.attachment.createdAt.toISOString() } : null };
+    return { id: row.id, expenseNo: row.expenseNo, date: row.txnDate.toISOString().slice(0, 10), amountRial: row.amountRial.toString(), taxRateBasisPoints: row.taxRateBasisPoints, taxRial: row.taxRial.toString(), categoryId: row.categoryId, category: row.category.name, payeeId: row.payeeId, payee: row.payee?.party ?? null, status: row.status, note: row.note, postedAt: row.postedAt?.toISOString() ?? null, canManageAttachment: this.canManageExpense(user), attachment: row.attachment ? { fileName: row.attachment.fileName, mimeType: row.attachment.mimeType, bytes: row.attachment.bytes.toString(), uploadedAt: row.attachment.createdAt.toISOString() } : null };
   }
 
   async uploadAttachment(user: AuthenticatedUser, id: string, file: { originalname?: string; buffer?: Uint8Array; size?: number } | undefined, request: AppRequest) {
@@ -114,24 +114,63 @@ export class ExpensesService {
     return { id, removed: true };
   }
 
-  async categories(user: AuthenticatedUser) {
+  async categories(user: AuthenticatedUser, includeArchived = false) {
     const { businessId } = this.scope(user);
-    return this.prisma.expenseCategory.findMany({ where: { businessId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } });
+    if (includeArchived && !this.canManageExpense(user)) throw new ForbiddenException();
+    const rows = await this.prisma.expenseCategory.findMany({
+      where: { businessId, ...(includeArchived ? {} : { isActive: true }) },
+      select: { id: true, name: true, isActive: true, _count: { select: { expenses: true } } },
+      orderBy: [{ isActive: "desc" }, { name: "asc" }],
+    });
+    return rows.map(({ _count, ...category }) => ({ ...category, expenseCount: _count.expenses }));
   }
 
   async createCategory(user: AuthenticatedUser, dto: CreateExpenseCategoryDto, request: AppRequest) {
     const { businessId } = this.scope(user);
-    if (!["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException();
+    if (!this.canManageExpense(user)) throw new ForbiddenException();
     const name = dto.name.trim();
-    const duplicate = await this.prisma.expenseCategory.findFirst({ where: { businessId, name: { equals: name, mode: "insensitive" }, isActive: true }, select: { id: true } });
+    if (name.length < 2) throw new BadRequestException("نام دسته‌بندی حداقل باید دو نویسه باشد.");
+    const duplicate = await this.prisma.expenseCategory.findFirst({ where: { businessId, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
     if (duplicate) throw new BadRequestException("دسته‌ای با این نام از قبل وجود دارد.");
     const ledger = await this.prisma.ledgerAccount.findFirst({ where: { businessId, systemKey: "general_expense", isActive: true }, select: { id: true } });
     if (!ledger) throw new BadRequestException("حساب دفتر هزینه‌های عمومی برای این کسب‌وکار پیدا نشد.");
-    return this.prisma.$transaction(async (tx) => {
-      const category = await tx.expenseCategory.create({ data: { businessId, name, expenseLedgerAccountId: ledger.id } });
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense_category.created", entityType: "expense_category", entityId: category.id, requestId: request.requestId ?? "unknown", afterJson: { name } } });
-      return { id: category.id, name: category.name };
-    });
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const category = await tx.expenseCategory.create({ data: { businessId, name, expenseLedgerAccountId: ledger.id } });
+        await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "expense_category.created", entityType: "expense_category", entityId: category.id, requestId: request.requestId ?? "unknown", afterJson: { name } } });
+        return { id: category.id, name: category.name };
+      });
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) throw new BadRequestException("دسته‌ای با این نام از قبل وجود دارد.");
+      throw error;
+    }
+  }
+
+  async updateCategory(user: AuthenticatedUser, id: string, dto: UpdateExpenseCategoryDto, request: AppRequest) {
+    const { businessId } = this.scope(user);
+    if (!this.canManageExpense(user)) throw new ForbiddenException();
+    if (dto.name === undefined && dto.isActive === undefined) throw new BadRequestException("تغییری برای ذخیره انتخاب نشده است.");
+    const before = await this.prisma.expenseCategory.findFirst({ where: { id, businessId } });
+    if (!before) throw new NotFoundException("دسته‌بندی هزینه پیدا نشد.");
+    const name = dto.name === undefined ? before.name : dto.name.trim();
+    if (name.length < 2) throw new BadRequestException("نام دسته‌بندی حداقل باید دو نویسه باشد.");
+    const isActive = dto.isActive ?? before.isActive;
+    if (name !== before.name || isActive && !before.isActive) {
+      const duplicate = await this.prisma.expenseCategory.findFirst({ where: { businessId, id: { not: id }, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
+      if (duplicate) throw new BadRequestException("دسته‌ای با این نام از قبل وجود دارد.");
+    }
+    const action = !isActive ? "expense_category.archived" : !before.isActive ? "expense_category.restored" : "expense_category.updated";
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const category = await tx.expenseCategory.update({ where: { id }, data: { name, isActive } });
+        await tx.auditEvent.create({ data: { businessId, actorId: user.id, action, entityType: "expense_category", entityId: id, requestId: request.requestId ?? "unknown", beforeJson: { name: before.name, isActive: before.isActive }, afterJson: { name: category.name, isActive: category.isActive } } });
+        const expenseCount = await tx.expense.count({ where: { categoryId: id, businessId } });
+        return { id: category.id, name: category.name, isActive: category.isActive, expenseCount };
+      });
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) throw new BadRequestException("دسته‌ای با این نام از قبل وجود دارد.");
+      throw error;
+    }
   }
 
   async create(user: AuthenticatedUser, dto: CreateExpenseDto, request: AppRequest) {
@@ -141,7 +180,7 @@ export class ExpensesService {
     const date = this.date(dto.txnDate);
     const category = await this.prisma.expenseCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true } });
     if (!category) throw new BadRequestException("دستهٔ هزینه متعلق به این کسب‌وکار نیست.");
-    const payee = dto.payeeId ? await this.prisma.party.findFirst({ where: { id: dto.payeeId, businessId, archivedAt: null, type: { in: ["SUPPLIER", "BOTH"] } } }) : null;
+    const payee = dto.payeeId ? await this.prisma.supplier.findFirst({ where: { id: dto.payeeId, businessId, party: { is: { archivedAt: null } } } }) : null;
     if (dto.payeeId && !payee) throw new BadRequestException("تأمین‌کننده انتخاب‌شده معتبر نیست.");
     const taxRate = dto.taxRateBasisPoints ?? 0;
     const tax = (amount * BigInt(taxRate) + 5000n) / 10000n;
@@ -161,7 +200,7 @@ export class ExpensesService {
     const date = this.date(dto.txnDate);
     const category = await this.prisma.expenseCategory.findFirst({ where: { id: dto.categoryId, businessId, isActive: true } });
     if (!category) throw new BadRequestException("دستهٔ هزینه متعلق به این کسب‌وکار نیست.");
-    const payee = dto.payeeId ? await this.prisma.party.findFirst({ where: { id: dto.payeeId, businessId, archivedAt: null, type: { in: ["SUPPLIER", "BOTH"] } } }) : null;
+    const payee = dto.payeeId ? await this.prisma.supplier.findFirst({ where: { id: dto.payeeId, businessId, party: { is: { archivedAt: null } } } }) : null;
     if (dto.payeeId && !payee) throw new BadRequestException("پرداخت‌کنندهٔ انتخاب‌شده معتبر نیست.");
     const taxRate = dto.taxRateBasisPoints ?? 0;
     const tax = (amount * BigInt(taxRate) + 5000n) / 10000n;
@@ -283,4 +322,5 @@ export class ExpensesService {
   private async removeStoredAttachment(storageKey: string, attachmentId: string, requestId?: string) { try { await this.attachmentStorage.remove(storageKey); } catch { process.stderr.write(JSON.stringify({ level: "warn", event: "attachment.orphan_cleanup_failed", attachmentId, requestId: requestId ?? "unknown" }) + "\n"); } }
   private date(value?: string) { const dateText = value ?? new Date().toISOString().slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) throw new BadRequestException("تاریخ سند معتبر نیست."); const date = new Date(`${dateText}T00:00:00.000Z`); if (date.toISOString().slice(0, 10) !== dateText) throw new BadRequestException("تاریخ سند معتبر نیست."); return date; }
   private isTransactionConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error.code === "P2002" || error.code === "P2034"); }
+  private isUniqueConstraint(error: unknown) { return typeof error === "object" && error !== null && "code" in error && error.code === "P2002"; }
 }

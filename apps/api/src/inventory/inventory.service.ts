@@ -34,10 +34,10 @@ export class InventoryService {
     assertUuid(cursor, "نشانگر صفحه برای موجودی معتبر نیست.");
     const pageMode = requestedLimit !== undefined || cursor !== undefined;
     const limit = pageMode ? pageLimit(requestedLimit) : 500;
-    const where = { businessId, isActive: true, kind: "STOCK" as const, trackInventory: true };
+    const where = { businessId, catalogItem: { is: { isActive: true } }, trackInventory: true };
     if (cursor && !(await this.prisma.product.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
-    const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = products.map((product) => ({ productId: product.id, name: product.name, sku: product.sku, unit: product.unit, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? null, averageCostRial: product.balances[0]?.averageCostRial.toString() ?? "0", valueRial: product.balances[0]?.inventoryValueRial.toString() ?? "0" }));
+    const products = await this.prisma.product.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { catalogItem: { include: { unit: { select: { id: true, code: true, labelFa: true, precision: true } } } }, balances: { where: { branchId }, take: 1 } }, orderBy: [{ catalogItem: { normalizedName: "asc" } }, { id: "asc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = products.map((product) => ({ productId: product.id, name: product.catalogItem.name, sku: product.sku, unit: product.catalogItem.unit, quantity: product.balances[0]?.quantityOnHand.toString() ?? "0", reorderPoint: product.reorderPoint?.toString() ?? null, averageCostRial: product.balances[0]?.averageCostRial.toString() ?? "0", valueRial: product.balances[0]?.inventoryValueRial.toString() ?? "0" }));
     return pageMode ? cursorPage(mapped, limit, (product) => product.productId) : mapped;
   }
 
@@ -48,8 +48,8 @@ export class InventoryService {
     const limit = pageMode ? pageLimit(requestedLimit) : 200;
     const where = { businessId, branchId, ...(productId ? { productId } : {}) };
     if (cursor && !(await this.prisma.inventoryMovement.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای گردش موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
-    const rows = await this.prisma.inventoryMovement.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = rows.map((row) => ({ id: row.id, productId: row.product.id, product: row.product.name, unit: row.product.unit.labelFa, date: row.txnDate.toISOString().slice(0, 10), sourceType: row.sourceType, quantityDelta: row.quantityDelta.toString(), unitCostRial: row.unitCostRial.toString(), valueDeltaRial: row.valueDeltaRial.toString() }));
+    const rows = await this.prisma.inventoryMovement.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { product: { include: { catalogItem: { include: { unit: { select: { labelFa: true } } } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, productId: row.product.id, product: row.product.catalogItem.name, unit: row.product.catalogItem.unit.labelFa, date: row.txnDate.toISOString().slice(0, 10), sourceType: row.sourceType, quantityDelta: row.quantityDelta.toString(), unitCostRial: row.unitCostRial.toString(), valueDeltaRial: row.valueDeltaRial.toString() }));
     return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
@@ -60,16 +60,16 @@ export class InventoryService {
     const limit = pageMode ? pageLimit(requestedLimit) : 50;
     const where = { businessId, branchId };
     if (cursor && !(await this.prisma.stockCount.findFirst({ where: { ...where, id: cursor }, select: { id: true } }))) throw new BadRequestException("نشانگر صفحه برای شمارش موجودی معتبر نیست؛ فهرست را دوباره بارگذاری کنید.");
-    const rows = await this.prisma.stockCount.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { lines: { include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
-    const mapped = rows.map((row) => ({ id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.name, unit: line.product.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) }));
+    const rows = await this.prisma.stockCount.findMany({ where, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { lines: { include: { product: { include: { catalogItem: { include: { unit: { select: { labelFa: true } } } } } } } } }, orderBy: [{ txnDate: "desc" }, { createdAt: "desc" }, { id: "desc" }], take: limit + (pageMode ? 1 : 0) });
+    const mapped = rows.map((row) => ({ id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.catalogItem.name, unit: line.product.catalogItem.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) }));
     return pageMode ? cursorPage(mapped, limit, (row) => row.id) : mapped;
   }
 
   async count(user: AuthenticatedUser, id: string) {
     const { businessId, branchId } = this.scope(user);
-    const row = await this.prisma.stockCount.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { select: { id: true, name: true, unit: { select: { labelFa: true } } } } } } } });
+    const row = await this.prisma.stockCount.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { include: { catalogItem: { include: { unit: { select: { labelFa: true } } } } } } } } } });
     if (!row) throw new NotFoundException("شمارش موجودی پیدا نشد.");
-    return { id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.name, unit: line.product.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) };
+    return { id: row.id, txnDate: row.txnDate.toISOString().slice(0, 10), status: row.status, reason: row.reason, lines: row.lines.map((line) => ({ productId: line.product.id, product: line.product.catalogItem.name, unit: line.product.catalogItem.unit.labelFa, systemQuantity: line.systemQuantitySnapshot.toString(), countedQuantity: line.countedQuantity.toString(), deltaQuantity: line.deltaQuantity.toString() })) };
   }
 
   async createCount(user: AuthenticatedUser, dto: CreateStockCountDto, request: AppRequest) {
@@ -77,7 +77,7 @@ export class InventoryService {
     this.requireRole(user, ["OWNER", "MANAGER", "ACCOUNTANT"]);
     const date = this.date(dto.txnDate);
     if (new Set(dto.lines.map((line) => line.productId)).size !== dto.lines.length) throw new BadRequestException("یک کالا را در یک شمارش فقط یک‌بار وارد کنید.");
-    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, isActive: true, kind: "STOCK", trackInventory: true }, select: { id: true, name: true } });
+    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
     if (products.length !== dto.lines.length) throw new BadRequestException("یک یا چند کالا در این کسب‌وکار قابل شمارش نیست.");
     const quantities = dto.lines.map((line) => ({ productId: line.productId, counted: milli(line.countedQuantity) }));
     const row = await this.prisma.$transaction(async (tx) => {
@@ -100,7 +100,7 @@ export class InventoryService {
     if (!before) throw new NotFoundException("پیش‌نویس شمارش موجودی پیدا نشد.");
     const date = this.date(dto.txnDate);
     if (new Set(dto.lines.map((line) => line.productId)).size !== dto.lines.length) throw new BadRequestException("یک کالا را در یک شمارش فقط یک‌بار وارد کنید.");
-    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, isActive: true, kind: "STOCK", trackInventory: true }, select: { id: true, name: true } });
+    const products = await this.prisma.product.findMany({ where: { businessId, id: { in: dto.lines.map((line) => line.productId) }, catalogItem: { is: { isActive: true } }, trackInventory: true }, select: { id: true } });
     if (products.length !== dto.lines.length) throw new BadRequestException("یک یا چند کالا در این کسب‌وکار قابل شمارش نیست.");
     const quantities = dto.lines.map((line) => ({ productId: line.productId, counted: milli(line.countedQuantity) }));
     return this.prisma.$transaction(async (tx) => {
@@ -139,7 +139,7 @@ export class InventoryService {
     if (prior) return prior;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const count = await tx.stockCount.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { select: { id: true, name: true, defaultCostRial: true } } } } } });
+        const count = await tx.stockCount.findFirst({ where: { id, businessId, branchId }, include: { lines: { include: { product: { select: { defaultCostRial: true, catalogItem: { select: { name: true } } } } } } } });
         if (!count) throw new NotFoundException("شمارش موجودی پیدا نشد.");
         if (count.status !== "DRAFT") throw new ConflictException("این شمارش قبلاً نهایی شده است.");
         await this.accounting.assertOpen(tx, businessId, count.txnDate);
@@ -152,7 +152,7 @@ export class InventoryService {
           const balance = await tx.inventoryBalance.findUnique({ where: { businessId_branchId_productId: { businessId, branchId, productId: line.productId } } });
           const currentMilli = balance ? milli(balance.quantityOnHand.toString()) : 0n;
           const snapshotMilli = milli(line.systemQuantitySnapshot.toString());
-          if (currentMilli !== snapshotMilli) throw new ConflictException(`موجودی «${line.product.name}» پس از شروع شمارش تغییر کرده است؛ شمارش تازه ثبت کنید.`);
+          if (currentMilli !== snapshotMilli) throw new ConflictException(`موجودی «${line.product.catalogItem.name}» پس از شروع شمارش تغییر کرده است؛ شمارش تازه ثبت کنید.`);
           const countedMilli = milli(line.countedQuantity.toString());
           const deltaMilli = countedMilli - currentMilli;
           if (deltaMilli === 0n) continue;
@@ -167,8 +167,8 @@ export class InventoryService {
             update: { quantityOnHand: new Prisma.Decimal(quantityText(countedMilli)), inventoryValueRial: nextValue, averageCostRial: nextAverage },
           });
           await tx.inventoryMovement.create({ data: { businessId, branchId, productId: line.productId, txnDate: count.txnDate, sourceType: "STOCK_COUNT", sourceId: count.id, quantityDelta: new Prisma.Decimal(quantityText(deltaMilli)), unitCostRial: unitCost, valueDeltaRial: valueDelta, createdBy: user.id } });
-          if (valueDelta > 0n) journalLines.push({ ledgerAccountId: inventoryAccount, debitRial: valueDelta, description: `افزایش موجودی ${line.product.name}` }, { ledgerAccountId: gainAccount, creditRial: valueDelta, description: "افزایش ناشی از شمارش" });
-          if (valueDelta < 0n) journalLines.push({ ledgerAccountId: expenseAccount, debitRial: -valueDelta, description: `کسری موجودی ${line.product.name}` }, { ledgerAccountId: inventoryAccount, creditRial: -valueDelta, description: "کاهش موجودی شمارش‌شده" });
+          if (valueDelta > 0n) journalLines.push({ ledgerAccountId: inventoryAccount, debitRial: valueDelta, description: `افزایش موجودی ${line.product.catalogItem.name}` }, { ledgerAccountId: gainAccount, creditRial: valueDelta, description: "افزایش ناشی از شمارش" });
+          if (valueDelta < 0n) journalLines.push({ ledgerAccountId: expenseAccount, debitRial: -valueDelta, description: `کسری موجودی ${line.product.catalogItem.name}` }, { ledgerAccountId: inventoryAccount, creditRial: -valueDelta, description: "کاهش موجودی شمارش‌شده" });
           changed++;
         }
         let journalId: string | null = null;

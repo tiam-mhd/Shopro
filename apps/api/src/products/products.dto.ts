@@ -10,8 +10,8 @@ export class CreateProductDto {
   @IsOptional() @IsString() @Length(4, 64)
   barcode?: string;
 
-  @IsIn(["STOCK", "SERVICE"])
-  kind!: "STOCK" | "SERVICE";
+  @IsOptional() @IsIn(["STOCK"])
+  kind?: "STOCK";
 
   @IsOptional() @IsString() @Length(1, 100)
   unitId?: string;

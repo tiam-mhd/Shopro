@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Length, Max, Min, IsInt } from "class-validator";
+import { IsBoolean, IsOptional, IsString, Length, Max, Min, IsInt } from "class-validator";
 
 export class CreateExpenseDto {
   @IsString() @Length(1, 24)
@@ -18,6 +18,14 @@ export class CreateExpenseDto {
 export class CreateExpenseCategoryDto {
   @IsString() @Length(2, 100)
   name!: string;
+}
+
+export class UpdateExpenseCategoryDto {
+  @IsOptional() @IsString() @Length(2, 100)
+  name?: string;
+
+  @IsOptional() @IsBoolean()
+  isActive?: boolean;
 }
 
 export class PostExpenseDto {

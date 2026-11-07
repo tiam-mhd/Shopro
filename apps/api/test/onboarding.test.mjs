@@ -20,6 +20,7 @@ function fixture({ role = "OWNER", sale = null, resultView = null, subscription 
       findUnique: async ({ where }) => state.resultView?.userId === where.businessId_branchId_userId.userId ? state.resultView : null,
     },
     product: { count: async () => 0 },
+    service: { count: async () => 0 },
     salesInvoice: { findFirst: async () => sale },
     purchase: { findFirst: async () => null },
     expense: { findFirst: async () => null },
