@@ -936,12 +936,13 @@
 
 /* Public storefront layout refresh */
 .sf-store {
-  width: min(calc(100% - 48px), 1360px);
+  width: min(calc(100% - 48px), 1240px);
   margin: 22px auto 48px;
   overflow-x: clip;
 }
 .sf-store-hero {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   padding: 22px 26px;
   border-radius: 22px;
@@ -951,8 +952,8 @@
 .sf-store-hero-main { min-width: 0; }
 .sf-store-title { min-width: 0; }
 .sf-store-title h1 { overflow-wrap: anywhere; line-height: 1.35; }
-.sf-store-description { max-width: 850px; margin: 12px 0 0; line-height: 1.9; }
-.sf-store-hero-foot { align-items: center; margin-top: 17px; padding-top: 14px; }
+.sf-store-description { grid-column: 1; width: min(100%, 850px); max-width: none; min-width: 0; margin: 12px 0 0; line-height: 1.9; }
+.sf-store-hero-foot { grid-column: 1; align-items: center; margin-top: 17px; padding-top: 14px; }
 .sf-store-facts { gap: 7px; }
 .sf-store-facts span { min-height: 33px; }
 .sf-store-actions { gap: 6px; }
@@ -972,7 +973,9 @@
 .sf-category-chips::-webkit-scrollbar { display: none; }
 .sf-category-chips button { min-height: 37px; padding-inline: 14px; background: var(--surface-raised); }
 .sf-category-chips button.active { box-shadow: 0 5px 14px color-mix(in srgb, var(--green) 20%, transparent); }
-.sf-product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.sf-product-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 15px; }
+.sf-product-grid-single { grid-template-columns: minmax(0, 1fr); }
+.sf-product-grid-single > .sf-product-card { width: min(100%, 460px); justify-self: start; }
 .sf-product-card { border-radius: 18px; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .sf-product-card:hover { transform: translateY(-2px); border-color: var(--line-green); box-shadow: 0 14px 30px color-mix(in srgb, var(--ink) 9%, transparent); }
 .sf-product-image { margin-inline: 10px; border-radius: 13px; }
@@ -1019,10 +1022,12 @@
   .sf-catalog-head { align-items: stretch; flex-direction: column; gap: 11px; margin-bottom: 11px; }
   .sf-catalog-head h2 { font-size: 18px; }
   .sf-catalog-head > div > p { margin-top: 3px; }
-  .sf-search { width: 100%; max-width: none; }
+  .sf-search { flex: 0 0 auto; width: 100%; max-width: none; }
   .sf-category-chips { margin-inline: -2px; margin-bottom: 12px; padding-bottom: 7px; }
   .sf-category-chips button { min-height: 35px; padding-inline: 12px; }
   .sf-product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .sf-product-grid-single { grid-template-columns: minmax(0, 1fr); }
+  .sf-product-grid-single > .sf-product-card { width: 100%; }
   .sf-product-card { border-radius: 15px; }
   .sf-product-top { min-height: 35px; padding: 8px 9px 5px; }
   .sf-product-image { margin-inline: 7px; border-radius: 11px; }
