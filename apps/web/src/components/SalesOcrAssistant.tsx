@@ -1,10 +1,11 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { AlertTriangle, Camera, Check, FileImage, LoaderCircle, ScanLine, Sparkles, Upload } from "lucide-react";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { get, post, uploadFile } from "../lib/api.js";
 import { faNumber, money } from "../lib/format.js";
 import { Field, InlineError, SelectField, messageOf } from "../App.js";
 import { Modal } from "./Modal.js";
+import { CameraControls, useCameraSession } from "./CameraSession.js";
 
 export type SalesOcrCustomer = { name: string | null; phone: string | null; email: string | null; nationalId: string | null; address: string | null };
 export type SalesOcrLine = { name: string | null; sku: string | null; barcode: string | null; kind: "STOCK" | "SERVICE" | null; quantity: string | null; unit: string | null; unitPriceRial: string | null; discountRial: string | null; taxRateBasisPoints: number | null; lineTotalRial: string | null; confidence: number };
@@ -29,6 +30,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   useEffect(() => {
     if (!file) { setPreview(""); return; }
@@ -36,7 +38,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
     setPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
-  useEffect(() => { if (!open) { setFile(null); setAnalysis(null); setError(""); setBusy(false); } }, [open]);
+  useEffect(() => { if (!open) { setFile(null); setAnalysis(null); setError(""); setBusy(false); setCameraOpen(false); } }, [open]);
 
   const chooseFile = (next: File | undefined) => {
     if (!next) return;
@@ -74,18 +76,18 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
   return <Modal open={open} onClose={onClose} title="خواندن فاکتور از تصویر" description="تصویر برگه یا اسکرین‌شات بررسی می‌شود؛ پیش از ثبت، همهٔ موارد را در فرم بازبینی می‌کنید." size="wide">
     <div className="sales-ocr-flow">
       <div className="sales-ocr-privacy"><Sparkles size={17} /><span>پس از فشردن «خواندن تصویر»، عکس برای تحلیل به سرویس هوش مصنوعی OpenAI فرستاده می‌شود؛ شاپرو تصویر را ذخیره نمی‌کند.</span></div>
-      {!analysis && <>
+      {!analysis && (cameraOpen ? <SalesOcrCameraCapture onCancel={() => setCameraOpen(false)} onCapture={(image) => { chooseFile(image); setCameraOpen(false); }} /> : <>
         <div className={`sales-ocr-dropzone ${dragging ? "is-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files[0]); }}>
           {preview ? <img className="sales-ocr-preview" src={preview} alt="پیش‌نمایش فاکتور انتخاب‌شده" /> : <span className="sales-ocr-placeholder"><FileImage size={26} /><strong>تصویر فاکتور را اینجا رها کنید</strong><small>یا از دستگاه انتخاب کنید؛ تصویر کاغذ و صفحه‌نمایش پذیرفته می‌شود.</small></span>}
           <div className="sales-ocr-file-actions">
             <label className="button button-secondary"><Upload size={16} />انتخاب تصویر<input type="file" accept="image/*" onChange={onInput} hidden /></label>
-            <label className="button button-secondary"><Camera size={16} />گرفتن عکس<input type="file" accept="image/*" capture="environment" onChange={onInput} hidden /></label>
+            <button className="button button-secondary" type="button" onClick={() => setCameraOpen(true)}><Camera size={16} />بازکردن دوربین و تنظیم تصویر</button>
           </div>
           {file && <span className="sales-ocr-filename" dir="auto">{file.name} · {faNumber(Math.ceil(file.size / 1024))} کیلوبایت</span>}
         </div>
         {error && <InlineError error={error} />}
         <div className="sales-ocr-actions"><button type="button" className="button button-primary" disabled={!file || busy} onClick={() => void analyze()}>{busy ? <><LoaderCircle className="spin" size={17} />در حال خواندن تصویر…</> : <><ScanLine size={17} />خواندن تصویر</>}</button></div>
-      </>}
+      </>)}
       {analysis && <>
         <div className="sales-ocr-result-heading"><span className="sales-ocr-success-icon"><Check size={18} /></span><span><strong>استخراج آمادهٔ بازبینی است</strong><small>اطلاعات با اطمینان کامل فرض نشده‌اند؛ موارد انتخاب‌شده وارد فرم می‌شوند.</small></span><button className="button button-text" type="button" onClick={() => setAnalysis(null)}>انتخاب تصویر دیگر</button></div>
         <section className="sales-ocr-review-section">
@@ -121,6 +123,31 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
       </>}
     </div>
   </Modal>;
+}
+
+function SalesOcrCameraCapture({ onCancel, onCapture }: { onCancel: () => void; onCapture: (file: File) => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [captureError, setCaptureError] = useState("");
+  const camera = useCameraSession(videoRef, true);
+  const capture = async () => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth < 1 || video.videoHeight < 1) { setCaptureError("تصویر دوربین هنوز آماده نیست؛ کمی صبر کنید."); return; }
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 3000 / video.videoWidth, 3000 / video.videoHeight);
+    canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
+    const context = canvas.getContext("2d");
+    if (!context) { setCaptureError("ساخت تصویر ممکن نشد؛ دوربین را دوباره باز کنید."); return; }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) { setCaptureError("ذخیرهٔ عکس ممکن نشد؛ دوباره تلاش کنید."); return; }
+    onCapture(new File([blob], `invoice-camera-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() }));
+  };
+  return <div className="sales-ocr-camera-capture">
+    <div className="sales-ocr-camera-heading"><strong>تنظیم دوربین و ثبت تصویر</strong><small>کنترل فوکوس، بزرگ‌نمایی، چراغ و نوردهی با توجه به قابلیت دوربین نمایش داده می‌شود.</small></div>
+    {camera.error ? <div className="barcode-scan-error" role="alert">{camera.error}</div> : <><div className="barcode-camera-frame sales-ocr-camera-frame"><video ref={videoRef} autoPlay muted playsInline aria-label="پیش‌نمایش دوربین برای گرفتن عکس فاکتور" /></div>{camera.ready && <CameraControls camera={camera} />}<p className="barcode-scan-status" role="status">{camera.status}</p></>}
+    {captureError && <div className="barcode-scan-error" role="alert">{captureError}</div>}
+    <div className="camera-capture-actions"><button className="button button-secondary" type="button" onClick={onCancel}>بازگشت به انتخاب تصویر</button><button className="button button-primary" type="button" disabled={!camera.ready} onClick={() => void capture()}><Camera size={17} />گرفتن عکس</button></div>
+  </div>;
 }
 
 export function SalesOcrCustomerModal({ open, customer, onClose, onConfirm }: { open: boolean; customer: SalesOcrCustomer | null; onClose: () => void; onConfirm: (customer: SalesOcrCustomer) => void }) {

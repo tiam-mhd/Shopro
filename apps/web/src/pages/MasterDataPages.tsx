@@ -7,6 +7,7 @@ import { adminApi, del, downloadFile, get, patch, post, uploadFile } from "../li
 import { faNumber, money } from "../lib/format.js";
 import { EmptyState, Field, InlineError, LoadMoreButton, PageHeader, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
+import { CameraControls, useCameraSession } from "../components/CameraSession.js";
 
 type MoneyCurrency = "IRR" | "IRT";
 type PartyType = "CUSTOMER" | "SUPPLIER" | "BOTH";
@@ -684,71 +685,52 @@ function BarcodeScannerModal({ open, onClose, onDetected }: { open: boolean; onC
   const videoRef = useRef<HTMLVideoElement>(null);
   const onCloseRef = useRef(onClose);
   const onDetectedRef = useRef(onDetected);
-  const [status, setStatus] = useState("در حال آماده‌سازی دوربین…");
-  const [error, setError] = useState("");
+  const [scanStatus, setScanStatus] = useState("در حال آماده‌سازی اسکنر…");
+  const [scanError, setScanError] = useState("");
+  const [scanAttempt, setScanAttempt] = useState(0);
   onCloseRef.current = onClose;
   onDetectedRef.current = onDetected;
+  const Detector = (window as Window & { BarcodeDetector?: BrowserBarcodeDetectorConstructor }).BarcodeDetector;
+  const camera = useCameraSession(videoRef, open && Boolean(Detector));
 
   useEffect(() => {
     if (!open) return;
-    let stopped = false;
-    let stream: MediaStream | undefined;
+    let cancelled = false;
     let timer: number | undefined;
-    let detector: BrowserBarcodeDetector | undefined;
-    setError("");
-    setStatus("در حال آماده‌سازی دوربین…");
-
-    const start = async () => {
-      const Detector = (window as Window & { BarcodeDetector?: BrowserBarcodeDetectorConstructor }).BarcodeDetector;
-      if (!Detector) { setError("اسکن بارکد در این مرورگر پشتیبانی نمی‌شود. از Chrome یا Edge به‌روز استفاده کنید یا بارکد را دستی وارد کنید."); return; }
-      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) { setError("برای استفاده از دوربین، صفحه باید در اتصال امن باز شده باشد."); return; }
+    setScanError("");
+    if (!Detector) { setScanError("اسکن بارکد در این مرورگر پشتیبانی نمی‌شود. از Chrome یا Edge به‌روز استفاده کنید یا بارکد را دستی وارد کنید."); return; }
+    if (!camera.ready || !camera.stream) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const startScan = async () => {
       try {
         const supported = await Detector.getSupportedFormats();
         const formats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93", "itf", "codabar", "pdf417", "data_matrix", "aztec"].filter((format) => supported.includes(format));
-        if (!formats.length) { setError("قالب بارکد پشتیبانی‌شده‌ای در این مرورگر پیدا نشد."); return; }
-        detector = new Detector({ formats });
-        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } });
-        if (stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
-        const video = videoRef.current;
-        if (!video) throw new Error("پیش‌نمایش دوربین آماده نشد.");
-        video.srcObject = stream;
-        await video.play();
-        setStatus("بارکد را داخل کادر دوربین قرار دهید.");
-        const scan = async () => {
-          if (stopped || !video || !detector) return;
+        if (!formats.length) { setScanError("قالب بارکد پشتیبانی‌شده‌ای در این مرورگر پیدا نشد."); return; }
+        const detector = new Detector({ formats });
+        setScanStatus("بارکد را داخل کادر قرار دهید؛ در صورت تاری فوکوس را تنظیم کنید.");
+        const read = async () => {
+          if (cancelled) return;
           if (video.readyState >= 2) {
             try {
               const detected = (await detector.detect(video)).find((item) => item.rawValue.trim());
-              if (detected && !stopped) { stopped = true; onDetectedRef.current(detected.rawValue.trim()); onCloseRef.current(); return; }
+              if (detected && !cancelled) { cancelled = true; onDetectedRef.current(detected.rawValue.trim()); onCloseRef.current(); return; }
             } catch {
-              if (stopped) return;
-              stopped = true;
-              stream?.getTracks().forEach((track) => track.stop());
-              video.srcObject = null;
-              setError("خواندن تصویر دوربین انجام نشد. دوربین را ثابت نگه دارید و دوباره تلاش کنید.");
+              if (!cancelled) setScanError("خواندن این تصویر انجام نشد. فوکوس یا نور را تنظیم کنید و دوباره اسکن کنید.");
               return;
             }
           }
-          if (!stopped) timer = window.setTimeout(() => void scan(), 180);
+          if (!cancelled) timer = window.setTimeout(() => void read(), 180);
         };
-        void scan();
-      } catch (cause) {
-        if (stopped) return;
-        const name = cause instanceof DOMException ? cause.name : "";
-        setError(name === "NotAllowedError" ? "اجازهٔ دسترسی به دوربین داده نشد. مجوز دوربین را در مرورگر فعال کنید." : name === "NotFoundError" ? "دوربینی روی این دستگاه پیدا نشد." : "دوربین باز نشد. مجوز دسترسی و اتصال امن صفحه را بررسی کنید.");
-      }
+        void read();
+      } catch { if (!cancelled) setScanError("قالب‌های بارکد از دوربین دریافت نشدند. دوباره اسکن کنید."); }
     };
-    void start();
-    return () => {
-      stopped = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      stream?.getTracks().forEach((track) => track.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
-    };
-  }, [open]);
+    void startScan();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [open, Detector, camera.ready, camera.stream, scanAttempt]);
 
   return <Modal open={open} onClose={() => onCloseRef.current()} title="اسکن بارکد با دوربین" description="دوربین را روبه‌روی بارکد نگه دارید تا کد خوانده و در فیلد ثبت شود.">
-    {error ? <div className="barcode-scan-error" role="alert">{error}</div> : <><div className="barcode-camera-frame"><video ref={videoRef} autoPlay muted playsInline aria-label="پیش‌نمایش دوربین برای اسکن بارکد" /><span aria-hidden="true" /></div><p className="barcode-scan-status" role="status">{status}</p></>}
+    <div className="barcode-scanner-content">{camera.error && <div className="barcode-scan-error" role="alert">{camera.error}</div>}{scanError && <div className="barcode-scan-error" role="alert">{scanError}</div>}{!camera.error && Detector && <><div className="barcode-camera-frame"><video ref={videoRef} autoPlay muted playsInline aria-label="پیش‌نمایش دوربین برای اسکن بارکد" /><span aria-hidden="true" /></div>{camera.ready && <CameraControls camera={camera} />}<p className="barcode-scan-status" role="status">{scanError ? "بارکد را دستی وارد کنید یا دوباره تلاش کنید." : camera.status || scanStatus}</p></>}{scanError && !camera.error && Detector && <button className="button button-secondary barcode-scan-retry" type="button" onClick={() => { setScanError(""); setScanAttempt((attempt) => attempt + 1); }}>تلاش دوباره برای اسکن</button>}</div>
   </Modal>;
 }
 

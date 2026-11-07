@@ -2165,3 +2165,34 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .app-modal:has(.sales-ocr-actions) .sales-ocr-actions { inset-inline-end: 14px; width: calc(55% - 14px); }
   .app-modal:has(.sales-ocr-actions) > .app-modal-footer { inset-inline-start: 14px; width: calc(45% - 14px); }
 }
+.barcode-scanner-content, .sales-ocr-camera-capture { display: grid; gap: 11px; min-width: 0; }
+.camera-control-panel { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.camera-control { display: grid; flex: 1 1 125px; gap: 6px; min-width: 0; color: var(--muted-strong); font-size: 9px; }
+.camera-control select { width: 100%; min-height: 36px; padding-inline: 9px; border: 1px solid var(--line-input); border-radius: 9px; color: var(--ink); background: var(--field-bg); font: inherit; font-size: 9px; }
+.camera-control .button { min-height: 35px; justify-content: center; padding-inline: 9px; font-size: 8px; }
+.camera-device-control { flex: 1 1 200px; grid-template-columns: minmax(0,1fr) auto; align-items: center; }
+.camera-device-control > span { grid-column: 1/-1; }
+.camera-device-control > select { min-width: 0; }
+.camera-range-control { flex: 1 1 145px; }
+.camera-range-control input { width: 100%; min-width: 0; accent-color: var(--green); }
+.camera-range-control small { justify-self: end; color: var(--muted); font-size: 8px; }
+.camera-toggle { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); cursor: pointer; }
+.camera-toggle input { accent-color: var(--green); }
+.camera-control-static { align-self: center; color: var(--muted); font-size: 9px; }
+.camera-control-error { flex: 1 1 100%; color: var(--danger-ink); font-size: 9px; line-height: 1.8; }
+.barcode-scan-retry { justify-self: center; }
+.sales-ocr-camera-heading { display: grid; gap: 4px; }
+.sales-ocr-camera-heading strong { font-size: 11px; }
+.sales-ocr-camera-heading small { color: var(--muted); font-size: 9px; line-height: 1.8; }
+.sales-ocr-camera-frame { min-height: 180px; }
+.sales-ocr-camera-frame video { max-height: 42dvh; object-fit: contain; }
+.camera-capture-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.camera-capture-actions .button { flex: 1 1 155px; justify-content: center; }
+@media (max-width: 600px) {
+  .camera-control { flex-basis: 100%; }
+  .camera-device-control { grid-template-columns: minmax(0,1fr); }
+  .camera-device-control > span, .camera-device-control > select { grid-column: auto; }
+  .camera-device-control > .button { width: 100%; }
+  .camera-capture-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .camera-capture-actions .button { min-width: 0; }
+}
