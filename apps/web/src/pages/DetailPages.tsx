@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, Boxes, BriefcaseBusiness, ChevronLeft, ChevronRight, Download, FileText, ImagePlus, PackagePlus, Pencil, ReceiptText, RotateCw, ShoppingBag, ShoppingCart, Tags, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
+import { Archive, ArrowLeftRight, BadgeCheck, Boxes, BriefcaseBusiness, Building2, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, FileText, ImagePlus, Mail, MapPin, PackagePlus, Pencil, Phone, ReceiptText, RotateCw, ShoppingBag, ShoppingCart, Tags, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CursorPage, MemberRole } from "@shopro/contracts";
 import { toAsciiDigits } from "@shopro/contracts";
@@ -35,7 +35,8 @@ export function PartyDetailsPage({ currency }: { currency: MoneyCurrency }) {
   const [exportError, setExportError] = useState("");
   const statement = query.data?.pages[0];
   const party = statement?.party;
-  const isSupplier = party?.type === "SUPPLIER" || (party?.type === "BOTH" && location.pathname.startsWith("/app/suppliers"));
+  const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
+  const isSupplier = party?.type === "SUPPLIER" || ((party?.type === "BOTH" || !party) && location.pathname.startsWith("/app/suppliers"));
   const directoryPath = isSupplier ? "/app/suppliers" : "/app/customers";
   const exportStatement = async () => {
     if (!party) return;
@@ -56,11 +57,108 @@ export function PartyDetailsPage({ currency }: { currency: MoneyCurrency }) {
     finally { setExporting(false); }
   };
   return <PageHeader title={party?.name ?? (isSupplier ? "جزئیات تأمین‌کننده" : "جزئیات مشتری")} subtitle={isSupplier ? "پروندهٔ تأمین‌کننده و گردش خرید و پرداخت" : "پروندهٔ مشتری و گردش فروش و دریافت"} actions={<div className="detail-actions">{party && !isSupplier && <Link className="button button-primary" to={`/app/sales?customerId=${encodeURIComponent(party.id)}`}><ShoppingCart size={16} />ثبت فروش برای این مشتری</Link>}<Link className="button button-secondary" to={directoryPath}><UsersRound size={16} />بازگشت به {isSupplier ? "تأمین‌کنندگان" : "مشتریان"}</Link></div>}>
-    {query.isPending ? <LoadingBlock /> : query.isError ? <InlineError error={query.error} retry={() => void query.refetch()} /> : party && <div className="detail-page">
-      <section className="card"><SectionTitle title={isSupplier ? "اطلاعات تأمین‌کننده" : "اطلاعات مشتری"} /><div className="detail-grid"><DetailField label="نوع ارتباط" value={partyTypeLabel(party.type)} /><DetailField label="شمارهٔ همراه" value={party.phone || "ثبت نشده"} /><DetailField label="ایمیل" value={party.email || "ثبت نشده"} /><DetailField label={isSupplier ? "شناسه اقتصادی" : "کد ملی"} value={party.nationalId || "ثبت نشده"} /><DetailField label="نشانی" value={party.address || "ثبت نشده"} />{!isSupplier && party.creditLimitRial && <DetailField label="سقف اعتبار فروش" value={money(party.creditLimitRial, currency)} />}{isSupplier && party.paymentTermsDays != null && <DetailField label="مهلت پرداخت پیش‌فرض" value={`${faNumber(party.paymentTermsDays)} روز`} />}<DetailField label="ماندهٔ حساب" value={money(statement.balanceRial, currency)} /></div></section>
-      <section className="card"><SectionTitle title="گردش مالی" action={<button type="button" className="button button-secondary" disabled={!party || query.isPending || exporting} onClick={() => void exportStatement()}><Download size={15} />{exporting ? "در حال آماده‌سازی…" : "دریافت CSV"}</button>} />{exportError && <InlineError error={exportError} />}{query.data.pages.some((page) => page.entries.length) ? <><div className="statement-detail-list">{query.data.pages.flatMap((page) => page.entries).map((entry) => <article className="statement-detail-row" key={entry.id}><div><strong>{entry.description || sourceLabel(entry.sourceType)}</strong><small>{entry.entryNo} · {jalaliDate(entry.date)}</small></div><div><span>بدهکار {money(entry.debitRial, currency)}</span><span>بستانکار {money(entry.creditRial, currency)}</span></div><strong>مانده {money(entry.balanceRial, currency)}</strong></article>)}</div>{query.hasNextPage && <button className="button button-secondary" type="button" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "در حال دریافت…" : "نمایش گردش‌های قدیمی‌تر"}</button>}</> : <EmptyState icon={FileText} title="گردشی ثبت نشده" text="با ثبت فروش، خرید یا دریافت و پرداخت، گردش حساب اینجا نمایش داده می‌شود." />}</section>
+    {query.isPending ? <LoadingBlock /> : query.isError ? <InlineError error={query.error} retry={() => void query.refetch()} /> : !party || !statement ? <EmptyState icon={UsersRound} title="پرونده پیدا نشد" text="این مشتری یا تأمین‌کننده در فهرست فعلی در دسترس نیست." action={<Link className="button button-secondary" to={directoryPath}>بازگشت به {isSupplier ? "تأمین‌کنندگان" : "مشتریان"}</Link>} /> : <div className={`party-detail-page ${isSupplier ? "is-supplier" : "is-customer"}`}>
+      <section className="card party-detail-hero">
+        <div className="party-detail-hero-main">
+          <span className="party-detail-avatar" aria-hidden="true">{isSupplier ? <Building2 size={23} /> : <UsersRound size={23} />}</span>
+          <div className="party-detail-hero-copy">
+            <div className="party-detail-badges"><span className="party-detail-role">پروندهٔ {isSupplier ? "تأمین‌کننده" : "مشتری"}</span>{party.type === "BOTH" && <span className="party-detail-dual-role">مشتری و تأمین‌کننده</span>}</div>
+            <p>{isSupplier ? "اطلاعات تماس، شناسهٔ اقتصادی و شرایط پرداخت این تأمین‌کننده." : "اطلاعات تماس، اعتبار و گردش مالی این مشتری."}</p>
+            {(party.phone || party.email) && <div className="party-detail-contact-actions">
+              {party.phone && <a href={`tel:${party.phone}`}><Phone size={15} />تماس</a>}
+              {party.email && <a href={`mailto:${party.email}`}><Mail size={15} />ارسال ایمیل</a>}
+            </div>}
+          </div>
+        </div>
+        <aside className="party-detail-balance">
+          <span><Wallet size={16} />ماندهٔ حساب</span>
+          <strong>{money(statement.balanceRial, currency)}</strong>
+          <small>بر اساس گردش‌های ثبت‌شده در دفتر مالی</small>
+        </aside>
+      </section>
+
+      <section className="card party-detail-information">
+        <SectionTitle title="اطلاعات پرونده" />
+        <div className="party-detail-facts">
+          <PartyDetailFact icon={<BadgeCheck size={16} />} label="نوع ارتباط" value={partyTypeLabel(party.type)} />
+          <PartyDetailFact icon={<Phone size={16} />} label="شمارهٔ همراه" value={party.phone ? <a href={`tel:${party.phone}`} dir="ltr">{party.phone}</a> : "ثبت نشده"} />
+          <PartyDetailFact icon={<Mail size={16} />} label="ایمیل" value={party.email ? <a href={`mailto:${party.email}`} dir="ltr">{party.email}</a> : "ثبت نشده"} />
+          <PartyDetailFact icon={<CreditCard size={16} />} label={isSupplier ? "شناسهٔ اقتصادی" : "کد ملی"} value={party.nationalId || "ثبت نشده"} />
+          <PartyDetailFact icon={<MapPin size={16} />} label="نشانی" value={party.address || "ثبت نشده"} wide />
+          {isSupplier
+            ? <PartyDetailFact icon={<CalendarDays size={16} />} label="مهلت پرداخت پیش‌فرض" value={party.paymentTermsDays != null ? `${faNumber(party.paymentTermsDays)} روز` : "تعیین نشده"} />
+            : <PartyDetailFact icon={<Wallet size={16} />} label="سقف اعتبار فروش" value={party.creditLimitRial != null ? money(party.creditLimitRial, currency) : "تعیین نشده"} />}
+        </div>
+      </section>
+
+      <section className="card party-detail-statement">
+        <SectionTitle title="گردش مالی" action={<span className="party-statement-actions"><span className="party-statement-count">{faNumber(entries.length)} ردیف بارگذاری‌شده</span><button type="button" className="button button-secondary" disabled={exporting} onClick={() => void exportStatement()}><Download size={15} />{exporting ? "در حال آماده‌سازی…" : "دریافت CSV"}</button></span>} />
+        <p className="party-statement-caption">بدهکار، بستانکار و ماندهٔ پس از هر سند از دفتر مالی این کسب‌وکار نمایش داده می‌شود.</p>
+        {exportError && <InlineError error={exportError} />}
+        {entries.length ? <div className="party-statement-list" aria-label="فهرست گردش مالی">
+          {entries.map((entry) => <article className="party-statement-row" key={entry.id}>
+            <div className="party-statement-entry">
+              <span className="party-statement-entry-icon" aria-hidden="true"><ReceiptText size={17} /></span>
+              <div className="party-statement-entry-copy"><strong>{entry.description || sourceLabel(entry.sourceType)}</strong><div className="party-statement-entry-meta"><span>{sourceLabel(entry.sourceType)}</span><bdi dir="ltr">{entry.entryNo}</bdi><time dateTime={entry.date}>{jalaliDate(entry.date)}</time></div></div>
+            </div>
+            <div className="party-statement-amounts">
+              <PartyStatementAmount label="بدهکار" value={money(entry.debitRial, currency)} />
+              <PartyStatementAmount label="بستانکار" value={money(entry.creditRial, currency)} />
+              <PartyStatementAmount label="مانده پس از سند" value={money(entry.balanceRial, currency)} emphasized />
+            </div>
+          </article>)}
+        </div> : <EmptyState icon={FileText} title="گردشی ثبت نشده" text={isSupplier ? "با ثبت خرید یا پرداخت، گردش حساب تأمین‌کننده در این فهرست نمایش داده می‌شود." : "با ثبت فروش یا دریافت وجه، گردش حساب مشتری در این فهرست نمایش داده می‌شود."} />}
+        {query.hasNextPage && <button className="button button-secondary party-statement-load-more" type="button" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "در حال دریافت…" : "نمایش گردش‌های بیشتر"}<ChevronLeft size={15} /></button>}
+      </section>
     </div>}
   </PageHeader>;
+}
+
+function CatalogTransferAction({ itemId, kind, role }: { itemId: string; kind: "STOCK" | "SERVICE"; role: MemberRole }) {
+  const canTransfer = role === "OWNER" || role === "MANAGER" || role === "ACCOUNTANT";
+  const businessId = sessionStorage.getItem("shopro_business_id") ?? "";
+  const currentBranchId = sessionStorage.getItem("shopro_branch_id") ?? "";
+  const branches = useQuery({
+    queryKey: ["business-current", businessId],
+    queryFn: () => get<{ branches: Array<{ id: string; name: string; code: string }> }>("/businesses/current"),
+    enabled: canTransfer && !!businessId,
+  });
+  const destinations = (branches.data?.branches ?? []).filter((branch) => branch.id !== currentBranchId);
+  const [open, setOpen] = useState(false);
+  const [targetBranchId, setTargetBranchId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!destinations.some((branch) => branch.id === targetBranchId)) setTargetBranchId(destinations[0]?.id ?? "");
+  }, [destinations, targetBranchId]);
+
+  if (!canTransfer || destinations.length === 0) return null;
+  const collection = kind === "STOCK" ? "products" : "services";
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!targetBranchId || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await post<{ id: string; branchId: string }>(`/${collection}/${encodeURIComponent(itemId)}/transfer`, { targetBranchId });
+      sessionStorage.setItem("shopro_branch_id", result.branchId);
+      window.location.assign(`/app/${collection}/${encodeURIComponent(result.id)}`);
+    } catch (cause) {
+      setError(messageOf(cause));
+      setBusy(false);
+    }
+  };
+  return <>
+    <button type="button" className="button button-secondary" onClick={() => { setError(""); setOpen(true); }}><ArrowLeftRight size={16} />انتقال به شعبه</button>
+    <Modal open={open} onClose={() => { if (!busy) setOpen(false); }} title="انتقال به شعبهٔ دیگر" description="یک نسخهٔ مستقل در شعبهٔ مقصد ساخته می‌شود. اطلاعات کالا یا خدمت و تصاویر کپی می‌شوند؛ موجودی، فاکتورها و سوابق مالی در شعبهٔ مبدأ باقی می‌مانند.">
+      <form onSubmit={(event) => void submit(event)}>
+        <SelectField label="شعبهٔ مقصد" value={targetBranchId} onChange={setTargetBranchId} options={destinations.map((branch) => ({ value: branch.id, label: `${branch.name} · ${branch.code}` }))} />
+        {branches.isError && <InlineError error={branches.error} retry={() => void branches.refetch()} />}
+        {error && <InlineError error={error} />}
+        <div className="modal-form-actions"><SubmitButton busy={busy}>ساخت نسخه در شعبهٔ مقصد</SubmitButton></div>
+      </form>
+    </Modal>
+  </>;
 }
 
 type ServiceDetail = { id: string; name: string; description: string | null; unit: { labelFa: string }; category: { id: string; name: string } | null; salePriceRial: string; taxRateBasisPoints: number; isActive: boolean; images: ProductDetailImage[] };
@@ -68,7 +166,7 @@ export function ServiceDetailsPage({ currency, role }: { currency: MoneyCurrency
   const { id = "" } = useParams();
   const service = useQuery({ queryKey: ["service-detail", id], queryFn: () => get<ServiceDetail>("/services/" + id), enabled: !!id });
   const item = service.data;
-  return <PageHeader title={item?.name ?? "جزئیات خدمت"} subtitle="شرح، قیمت‌گذاری و وضعیت خدمت" actions={<div className="detail-actions">{item?.isActive && <Link className="button button-primary" to={"/app/sales?productId=" + encodeURIComponent(item.id)}><ShoppingCart size={16} />ثبت فروش این خدمت</Link>}<Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />بازگشت به خدمات</Link></div>}>
+  return <PageHeader title={item?.name ?? "جزئیات خدمت"} subtitle="شرح، قیمت‌گذاری و وضعیت خدمت" actions={<div className="detail-actions">{item?.isActive && <Link className="button button-primary" to={"/app/sales?productId=" + encodeURIComponent(item.id)}><ShoppingCart size={16} />ثبت فروش این خدمت</Link>}{item && <CatalogTransferAction itemId={item.id} kind="SERVICE" role={role} />}<Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />بازگشت به خدمات</Link></div>}>
     {service.isPending ? <LoadingBlock /> : service.isError ? <InlineError error={service.error} retry={() => void service.refetch()} /> : item && <div className="service-detail-page">
       <section className="card service-detail-hero"><span className="product-avatar service-avatar"><BriefcaseBusiness size={22} /></span><div className="service-detail-copy"><div className="product-detail-badges"><span className="product-detail-kind">خدمت</span><span className={"product-detail-status " + (item.isActive ? "is-active" : "is-archived")}><i />{item.isActive ? "فعال" : "بایگانی‌شده"}</span>{item.category && <span className="product-detail-category"><Tags size={13} />{item.category.name}</span>}</div><h2>{item.name}</h2><p>{item.description || "برای این خدمت شرحی ثبت نشده است."}</p></div><ProductDetailGallery images={item.images ?? []} name={item.name} entityLabel="خدمت" /><div className="product-detail-price"><span>قیمت فروش <small>برای هر {item.unit.labelFa}</small></span><strong>{money(item.salePriceRial, currency)}</strong></div></section>
       <section className="card product-detail-specs"><SectionTitle title="مشخصات خدمت" /><div className="detail-grid product-detail-spec-grid"><DetailField label="واحد ارائه" value={item.unit.labelFa} /><DetailField label="دسته‌بندی" value={item.category?.name ?? "بدون دسته‌بندی"} /><DetailField label="وضعیت" value={item.isActive ? "فعال" : "بایگانی‌شده"} /><DetailField label="قیمت فروش" value={money(item.salePriceRial, currency)} /><DetailField label="نرخ مالیات" value={faNumber(item.taxRateBasisPoints / 100) + "٪"} /><DetailField label="شرح" value={item.description || "ثبت نشده"} /></div></section>
@@ -83,7 +181,7 @@ export function ProductDetailsPage({ currency, role }: { currency: MoneyCurrency
   const movements = useInfiniteQuery({ queryKey: ["product-movements", id], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<{ id: string; date: string; sourceType: string; quantityDelta: string; unitCostRial: string; valueDeltaRial: string }>>(`/inventory/movements?productId=${encodeURIComponent(id)}&limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined, enabled: !!id });
   const movementRows = movements.data?.pages.flatMap((page) => page.items) ?? [];
   const item = product.data;
-  return <PageHeader title="جزئیات کالا" subtitle="مشخصات، قیمت و عملکرد کالا در این شعبه" actions={<div className="detail-actions">{item?.isActive && <Link className="button button-primary" to={`/app/sales?productId=${encodeURIComponent(item.id)}`}><ShoppingCart size={16} />ثبت فروش</Link>}<Link className="button button-secondary" to="/app/products"><PackagePlus size={16} />بازگشت به کالاها</Link></div>}>
+  return <PageHeader title="جزئیات کالا" subtitle="مشخصات، قیمت و عملکرد کالا در این شعبه" actions={<div className="detail-actions">{item?.isActive && <Link className="button button-primary" to={`/app/sales?productId=${encodeURIComponent(item.id)}`}><ShoppingCart size={16} />ثبت فروش</Link>}{item && <CatalogTransferAction itemId={item.id} kind="STOCK" role={role} />}<Link className="button button-secondary" to="/app/products"><PackagePlus size={16} />بازگشت به کالاها</Link></div>}>
     {product.isPending ? <LoadingBlock /> : product.isError ? <InlineError error={product.error} retry={() => void product.refetch()} /> : !item ? <EmptyState icon={Boxes} title="کالا پیدا نشد" text="اطلاعات این مورد در کسب‌وکار فعلی در دسترس نیست." /> : <div className="product-detail-page">
       <section className="card product-detail-hero">
         <div className="product-detail-copy">
@@ -370,6 +468,17 @@ export function FinanceDetailsPage({ currency }: { currency: MoneyCurrency }) {
     <Modal open={archiveOpen} onClose={() => setArchiveOpen(false)} title="بایگانی حساب" description="حساب دارای مانده بایگانی نمی‌شود؛ سوابق قبلی حفظ می‌شوند."><p>حساب «{account?.name}» بایگانی شود؟</p>{error && <InlineError error={error} />}<div className="modal-form-actions"><button type="button" className="button button-danger" disabled={busy} onClick={() => void archiveAccount()}>{busy ? "در حال بایگانی…" : "تأیید بایگانی"}</button></div></Modal>
     <Modal open={voidOpen} onClose={() => setVoidOpen(false)} title="ابطال تراکنش" description="تراکنش اصلی حذف نمی‌شود؛ دریافت یا پرداخت معکوس در سابقه ثبت خواهد شد."><Field label="دلیل ابطال" value={voidReason} onChange={setVoidReason} required />{error && <InlineError error={error} />}<div className="modal-form-actions"><button type="button" className="button button-danger" disabled={busy || voidReason.trim().length < 3} onClick={() => void voidTransaction()}>{busy ? "در حال ابطال…" : "تأیید ابطال"}</button></div></Modal>
   </PageHeader>;
+}
+
+function PartyDetailFact({ icon, label, value, wide = false }: { icon: ReactNode; label: string; value: ReactNode; wide?: boolean }) {
+  return <div className={`party-detail-fact${wide ? " is-wide" : ""}`}>
+    <span className="party-detail-fact-icon" aria-hidden="true">{icon}</span>
+    <div className="party-detail-fact-copy"><small>{label}</small><div className="party-detail-fact-value">{value}</div></div>
+  </div>;
+}
+
+function PartyStatementAmount({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
+  return <div className={`party-statement-amount${emphasized ? " is-emphasized" : ""}`}><small>{label}</small><strong>{value}</strong></div>;
 }
 
 function DetailField({ label, value }: { label: string; value: ReactNode }) { return <div className="detail-field"><small>{label}</small><strong>{value}</strong></div>; }
