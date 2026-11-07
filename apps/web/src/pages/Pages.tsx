@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Boxes, ChartNoAxesCombined, CirclePlus, Download, FileText, PackagePlus, ReceiptText, RotateCw, Search, ShoppingBag, ShoppingCart, Tags, UsersRound, Wallet } from "lucide-react";
 import { parseQuantityMilli, toAsciiDigits } from "@shopro/contracts";
 import type { BusinessSummary, CursorPage, MemberRole } from "@shopro/contracts";
 import { del, get, newOperationId, patch, post } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
-import { countAwaitingServer, listPendingSales, savePendingSale } from "../lib/offline.js";
 import { partyPicker, productPicker } from "../lib/picker-options.js";
 import { downloadCsv } from "../lib/csv.js";
 import { trackOnboardingEvent } from "../lib/onboarding-events.js";
@@ -18,8 +17,7 @@ import { DataRows, EmptyState, Field, InlineError, LoadMoreButton, LoadingBlock,
 
 type MoneyCurrency = "IRR" | "IRT";
 type Product = { id: string; name: string; sku: string | null; barcode?: string | null; kind: "STOCK"; unit: { id: string; labelFa: string; precision: number }; salePriceRial: string; defaultCostRial?: string | null; taxRateBasisPoints?: number; quantityOnHand: string; reorderPoint?: string | null; trackInventory: boolean; isActive?: boolean; category?: { id: string; name: string } | null };
-type SalesCatalogItem = Omit<Product, "quantityOnHand"> & { quantityOnHand?: string };
-type Party = { id: string; name: string; type: "CUSTOMER" | "SUPPLIER" | "BOTH"; phone: string | null; paymentTermsDays?: number | null; balanceRial?: string };
+type Party = { id: string; name: string; type: "CUSTOMER" | "SUPPLIER" | "BOTH"; phone: string | null; email?: string | null; nationalId?: string | null; address?: string | null; paymentTermsDays?: number | null; balanceRial?: string };
 type PartyBalance = { id: string; name: string; phone: string | null; balanceRial: string };
 type CashAccount = { id: string; name: string; kind: string; balanceRial: string };
 type Invoice = { id: string; invoiceNo: string | null; date: string; customer: string | null; totalRial: string; status: string; documentType?: "SALE" | "RETURN" };
@@ -32,68 +30,7 @@ type StockCount = { id: string; txnDate: string; status: string; reason: string;
 type CountDraftLine = { productId: string; countedQuantity: string; productName: string; unitLabel: string; systemQuantity: string };
 type Dashboard = { displayCurrency: MoneyCurrency; netSalesRial: string; grossProfitRial: string | null; grossProfitAvailable: boolean; cashPositionRial: string; salesCount: number; expenseCount: number; salesRial: string; receiptsRial: string; expensesRial: string; accountBalances: Array<{ id: string; name: string; balanceRial: string }>; lowStock: Array<{ id: string; name: string; quantity: string; reorderPoint: string; unit: string }> };
 
-export function SalesPage({ currency, setPendingCount, userId }: { currency: MoneyCurrency; setPendingCount: (count: number) => void; userId: string }) {
-  const invalidate = useInvalidate(); const navigate = useNavigate(); const [searchParams, setSearchParams] = useSearchParams(); const [productPickerOpen, setProductPickerOpen] = useState(false); const [quickPartyOpen, setQuickPartyOpen] = useState(false); const [quickProductOpen, setQuickProductOpen] = useState(false); const [quickAccountOpen, setQuickAccountOpen] = useState(false); const [date, setDate] = useState(() => todayISO()); const [customerId, setCustomerId] = useState(""); const [prefilledParty, setPrefilledParty] = useState<Party | null>(null); const [note, setNote] = useState(""); const [cart, setCart] = useState<Array<{ productId: string; quantity: string }>>([]); const [selectedProducts, setSelectedProducts] = useState<Record<string, SalesCatalogItem>>({}); const [paid, setPaid] = useState(""); const [accountId, setAccountId] = useState(""); const [method, setMethod] = useState<"CASH" | "POS" | "BANK" | "OTHER">("CASH"); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [prefillError, setPrefillError] = useState(""); const [search, setSearch] = useState(""); const [debouncedProductSearch, setDebouncedProductSearch] = useState("");
-  const prefillCustomerId = searchParams.get("customerId") ?? ""; const prefillProductId = searchParams.get("productId") ?? ""; const appliedCustomerPrefill = useRef<string | null>(null); const appliedProductPrefill = useRef<string | null>(null);
-  useEffect(() => { const timeout = window.setTimeout(() => setDebouncedProductSearch(search.trim()), 220); return () => window.clearTimeout(timeout); }, [search]);
-  const products = useInfiniteQuery({ queryKey: ["sales-product-picker", sessionStorage.getItem("shopro_business_id"), sessionStorage.getItem("shopro_branch_id"), debouncedProductSearch], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<SalesCatalogItem>>(`/catalog?limit=40&q=${encodeURIComponent(debouncedProductSearch)}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined, enabled: productPickerOpen });
-  const parties = useQuery({ queryKey: ["parties", "CUSTOMER"], queryFn: () => get<Party[]>("/customers") }); const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => get<CashAccount[]>("/finance/accounts") });
-  const partyPrefill = useQuery({ queryKey: ["sales-party-prefill", sessionStorage.getItem("shopro_business_id"), prefillCustomerId], queryFn: () => get<{ party: Party }>(`/parties/${encodeURIComponent(prefillCustomerId)}/statement`), enabled: Boolean(prefillCustomerId) });
-  const productPrefill = useQuery({ queryKey: ["sales-product-prefill", sessionStorage.getItem("shopro_business_id"), sessionStorage.getItem("shopro_branch_id"), prefillProductId], queryFn: () => get<SalesCatalogItem>(`/catalog/${encodeURIComponent(prefillProductId)}`), enabled: Boolean(prefillProductId) });
-  const customerPickerOptions = partyPicker("CUSTOMER");
-  const searchedProducts = products.data?.pages.flatMap((page) => page.items) ?? [];
-  const productList = useMemo(() => [...new Map([...Object.values(selectedProducts), ...searchedProducts].map((product) => [product.id, product])).values()], [selectedProducts, searchedProducts]);
-  const customerOptions = useMemo(() => {
-    const options = new Map((parties.data ?? []).map((party) => [party.id, party.name]));
-    if (prefilledParty) options.set(prefilledParty.id, prefilledParty.name);
-    return [...options].map(([value, label]) => ({ value, label }));
-  }, [parties.data, prefilledParty]);
-  const total = useMemo(() => cart.reduce((sum, line) => { const product = productList.find((item) => item.id === line.productId); if (!product) return sum; try { const milli = parseQuantityMilli(line.quantity); const base = (BigInt(product.salePriceRial) * milli + 500n) / 1000n; const tax = (base * BigInt(product.taxRateBasisPoints ?? 0) + 5000n) / 10000n; return sum + base + tax; } catch { return sum; } }, 0n), [cart, productList]);
-  const add = useCallback((product: SalesCatalogItem) => { setPrefillError(""); setSelectedProducts((items) => ({ ...items, [product.id]: product })); setCart((items) => { const existing = items.find((line) => line.productId === product.id); return existing ? items.map((line) => line.productId === product.id ? { ...line, quantity: String(Number(line.quantity) + 1) } : line) : [...items, { productId: product.id, quantity: "1" }]; }); }, []);
-  useEffect(() => {
-    const consumed: string[] = [];
-    if (!prefillCustomerId) appliedCustomerPrefill.current = null;
-    else if (partyPrefill.data && appliedCustomerPrefill.current !== prefillCustomerId) {
-      appliedCustomerPrefill.current = prefillCustomerId;
-      if (partyPrefill.data.party.type === "CUSTOMER" || partyPrefill.data.party.type === "BOTH") { setPrefilledParty(partyPrefill.data.party); setCustomerId(partyPrefill.data.party.id); }
-      else setPrefillError("این طرف‌حساب مشتری نیست و برای فروش انتخاب نشد.");
-      consumed.push("customerId");
-    }
-    if (!prefillProductId) appliedProductPrefill.current = null;
-    else if (productPrefill.data && appliedProductPrefill.current !== prefillProductId) {
-      appliedProductPrefill.current = prefillProductId;
-      if (productPrefill.data.isActive !== false) add(productPrefill.data);
-      else setPrefillError("این کالا بایگانی شده و به فروش افزوده نشد.");
-      consumed.push("productId");
-    }
-    if (consumed.length) setSearchParams((current) => { const next = new URLSearchParams(current); consumed.forEach((key) => next.delete(key)); return next; }, { replace: true });
-  }, [add, partyPrefill.data, prefillCustomerId, prefillProductId, productPrefill.data, setSearchParams]);
-  const setQty = (productId: string, quantity: string) => setCart((items) => items.map((line) => line.productId === productId ? { ...line, quantity } : line).filter((line) => Number(line.quantity) > 0));
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!cart.length) { setError("برای ثبت فروش یک کالا یا خدمت اضافه کنید."); return; } setBusy(true); setError(""); setSuccess("");
-    const sale = { customerId: customerId || undefined, txnDate: date, note: note || undefined, lines: cart.map((line) => ({ productId: line.productId, quantity: line.quantity })) };
-    const operationId = newOperationId();
-    try {
-      const amountRial = displayToRial(paid, currency);
-      const draft = await post<{ id: string }>("/sales", sale, { "Idempotency-Key": `${operationId}-draft` });
-      setCart([]); setPaid(""); setNote(""); await invalidate();
-      navigate("/app/invoices/" + draft.id, { state: { openPost: true, payment: amountRial ? { amountRial, financeAccountId: accountId, method } : null } });
-    } catch (cause) {
-      if (!navigator.onLine || cause instanceof TypeError) {
-        try { const businessId = sessionStorage.getItem("shopro_business_id") ?? ""; const branchId = sessionStorage.getItem("shopro_branch_id") ?? ""; const amountRial = displayToRial(paid, currency); const payment = amountRial && accountId ? { amountRial, financeAccountId: accountId, method } : undefined; await savePendingSale({ id: operationId, userId, draftKey: `${operationId}-draft`, postKey: `${operationId}-post`, businessId, branchId, sale, payment }); setPendingCount(countAwaitingServer((await listPendingSales()).filter((item) => item.userId === userId))); setSuccess("فروش به‌صورت پیش‌نویس روی این دستگاه و برای همین حساب ذخیره شد؛ پس از اتصال می‌توانید آن را ارسال کنید."); setCart([]); }
-        catch { setError("این دستگاه نتوانست پیش‌نویس را ذخیره کند. اطلاعات فرم را نگه داشته‌ایم؛ دوباره تلاش کنید."); }
-      } else setError(messageOf(cause));
-    } finally { setBusy(false); }
-  };
-  return <PageHeader title="ثبت فروش" subtitle="اطلاعات فاکتور را همین‌جا وارد کنید؛ کالاها و مبلغ دریافتی را هم‌زمان بررسی کنید." actions={<Link className="button button-secondary" to="/app/invoices"><FileText size={17} />فاکتورها</Link>}><div className="form-page sales-entry-form"><form onSubmit={(event) => void submit(event)}>
-    <section className="card form-card"><SectionTitle title="اطلاعات فروش" /><div className="form-grid"><JalaliDatePicker value={date} onChange={setDate} label="تاریخ فاکتور" /><SelectField label="مشتری" value={customerId} onChange={(value) => { setCustomerId(value); setPrefillError(""); }} options={customerOptions} optionsKey={customerPickerOptions.key} loadOptions={customerPickerOptions.load} placeholder="بدون مشتری" onAdd={() => setQuickPartyOpen(true)} /><Field label="توضیح" value={note} onChange={setNote} placeholder="اختیاری" /></div>{partyPrefill.isError && <InlineError error={partyPrefill.error} retry={() => void partyPrefill.refetch()} />}</section>
-    <section className="card form-card"><SectionTitle title="کالا و خدمت" action={<span className="eyebrow">{faNumber(cart.length)} ردیف</span>} /><button type="button" className="button button-secondary product-picker-trigger" onClick={() => setProductPickerOpen(true)}><PackagePlus size={17} />افزودن کالا یا خدمت از فهرست</button>
-      {cart.length > 0 && <div className="cart-lines">{cart.map((line) => { const product = productList.find((item) => item.id === line.productId)!; let lineTotal = 0n; try { const base = (BigInt(product.salePriceRial) * parseQuantityMilli(line.quantity) + 500n) / 1000n; lineTotal = base + (base * BigInt(product.taxRateBasisPoints ?? 0) + 5000n) / 10000n; } catch { /* incomplete quantity remains editable */ } return <div className="cart-line" key={line.productId}><span className="row-grow"><strong>{product.name}</strong><small>{money(product.salePriceRial, currency)} برای هر {product.unit.labelFa}{product.taxRateBasisPoints ? ` · ${faNumber(product.taxRateBasisPoints / 100)}٪ مالیات` : ""}</small></span><input className="quantity-input" inputMode="decimal" aria-label={`تعداد ${product.name}`} value={line.quantity} onChange={(event) => setQty(line.productId, event.target.value)} /><strong>{money(lineTotal, currency)}</strong><button type="button" className="remove-line" onClick={() => setCart((items) => items.filter((item) => item.productId !== product.id))} aria-label={`حذف ${product.name}`}><XIcon /></button></div>; })}</div>}
-    </section>
-    <section className="card form-card"><SectionTitle title="دریافت وجه" action={<span className="eyebrow">اختیاری</span>} /><div className="form-grid"><Field label={`مبلغ دریافتی (${currency === "IRT" ? "تومان" : "ریال"})`} value={paid} onChange={setPaid} inputMode={currency === "IRT" ? "decimal" : "numeric"} placeholder="۰" /><SelectField label="حساب دریافت" value={accountId} onChange={setAccountId} options={(accounts.data ?? []).map((account) => ({ value: account.id, label: account.name }))} placeholder="انتخاب صندوق یا بانک" onAdd={() => setQuickAccountOpen(true)} /><SelectField label="روش پرداخت" value={method} onChange={(value) => setMethod(value as typeof method)} options={[{ value: "CASH", label: "نقدی" }, { value: "POS", label: "کارت‌خوان" }, { value: "BANK", label: "واریز بانکی" }, { value: "OTHER", label: "سایر" }]} /></div></section>
-    <section className="card total-card"><span><small>جمع فاکتور</small><strong>{money(total, currency)}</strong></span><span><small>مبلغ دریافتی</small><strong>{money(displayToRial(paid, currency) || "0", currency)}</strong></span><span><small>ماندهٔ مشتری</small><strong>{money(total - BigInt(displayToRial(paid, currency) || "0"), currency)}</strong></span></section>
-    {prefillError && <div className="notice notice-warning" role="status">{prefillError}</div>}{productPrefill.isError && <InlineError error={productPrefill.error} retry={() => void productPrefill.refetch()} />}{error && <InlineError error={error} />}{success && <div className="notice notice-success">{success}</div>}<div className="form-actions"><SubmitButton busy={busy}>ثبت فروش</SubmitButton><span className="muted">ثبت نهایی فقط پس از تأیید سرور انجام می‌شود.</span></div>
-  </form></div><QuickPartyModal open={quickPartyOpen} type="CUSTOMER" onClose={() => setQuickPartyOpen(false)} onCreated={(party) => { setCustomerId(party.id); setPrefillError(""); void invalidate(); }} /><QuickProductModal open={quickProductOpen} currency={currency} onClose={() => setQuickProductOpen(false)} onCreated={(product) => { setSearch(product.name); setProductPickerOpen(true); void invalidate(); }} /><QuickAccountModal open={quickAccountOpen} onClose={() => setQuickAccountOpen(false)} onCreated={(account) => { setAccountId(account.id); void invalidate(); }} /><Modal open={productPickerOpen} onClose={() => setProductPickerOpen(false)} title="انتخاب کالا یا خدمت" description="نام، کد یا بارکد را جست‌وجو کنید." size="wide"><div className="search-box"><Search size={17} /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="نام، کد کالا یا بارکد" aria-label="جست‌وجوی کالا" /></div><button type="button" className="button button-secondary picker-add" onClick={() => { setProductPickerOpen(false); setQuickProductOpen(true); }}><CirclePlus size={17} />افزودن کالای انبارشونده</button><div className="product-pick-list">{products.isError ? <InlineError error={products.error} retry={() => void products.refetch()} /> : products.isPending ? <LoadingBlock /> : searchedProducts.map((product) => <button type="button" className="product-pick" key={product.id} onClick={() => { add(product); setProductPickerOpen(false); }}><span className="product-avatar"><PackagePlus size={18} /></span><span className="row-grow"><strong>{product.name}</strong><small>{product.sku || product.unit.labelFa} · {money(product.salePriceRial, currency)}</small></span><CirclePlus size={19} /></button>)}{!products.isPending && !products.isError && !searchedProducts.length && <p className="muted">کالایی مطابق جست‌وجو پیدا نشد.</p>}</div><LoadMoreButton hasMore={Boolean(products.hasNextPage)} isLoading={products.isFetchingNextPage} onClick={() => void products.fetchNextPage()} /></Modal></PageHeader>;
-}
+export { SalesPage } from './SalesPage.js';
 
 export function InvoicesPage({ currency }: { currency: MoneyCurrency }) {
   const invalidate = useInvalidate();

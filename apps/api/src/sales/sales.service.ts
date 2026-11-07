@@ -230,6 +230,7 @@ export class SalesService {
   async createDraft(user: AuthenticatedUser, dto: CreateSalesDto, key: string | undefined, request: AppRequest) {
     const { businessId, branchId } = this.scope(user);
     if (!["OWNER", "MANAGER", "ACCOUNTANT", "CASHIER"].includes(user.role ?? "")) throw new ForbiddenException();
+    if (dto.customerId && dto.newCustomer) throw new BadRequestException("مشتری موجود و اطلاعات مشتری تازه را هم‌زمان انتخاب نکنید.");
     if (!key || key.length > 128) throw new BadRequestException("هدر Idempotency-Key برای ساخت پیش‌نویس فروش الزامی است.");
     const requestHash = this.accounting.idempotencyHash(dto);
     const previous = await this.accounting.existingIdempotent(user.id, businessId, key, requestHash);
@@ -258,14 +259,15 @@ export class SalesService {
     }));
     try {
     return await this.prisma.$transaction(async (tx) => {
+      const customerId = dto.newCustomer ? await this.createCustomerForDraft(tx, user, businessId, dto.newCustomer, request) : dto.customerId ?? null;
       const row = await tx.salesInvoice.create({
         data: {
-          businessId, branchId, customerId: dto.customerId ?? null, txnDate: date, note: dto.note?.trim() || null,
+          businessId, branchId, customerId, txnDate: date, note: dto.note?.trim() || null,
           subtotalRial: subtotal, discountRial: discounts, taxRial: tax, totalRial: total,
           lines: { create: invoiceLines },
         },
       });
-      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.draft.created", entityType: "sales_invoice", entityId: row.id, requestId: request.requestId ?? "unknown", afterJson: { customerId: dto.customerId ?? null, totalRial: total.toString(), lineCount: lines.length } } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "sales.draft.created", entityType: "sales_invoice", entityId: row.id, requestId: request.requestId ?? "unknown", afterJson: { customerId, totalRial: total.toString(), lineCount: lines.length } } });
       const result = { id: row.id, status: row.status, subtotalRial: subtotal.toString(), discountRial: discounts.toString(), taxRial: tax.toString(), totalRial: total.toString() };
       await this.accounting.remember(tx, { userId: user.id, businessId, key, requestHash, response: result });
       return result;
@@ -282,6 +284,7 @@ export class SalesService {
   async updateDraft(user: AuthenticatedUser, id: string, dto: CreateSalesDto, request: AppRequest) {
     const { businessId, branchId } = this.scope(user);
     if (!["OWNER", "MANAGER", "ACCOUNTANT", "CASHIER"].includes(user.role ?? "")) throw new ForbiddenException();
+    if (dto.newCustomer) throw new BadRequestException("برای ویرایش پیش‌نویس، مشتری را از فهرست مشتریان انتخاب کنید.");
     const before = await this.prisma.salesInvoice.findFirst({ where: { id, businessId, branchId, status: "DRAFT", returnOfId: null }, include: { lines: true } });
     if (!before) throw new NotFoundException("پیش‌نویس فروش پیدا نشد.");
     const date = this.date(dto.txnDate);
@@ -573,6 +576,27 @@ export class SalesService {
     if (discount > 0n && !["OWNER", "MANAGER", "ACCOUNTANT"].includes(user.role ?? "")) throw new ForbiddenException("ثبت تخفیف برای نقش شما مجاز نیست.");
     const tax = taxRial(base - discount, product.taxRateBasisPoints);
     return { productId: product.id, product, qtyMilli, price, base, discount, tax };
+  }
+
+  private async createCustomerForDraft(tx: Prisma.TransactionClient, user: AuthenticatedUser, businessId: string, dto: NonNullable<CreateSalesDto["newCustomer"]>, request: AppRequest) {
+    const name = dto.name.trim();
+    let phone: string | null = null;
+    if (dto.phone?.trim()) {
+      const digits = toAsciiDigits(dto.phone).replace(/[\s()+-]/g, "");
+      phone = digits.startsWith("98") ? `0${digits.slice(2)}` : digits;
+      if (!/^09\d{9}$/.test(phone)) throw new BadRequestException("شمارهٔ همراه مشتری معتبر نیست.");
+    }
+    const existing = phone ? await tx.party.findFirst({ where: { businessId, phone, archivedAt: null }, include: { customer: { select: { id: true } } } }) : null;
+    if (existing?.customer) return existing.id;
+    if (existing) {
+      await tx.customer.create({ data: { id: existing.id, businessId } });
+      await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "party.customer.added", entityType: "party", entityId: existing.id, requestId: request.requestId ?? "unknown", afterJson: { source: "sales.draft", type: "CUSTOMER", name: existing.name } } });
+      return existing.id;
+    }
+    const party = await tx.party.create({ data: { businessId, name, normalizedName: normalizePersianSearch(name), phone, email: dto.email?.trim() || null, nationalId: dto.nationalId?.trim() || null, address: dto.address?.trim() || null } });
+    await tx.customer.create({ data: { id: party.id, businessId } });
+    await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: "party.created", entityType: "party", entityId: party.id, requestId: request.requestId ?? "unknown", afterJson: { roles: ["CUSTOMER"], name: party.name, source: "sales.draft" } } });
+    return party.id;
   }
 
   private scope(user: AuthenticatedUser) { if (!user.businessId || !user.branchId) throw new BadRequestException("یک کسب‌وکار و شعبه را انتخاب کنید."); return { businessId: user.businessId, branchId: user.branchId }; }

@@ -250,7 +250,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
         <Route path="/app" element={<DashboardPage business={activeBusiness!} branchId={activeBranch?.id ?? ""} pendingCount={pendingCount} />} />
         <Route path="/app/subscription" element={<SubscriptionsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} />
         <Route path="/app/storefront" element={<StorefrontManagementPage role={activeBusiness!.role} />} />
-        <Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} setPendingCount={setPendingCount} />} />
+        <Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} role={activeBusiness!.role} setPendingCount={setPendingCount} />} />
         <Route path="/app/invoices" element={<InvoicesPage currency={activeBusiness!.displayCurrency} />} />
         <Route path="/app/invoices/:id" element={<InvoiceDetailsPage currency={activeBusiness!.displayCurrency} branchName={activeBranch?.name ?? ""} />} />
         <Route path="/app/parties" element={<Navigate to="/app/customers" replace />} />

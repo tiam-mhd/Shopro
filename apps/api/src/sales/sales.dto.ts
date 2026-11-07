@@ -1,5 +1,6 @@
 import { ArrayMaxSize, ArrayMinSize, Equals, IsArray, IsBoolean, IsDefined, IsIn, IsOptional, IsString, IsUUID, Length, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
+import { CreateCustomerDto } from "../parties/parties.dto.js";
 
 export class SalesLineDto {
   @IsUUID()
@@ -29,6 +30,9 @@ export class SalesPaymentDto {
 export class CreateSalesDto {
   @IsOptional() @IsUUID()
   customerId?: string;
+
+  @IsOptional() @ValidateNested() @Type(() => CreateCustomerDto)
+  newCustomer?: CreateCustomerDto;
 
   @IsString() @Length(10, 10)
   txnDate!: string;
