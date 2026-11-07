@@ -113,7 +113,7 @@ export function ProductStorefrontSettings({ productId, productName }: { productI
   };
 
   return <section className="sf-card sf-admin-form sf-product-storefront-settings">
-    <div className="sf-section-head"><div><span className="sf-eyebrow">فروشگاه عمومی</span><h2><Store size={17} /> نمایش {productName} در ویترین</h2></div>{item && <span className={"sf-badge " + (item.listing.isPublished ? "is-good" : "")}>{item.listing.isPublished ? "منتشرشده" : item.isConfigured ? "پیش‌نویس" : "تنظیم‌نشده"}</span>}</div>
+    <div className="sf-section-head"><div><span className="sf-eyebrow">فروشگاه عمومی</span><h2><Store size={17} /> نمایش {productName} در ویترین</h2><p className="sf-product-storefront-subtitle">عنوان، قیمت و شرایط سفارش این کالا در فروشگاه مشتریان را تنظیم کنید.</p></div>{item && <span className={"sf-badge " + (item.listing.isPublished ? "is-good" : "")}>{item.listing.isPublished ? "منتشرشده" : item.isConfigured ? "پیش‌نویس" : "تنظیم‌نشده"}</span>}</div>
     {query.isPending ? <LoadingBlock /> : query.isError ? <><InlineError error={query.error} retry={() => void query.refetch()} /><p className="sf-product-storefront-setup"><Link to="/app/storefront">رفتن به تنظیمات فروشگاه عمومی</Link></p></> : !item ? <div className="sf-alert sf-alert-neutral">این کالا در فهرست کالاهای فعال فروشگاه پیدا نشد.</div> : draft && <StorefrontListingFields item={item} value={draft} canManage busy={busy} onChange={change} onSave={() => void save()} />}
     {error && <div className="sf-alert sf-alert-error" role="alert">{error}</div>}
     {notice && <div className="sf-alert sf-alert-success" role="status">{notice}</div>}
