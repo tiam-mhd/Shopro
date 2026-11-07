@@ -37,7 +37,7 @@ export async function publicApi<T>(path: string, options: RequestInit = {}): Pro
   return body as T;
 }
 
-/** Storefront account requests send only the scoped customer capability, never the app session. */
+/** Storefront account requests send only the cross-store customer capability, never the app session. */
 export async function storefrontCustomerApi<T>(path: string, options: RequestInit = {}, customerToken?: string): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers(options.headers);
@@ -55,6 +55,7 @@ export const publicPost = <T,>(path: string, body?: unknown, headers?: Record<st
 export const publicUpload = <T,>(path: string, body: FormData) => publicApi<T>(path, { method: "POST", body });
 export const storefrontCustomerGet = <T,>(path: string, customerToken?: string) => storefrontCustomerApi<T>(path, {}, customerToken);
 export const storefrontCustomerPost = <T,>(path: string, body?: unknown, customerToken?: string) => storefrontCustomerApi<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }, customerToken);
+export const storefrontCustomerPatch = <T,>(path: string, body: unknown, customerToken?: string) => storefrontCustomerApi<T>(path, { method: "PATCH", body: JSON.stringify(body) }, customerToken);
 
 export const get = <T,>(path: string, signal?: AbortSignal) => api<T>(path, { signal });
 export const post = <T,>(path: string, body?: unknown, headers?: Record<string, string>) => api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), headers });

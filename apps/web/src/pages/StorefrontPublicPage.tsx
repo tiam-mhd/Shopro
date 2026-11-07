@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, BadgeCheck, Clock3, CreditCard, Info, MapPin, Minus, PackageCheck, Phone, Plus, Search, ShoppingBag, Store, Truck, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgeCheck, Clock3, CreditCard, Info, MapPin, Minus, PackageCheck, Phone, Plus, Search, ShieldCheck, ShoppingBag, Store, Truck, X } from "lucide-react";
 import { OtpCodeInput, OTP_CODE_LENGTH } from "../components/OtpCodeInput.js";
-import { ApiError, newOperationId, publicGet, publicPost, publicUpload } from "../lib/api.js";
+import { ApiError, newOperationId, publicGet, publicPost, publicUpload, storefrontCustomerGet, storefrontCustomerPost } from "../lib/api.js";
+import { clearStorefrontCustomerSession, readStorefrontCustomerSession, saveStorefrontCustomerSession, STOREFRONT_CUSTOMER_SESSION_KEY } from "../lib/storefront-customer-session.js";
 import { money } from "../lib/format.js";
 import { formatOtpCountdown, otpResendLabel, otpTimingFromError, useOtpCountdown } from "../lib/otp-countdown.js";
 import { StorefrontPublicFrame } from "./StorefrontPublicFrame.js";
@@ -34,6 +35,7 @@ type OrderCreated = { trackingToken: string; trackingPath: string; publicCode: s
 type ProductPage = { items: Product[]; nextCursor: string | null; hasMore: boolean };
 type CartLine = { product: Product; quantity: string };
 type PriceChange = { listingId: string; title: string; expectedPriceRial: string; currentPriceRial: string; expectedTaxRateBasisPoints?: number; currentTaxRateBasisPoints?: number };
+type CustomerProfile = { fullName: string | null; phone: string; address: string | null };
 
 const orderLabels: Record<string, string> = {
   SUBMITTED: "درخواست ثبت شد", ACCEPTED: "سفارش پذیرفته شد", REJECTED: "سفارش پذیرفته نشد", PREPARING: "در حال آماده‌سازی",
@@ -47,6 +49,10 @@ export function StorefrontPublicPage() {
   const { slug, token } = useParams();
   const navigate = useNavigate();
   const [store, setStore] = useState<Store | null>(null);
+  const [customerSessionToken, setCustomerSessionToken] = useState(readStorefrontCustomerSession);
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
+  const [customerProfileLoading, setCustomerProfileLoading] = useState(Boolean(readStorefrontCustomerSession()));
+  const [accountCheckoutActive, setAccountCheckoutActive] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [productCursor, setProductCursor] = useState<string | null>(null);
   const [productHasMore, setProductHasMore] = useState(false);
@@ -129,6 +135,48 @@ export function StorefrontPublicPage() {
   }, [slug, token]);
 
   useEffect(() => {
+    const syncSession = (event: StorageEvent) => {
+      if (event.key !== STOREFRONT_CUSTOMER_SESSION_KEY) return;
+      const nextToken = event.newValue ?? "";
+      setCustomerSessionToken(nextToken);
+      if (!nextToken) {
+        setCustomerProfile(null); setName(""); setPhone(""); setAddress("");
+        setCheckoutToken(""); setAccountCheckoutActive(false);
+      }
+    };
+    window.addEventListener("storage", syncSession);
+    return () => window.removeEventListener("storage", syncSession);
+  }, []);
+
+  useEffect(() => {
+    if (!slug || !customerSessionToken) {
+      setCustomerProfile(null);
+      setCustomerProfileLoading(false);
+      return;
+    }
+    let active = true;
+    setCustomerProfileLoading(true);
+    void storefrontCustomerGet<{ customer: CustomerProfile }>(`/public/stores/${encodeURIComponent(slug)}/customer`, customerSessionToken)
+      .then(({ customer }) => {
+        if (!active) return;
+        setCustomerProfile(customer);
+        setName((current) => current || customer.fullName || "");
+        setPhone(customer.phone);
+        setAddress((current) => current || customer.address || "");
+      })
+      .catch((cause) => {
+        if (!active) return;
+        if (cause instanceof ApiError && cause.status === 401) {
+          clearStorefrontCustomerSession();
+          setCustomerSessionToken("");
+          setCustomerProfile(null);
+        }
+      })
+      .finally(() => { if (active) setCustomerProfileLoading(false); });
+    return () => { active = false; };
+  }, [customerSessionToken, slug]);
+
+  useEffect(() => {
     if (token || search === null) return;
     let active = true;
     const query = search ? `?limit=60&q=${encodeURIComponent(search)}` : "?limit=60";
@@ -174,6 +222,39 @@ export function StorefrontPublicPage() {
     finally { setLoadingMore(false); }
   };
 
+  const beginCheckout = async () => {
+    setCartOpen(false);
+    setStep("checkout");
+    setError("");
+    setSuccess("");
+    setOtpSent(false);
+    setCode("");
+    if (!customerSessionToken || !slug) {
+      setAccountCheckoutActive(false);
+      setCheckoutToken("");
+      return;
+    }
+    setWorking(true);
+    try {
+      const result = await storefrontCustomerPost<{ checkoutToken: string; customer: CustomerProfile }>(
+        `/public/stores/${encodeURIComponent(slug)}/customer/checkout-token`, undefined, customerSessionToken,
+      );
+      setCheckoutToken(result.checkoutToken);
+      setCustomerProfile(result.customer);
+      setName(result.customer.fullName ?? "");
+      setPhone(result.customer.phone);
+      setAddress(result.customer.address ?? "");
+      setAccountCheckoutActive(true);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        clearStorefrontCustomerSession();
+        setCustomerSessionToken("");
+      }
+      setAccountCheckoutActive(false);
+      setError(messageOf(cause));
+    } finally { setWorking(false); }
+  };
+
   const sendOtp = async (event: FormEvent) => {
     event.preventDefault(); setError(""); setSuccess(""); setWorking(true);
     try {
@@ -189,8 +270,11 @@ export function StorefrontPublicPage() {
     if (code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0) return;
     setError(""); setSuccess(""); setWorking(true);
     try {
-      const result = await publicPost<{ checkoutToken: string; phone: string; expiresAt: string }>(`/public/stores/${encodeURIComponent(slug ?? "")}/otp/verify`, { phone, code });
-      setCheckoutToken(result.checkoutToken); setPhone(result.phone); setCode(""); codeExpiry.reset(); resendCooldown.reset(); setSuccess("شمارهٔ موبایل تأیید شد.");
+      const result = await publicPost<{ checkoutToken: string; customerToken: string; customerExpiresAt: string; customer: CustomerProfile; phone: string; expiresAt: string }>(`/public/stores/${encodeURIComponent(slug ?? "")}/otp/verify`, { phone, code });
+      saveStorefrontCustomerSession(result.customerToken);
+      setCustomerSessionToken(result.customerToken); setCustomerProfile(result.customer);
+      setCheckoutToken(result.checkoutToken); setPhone(result.phone); setName((current) => current || result.customer.fullName || ""); setAddress((current) => current || result.customer.address || "");
+      setAccountCheckoutActive(true); setCode(""); codeExpiry.reset(); resendCooldown.reset(); setSuccess("شمارهٔ موبایل تأیید شد و حساب شما برای خریدهای بعدی آماده است.");
     } catch (cause) { setError(messageOf(cause)); }
     finally { setWorking(false); }
   };
@@ -213,6 +297,7 @@ export function StorefrontPublicPage() {
       navigate(result.trackingPath, { replace: true });
     } catch (cause) {
       setError(messageOf(cause)); setPriceConfirmed(false);
+      if (cause instanceof ApiError && cause.status === 401) { setCheckoutToken(""); setAccountCheckoutActive(false); }
       if (cause instanceof ApiError && (cause.code === "PRICE_CHANGED" || cause.code === "STOCK_CHANGED")) {
         try {
           const params = new URLSearchParams({ limit: "60" }); if (search) params.set("q", search);
@@ -328,12 +413,12 @@ export function StorefrontPublicPage() {
         {productHasMore && <div className="sf-more-products"><button type="button" className="sf-button sf-secondary" disabled={loadingMore} onClick={() => void loadMoreProducts()}>{loadingMore ? "در حال دریافت کالاها…" : "نمایش کالاهای بیشتر"}</button></div>}
       </section>
       {cartOpen && <button type="button" className="sf-cart-backdrop" aria-label="بستن سبد خرید" onClick={() => setCartOpen(false)} />}
-      <aside className={`sf-cart-panel ${cartOpen ? "is-open" : ""}`} aria-label="سبد خرید"><div className="sf-cart-title"><div><span className="sf-eyebrow">سبد خرید شما</span><h2>{cartLines.length ? `${cartLines.length} قلم کالا` : "سبد شما خالی است"}</h2></div><span className="sf-cart-icon"><ShoppingBag size={21} /></span><button className="sf-cart-close" type="button" aria-label="بستن سبد خرید" onClick={() => setCartOpen(false)}><X size={18} /></button></div>{cartLines.length ? <><div className="sf-cart-lines">{cartLines.map((line) => <div className="sf-cart-line" key={line.product.id}><div className="sf-cart-line-copy"><strong>{line.product.title}</strong><small>{line.quantity} {line.product.unit}</small><div className="sf-quantity sf-cart-quantity"><button type="button" aria-label={`کاهش ${line.product.title}`} onClick={() => removeProduct(line.product)}><Minus size={12} /></button><span>{line.quantity}</span><button type="button" aria-label={`افزایش ${line.product.title}`} disabled={!line.product.available} onClick={() => addProduct(line.product)}><Plus size={12} /></button></div></div><b>{money(extendedRial(line.quantity, line.product.unitPriceRial).toString())}</b><button type="button" className="sf-remove-line" aria-label={`حذف ${line.product.title}`} onClick={() => changeQuantity(line.product, "0")}><X size={15} /></button></div>)}</div><Totals subtotal={subtotal.toString()} tax={tax.toString()} delivery={deliveryFee.toString()} total={total.toString()} />{store.acceptsPickup && store.acceptsLocalDelivery && <label className="sf-delivery-choice">روش دریافت<select value={deliveryMethod} onChange={(event) => updateDelivery(event.target.value as "PICKUP" | "LOCAL_DELIVERY")}><option value="PICKUP">تحویل حضوری</option><option value="LOCAL_DELIVERY">ارسال محلی</option></select></label>}<button type="button" className="sf-button sf-primary sf-wide" disabled={!store.acceptingOrders} onClick={() => { setCartOpen(false); setStep("checkout"); }}>ادامه و ثبت سفارش<ArrowLeft size={17} /></button></> : <div className="sf-cart-empty"><span className="sf-empty-icon"><ShoppingBag size={22} /></span><p>با انتخاب کالا، جمع سفارش و هزینهٔ ارسال اینجا نمایش داده می‌شود.</p></div>}</aside></div>
+      <aside className={`sf-cart-panel ${cartOpen ? "is-open" : ""}`} aria-label="سبد خرید"><div className="sf-cart-title"><div><span className="sf-eyebrow">سبد خرید شما</span><h2>{cartLines.length ? `${cartLines.length} قلم کالا` : "سبد شما خالی است"}</h2></div><span className="sf-cart-icon"><ShoppingBag size={21} /></span><button className="sf-cart-close" type="button" aria-label="بستن سبد خرید" onClick={() => setCartOpen(false)}><X size={18} /></button></div>{cartLines.length ? <><div className="sf-cart-lines">{cartLines.map((line) => <div className="sf-cart-line" key={line.product.id}><div className="sf-cart-line-copy"><strong>{line.product.title}</strong><small>{line.quantity} {line.product.unit}</small><div className="sf-quantity sf-cart-quantity"><button type="button" aria-label={`کاهش ${line.product.title}`} onClick={() => removeProduct(line.product)}><Minus size={12} /></button><span>{line.quantity}</span><button type="button" aria-label={`افزایش ${line.product.title}`} disabled={!line.product.available} onClick={() => addProduct(line.product)}><Plus size={12} /></button></div></div><b>{money(extendedRial(line.quantity, line.product.unitPriceRial).toString())}</b><button type="button" className="sf-remove-line" aria-label={`حذف ${line.product.title}`} onClick={() => changeQuantity(line.product, "0")}><X size={15} /></button></div>)}</div><Totals subtotal={subtotal.toString()} tax={tax.toString()} delivery={deliveryFee.toString()} total={total.toString()} />{store.acceptsPickup && store.acceptsLocalDelivery && <label className="sf-delivery-choice">روش دریافت<select value={deliveryMethod} onChange={(event) => updateDelivery(event.target.value as "PICKUP" | "LOCAL_DELIVERY")}><option value="PICKUP">تحویل حضوری</option><option value="LOCAL_DELIVERY">ارسال محلی</option></select></label>}<button type="button" className="sf-button sf-primary sf-wide" disabled={!store.acceptingOrders} onClick={() => void beginCheckout()}>ادامه و ثبت سفارش<ArrowLeft size={17} /></button></> : <div className="sf-cart-empty"><span className="sf-empty-icon"><ShoppingBag size={22} /></span><p>با انتخاب کالا، جمع سفارش و هزینهٔ ارسال اینجا نمایش داده می‌شود.</p></div>}</aside></div>
       {cartLines.length > 0 && <button className="sf-mobile-cart-trigger" type="button" onClick={() => setCartOpen(true)}><span><ShoppingBag size={18} /><b>{cartLines.length}</b></span><strong>مشاهدهٔ سبد خرید</strong><b>{money(total.toString())}</b></button>}
-    </> : <section className="sf-card sf-checkout"><button type="button" className="sf-back-button" onClick={() => setStep("browse")}><ArrowRight size={16} />بازگشت به فروشگاه</button><div className="sf-checkout-grid"><div className="sf-checkout-details"><span className="sf-eyebrow">تکمیل سفارش</span><h2>اطلاعات تحویل و مشتری</h2><form onSubmit={(event) => void sendOtp(event)} className="sf-form-grid"><label>نام و نام خانوادگی<input required minLength={2} maxLength={120} autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label><label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => { setPhone(event.target.value); setCheckoutToken(""); setOtpSent(false); setCode(""); codeExpiry.reset(); resendCooldown.reset(); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label><button className="sf-button sf-secondary sf-send-otp" disabled={working || Boolean(checkoutToken) || (otpSent && resendCooldown.remaining !== null && resendCooldown.remaining > 0)}>{working ? "در حال ارسال…" : checkoutToken ? "شماره تأیید شد" : otpSent ? otpResendLabel("ارسال دوبارهٔ کد", resendCooldown.remaining) : "دریافت کد تأیید"}</button></form>{otpSent && !checkoutToken && <div className="sf-otp-row"><label>کد پیامک‌شده<OtpCodeInput id="checkout-otp" label="کد پیامک‌شده" value={code} onChange={setCode} length={OTP_CODE_LENGTH} disabled={working || codeExpiry.remaining === 0} /></label>{codeExpiry.remaining !== null && <p className="sf-otp-expiry" role={codeExpiry.remaining === 0 ? "status" : undefined} aria-live={codeExpiry.remaining === 0 ? "polite" : "off"}>{codeExpiry.remaining === 0 ? "مهلت استفاده از این کد تمام شده است." : <>اعتبار کد: <bdi dir="ltr">{formatOtpCountdown(codeExpiry.remaining)}</bdi></>}</p>}<button type="button" className="sf-button sf-primary" disabled={working || code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0} onClick={() => void verifyPhone()}>تأیید شماره</button></div>}{checkoutToken && <div className="sf-alert sf-alert-success"><BadgeCheck size={17} />شمارهٔ موبایل تأیید شده است.</div>}
+    </> : <section className="sf-card sf-checkout"><button type="button" className="sf-back-button" onClick={() => setStep("browse")}><ArrowRight size={16} />بازگشت به فروشگاه</button><div className="sf-checkout-grid"><div className="sf-checkout-details"><span className="sf-eyebrow">تکمیل سفارش</span><h2>اطلاعات تحویل و مشتری</h2>{customerSessionToken && !accountCheckoutActive && !otpSent && !checkoutToken && <button type="button" className="sf-button sf-secondary sf-account-checkout-button" disabled={working || customerProfileLoading} onClick={() => void beginCheckout()}><ShieldCheck size={16} />{customerProfileLoading ? "در حال دریافت اطلاعات حساب…" : "ادامه با حساب من"}</button>}<form onSubmit={(event) => { if (accountCheckoutActive) event.preventDefault(); else void sendOtp(event); }} className="sf-form-grid"><label>نام و نام خانوادگی<input required minLength={2} maxLength={120} autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></label><label>شمارهٔ موبایل<input required dir="ltr" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => { setPhone(event.target.value); setCheckoutToken(""); setAccountCheckoutActive(false); setOtpSent(false); setCode(""); codeExpiry.reset(); resendCooldown.reset(); }} placeholder="۰۹۱۲۱۲۳۴۵۶۷" /></label>{!accountCheckoutActive && <button className="sf-button sf-secondary sf-send-otp" disabled={working || Boolean(checkoutToken) || (otpSent && resendCooldown.remaining !== null && resendCooldown.remaining > 0)}>{working ? "در حال ارسال…" : checkoutToken ? "شماره تأیید شد" : otpSent ? otpResendLabel("ارسال دوبارهٔ کد", resendCooldown.remaining) : "دریافت کد تأیید"}</button>}</form>{accountCheckoutActive && <div className="sf-checkout-account-note"><ShieldCheck size={17} /><span><strong>اطلاعات حساب شما بارگذاری شد</strong><small>{customerProfile?.fullName ? `${customerProfile.fullName}، ` : ""}نام، نشانی و شماره برای سفارش‌های فروشگاه‌های شاپرو ذخیره می‌ماند.</small></span></div>}{otpSent && !checkoutToken && <div className="sf-otp-row"><label>کد پیامک‌شده<OtpCodeInput id="checkout-otp" label="کد پیامک‌شده" value={code} onChange={setCode} length={OTP_CODE_LENGTH} disabled={working || codeExpiry.remaining === 0} /></label>{codeExpiry.remaining !== null && <p className="sf-otp-expiry" role={codeExpiry.remaining === 0 ? "status" : undefined} aria-live={codeExpiry.remaining === 0 ? "polite" : "off"}>{codeExpiry.remaining === 0 ? "مهلت استفاده از این کد تمام شده است." : <>اعتبار کد: <bdi dir="ltr">{formatOtpCountdown(codeExpiry.remaining)}</bdi></>}</p>}<button type="button" className="sf-button sf-primary" disabled={working || code.length !== OTP_CODE_LENGTH || codeExpiry.remaining === 0} onClick={() => void verifyPhone()}>تأیید شماره</button></div>}{checkoutToken && <div className="sf-alert sf-alert-success"><BadgeCheck size={17} />شمارهٔ موبایل تأیید شده است.</div>}
       <div className="sf-delivery-section"><div className="sf-section-head"><div><span className="sf-eyebrow">مرحلهٔ تحویل</span><h3>روش دریافت سفارش را انتخاب کنید</h3></div></div><div className="sf-delivery-cards">{store.acceptsPickup && <button type="button" className={deliveryMethod === "PICKUP" ? "selected" : ""} onClick={() => updateDelivery("PICKUP")}><Store size={20} /><span><strong>تحویل حضوری</strong><small>دریافت از فروشگاه</small></span><b>بدون هزینهٔ ارسال</b></button>}{store.acceptsLocalDelivery && <button type="button" className={deliveryMethod === "LOCAL_DELIVERY" ? "selected" : ""} onClick={() => updateDelivery("LOCAL_DELIVERY")}><Truck size={20} /><span><strong>ارسال محلی</strong><small>تحویل در نشانی شما</small></span><b>{money(store.deliveryFeeRial)}</b></button>}</div></div>
       <div className="sf-delivery-form">{deliveryMethod === "LOCAL_DELIVERY" && <label className="sf-span-all">نشانی دقیق تحویل<textarea required minLength={5} maxLength={500} autoComplete="street-address" value={address} onChange={(event) => setAddress(event.target.value)} rows={3} /></label>}<label className="sf-span-all">توضیحات سفارش (اختیاری)<textarea maxLength={500} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} rows={2} /></label></div>
-      {checkoutToken && <p className="sf-footnote sf-privacy-note"><BadgeCheck size={15} />شمارهٔ موبایل فقط برای تأیید هویت و پیگیری سفارش‌های همین فروشگاه استفاده می‌شود.</p>}
+      {checkoutToken && <p className="sf-footnote sf-privacy-note"><BadgeCheck size={15} />شمارهٔ موبایل برای تأیید سفارش و دسترسی به حساب مشترک شما در فروشگاه‌های شاپرو استفاده می‌شود.</p>}
       {(priceChanges.length > 0 || totalChange) && <div className="sf-alert sf-alert-error"><strong>مبلغ نهایی سفارش تغییر کرده است.</strong>{priceChanges.map((change) => <div key={change.listingId}>{change.title}: {change.expectedPriceRial !== change.currentPriceRial ? <>{money(change.expectedPriceRial)} ← {money(change.currentPriceRial)}</> : "نرخ مالیات کالا تغییر کرده است."}</div>)}{totalChange && <div>مبلغ قبلی: {money(totalChange.expected)} · مبلغ تازه: {money(totalChange.current)}</div>}<p>سبد، روش دریافت و مبلغ تازه را بررسی و دوباره تأیید کنید.</p></div>}
       {checkoutToken && <form onSubmit={(event) => void placeOrder(event)}><label className="sf-check sf-price-confirm"><input type="checkbox" checked={priceConfirmed} onChange={(event) => setPriceConfirmed(event.target.checked)} /><span>اقلام، روش دریافت و مبلغ نهایی را بررسی و تأیید کردم.</span></label><button className="sf-button sf-primary sf-wide" disabled={working || !priceConfirmed}>{working ? "در حال ثبت سفارش…" : "ثبت درخواست سفارش"}<ArrowLeft size={17} /></button><p className="sf-footnote">پس از ثبت، فروشگاه درخواست را بررسی می‌کند. پرداخت بعد از پذیرش سفارش انجام می‌شود.</p></form>}</div><aside className="sf-checkout-summary"><span className="sf-eyebrow">خلاصهٔ سبد</span><h3>{cartLines.length} قلم</h3>{cartLines.map((line) => <div className="sf-summary-line" key={line.product.id}><span>{line.product.title} × {line.quantity}</span><b>{money(extendedRial(line.quantity, line.product.unitPriceRial).toString())}</b></div>)}<Totals subtotal={subtotal.toString()} tax={tax.toString()} delivery={deliveryFee.toString()} total={total.toString()} /></aside></div></section>}
     {activeProduct && <div className="sf-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveProduct(null); }}><section className="sf-product-modal" role="dialog" aria-modal="true" aria-labelledby="sf-product-modal-title"><header><span className="sf-eyebrow">جزئیات {activeProduct.kind === "SERVICE" ? "خدمت" : "کالا"}</span><button type="button" aria-label="بستن جزئیات" onClick={() => setActiveProduct(null)}><X size={19} /></button></header><div className="sf-product-modal-body"><div className="sf-product-modal-image">{activeProduct.images?.[0] ? <button type="button" onClick={() => { setActiveGallery(activeProduct); setActiveImageIndex(0); setActiveProduct(null); }} aria-label="نمایش گالری تصاویر"><img src={activeProduct.images[0].url} alt={activeProduct.title} />{activeProduct.images.length > 1 && <span>{activeProduct.images.length} تصویر · نمایش گالری</span>}</button> : <div className="sf-product-image-empty"><span className="sf-product-icon">{activeProduct.kind === "SERVICE" ? "خ" : "ک"}</span><span>تصویری ثبت نشده</span></div>}</div><div className="sf-product-modal-copy"><span className="sf-product-meta">{activeProduct.category ?? (activeProduct.kind === "SERVICE" ? "خدمت" : "کالا")}</span><h2 id="sf-product-modal-title">{activeProduct.title}</h2><span className={`sf-stock ${activeProduct.available ? "" : "is-out"}`}>{activeProduct.stockLabel}</span>{activeProduct.description && <p>{activeProduct.description}</p>}<div className="sf-product-modal-price"><strong>{money(activeProduct.unitPriceRial)}</strong><span>برای هر {activeProduct.unit}</span></div><div className="sf-product-modal-actions"><div className="sf-quantity"><button type="button" aria-label="کاهش تعداد" disabled={!cart[activeProduct.id]} onClick={() => removeProduct(activeProduct)}><Minus size={15} /></button><span>{cart[activeProduct.id]?.quantity ?? "۰"}</span><button type="button" aria-label="افزایش تعداد" disabled={!activeProduct.available || !store.acceptingOrders} onClick={() => addProduct(activeProduct)}><Plus size={15} /></button></div><button type="button" className="sf-button sf-primary" disabled={!activeProduct.available || !store.acceptingOrders} onClick={() => addProduct(activeProduct)}><ShoppingBag size={17} />افزودن به سبد</button></div></div></div></section></div>}
