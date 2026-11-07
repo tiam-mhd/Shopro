@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { MemberRole } from "@shopro/contracts";
-import { ArrowUpRight, ChartNoAxesCombined, ClipboardList, CreditCard, ExternalLink, PackagePlus, Settings2, ShoppingBag, Store } from "lucide-react";
+import { ArrowUpRight, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, CreditCard, ExternalLink, PackagePlus, Search, Settings2, ShoppingBag, Store } from "lucide-react";
 import { ApiError, downloadFile, get, patch, post } from "../lib/api.js";
-import { money } from "../lib/format.js";
+import { faNumber, money } from "../lib/format.js";
+import { StorefrontListingFields, storefrontPriceOverride } from "../components/StorefrontListingEditor.js";
+import type { StorefrontListingConfig as ListingConfig, StorefrontListingPage as ListingPage, StorefrontListingProduct as ListingProduct } from "../components/StorefrontListingEditor.js";
 import "../storefront.css";
 
 type Settings = { id?: string; slug: string; status: "DRAFT" | "PUBLISHED" | "PAUSED"; publicName: string; description: string; phone: string; address: string; showAddress: boolean; acceptsPickup: boolean; acceptsLocalDelivery: boolean; deliveryFeeRial: string; showExactStock: boolean; preparationMinutes: number | null; paymentInstructions: string; cancellationPolicy: string; publicUrl?: string };
-type ListingConfig = { publicTitle: string; publicDescription: string; publicPriceRial: string; isPublished: boolean; canOrder: boolean; stockPolicy: "EXACT" | "APPROXIMATE" | "INQUIRY"; minimumQuantity: string; maximumQuantity: string; displayOrder: number };
-type ListingProduct = { productId: string; name: string; sku: string; kind: string; category: string | null; unit: string; salePriceRial: string; taxRateBasisPoints: number; quantityOnHand: string; trackInventory: boolean; listing: ListingConfig | null };
+const emptyListingPage: ListingPage = { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1, categories: [] };
 type Card = { id: string; bankName: string; holderName: string; maskedCardNumber: string; label: string | null; instructions: string | null; displayOrder: number; isActive: boolean; financeAccountId: string; financeAccountName: string; accountActive: boolean };
 type Account = { id: string; name: string; kind: string; balanceRial: string };
 type OrderSummary = { id: string; publicCode: string; status: string; paymentStatus: string; customerName: string; createdAt: string; deliveryMethod: string; itemCount: number; totalRial: string; lastReceipt: { status: string; submittedAmountRial: string; createdAt: string; rejectionReason: string | null } | null };
@@ -28,7 +29,14 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
   const [tab, setTab] = useState("settings");
   const [settings, setSettings] = useState<Settings>(emptySettings);
   const [settingsExists, setSettingsExists] = useState(false);
-  const [products, setProducts] = useState<ListingProduct[]>([]);
+  const [products, setProducts] = useState<ListingPage>(emptyListingPage);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState("");
+  const [productCategoryId, setProductCategoryId] = useState("");
+  const [productPage, setProductPage] = useState(1);
+  const [productPageSize, setProductPageSize] = useState(20);
+  const [productRefresh, setProductRefresh] = useState(0);
   const [cards, setCards] = useState<Card[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [orders, setOrders] = useState<Page<OrderSummary>>({ items: [], nextCursor: null, hasMore: false });
@@ -43,24 +51,6 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
   const [listingEdits, setListingEdits] = useState<Record<string, ListingConfig>>({});
   const [cardDraft, setCardDraft] = useState({ financeAccountId: "", bankName: "", holderName: "", cardNumber: "", label: "", instructions: "" });
 
-  const loadProducts = async () => {
-    const result = await get<{ items: ListingProduct[] }>("/storefront/listings");
-    setProducts(result.items);
-    setListingEdits(Object.fromEntries(result.items.map((item) => {
-      const listing = item.listing;
-      return [item.productId, listing ? {
-        publicTitle: listing.publicTitle,
-        publicDescription: listing.publicDescription,
-        publicPriceRial: listing.publicPriceRial,
-        isPublished: listing.isPublished,
-        canOrder: listing.canOrder,
-        stockPolicy: listing.stockPolicy,
-        minimumQuantity: listing.minimumQuantity,
-        maximumQuantity: listing.maximumQuantity,
-        displayOrder: listing.displayOrder,
-      } : { publicTitle: item.name, publicDescription: "", publicPriceRial: "", isPublished: false, canOrder: false, stockPolicy: "EXACT", minimumQuantity: "1", maximumQuantity: "", displayOrder: 0 }];
-    })));
-  };
   const loadCards = async () => {
     const [nextCards, nextAccounts] = await Promise.all([get<Card[]>("/storefront/cards"), get<Account[]>("/finance/accounts")]);
     setCards(nextCards); setAccounts(nextAccounts.filter((account) => account.kind === "BANK"));
@@ -82,9 +72,28 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
   }, []);
 
   useEffect(() => {
-    if (tab === "settings" || !settingsExists) return;
+    const timeout = window.setTimeout(() => { setDebouncedProductSearch(productSearch.trim()); setProductPage(1); }, 220);
+    return () => window.clearTimeout(timeout);
+  }, [productSearch]);
+
+  useEffect(() => {
+    if (tab !== "products" || !settingsExists) return;
+    let active = true; setProductsLoading(true); setError("");
+    const params = new URLSearchParams({ page: String(productPage), limit: String(productPageSize) });
+    if (productCategoryId) params.set("categoryId", productCategoryId);
+    if (debouncedProductSearch) params.set("q", debouncedProductSearch);
+    void get<ListingPage>(`/storefront/listings?${params.toString()}`).then((result) => {
+      if (!active) return;
+      setProducts(result);
+      setListingEdits((current) => ({ ...Object.fromEntries(result.items.map((item) => [item.productId, { ...item.listing }])), ...current }));
+    }).catch((cause) => { if (active) setError(messageOf(cause)); }).finally(() => { if (active) setProductsLoading(false); });
+    return () => { active = false; };
+  }, [tab, settingsExists, productPage, productPageSize, productCategoryId, debouncedProductSearch, productRefresh]);
+
+  useEffect(() => {
+    if (tab === "settings" || tab === "products" || !settingsExists) return;
     let active = true; setLoading(true); setError(""); setNotice("");
-    const loader = tab === "products" ? loadProducts : tab === "orders" ? () => loadOrders(undefined, false) : tab === "cards" ? loadCards : () => loadAnalytics();
+    const loader = tab === "orders" ? () => loadOrders(undefined, false) : tab === "cards" ? loadCards : () => loadAnalytics();
     void loader().catch((cause) => { if (active) setError(messageOf(cause)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [tab, settingsExists]);
@@ -121,7 +130,7 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
       await patch(`/storefront/listings/${item.productId}`, {
         publicTitle: value.publicTitle,
         publicDescription: value.publicDescription,
-        publicPriceRial: value.publicPriceRial || undefined,
+        publicPriceRial: storefrontPriceOverride(item, value),
         isPublished: value.isPublished,
         canOrder: value.canOrder,
         stockPolicy: value.stockPolicy,
@@ -129,7 +138,7 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
         maximumQuantity: value.maximumQuantity || undefined,
         displayOrder: value.displayOrder,
       });
-      setNotice(`تنظیم «${item.name}» ذخیره شد.`); await loadProducts();
+      setNotice(`تنظیم «${item.name}» ذخیره شد.`); setProductRefresh((current) => current + 1);
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
@@ -210,8 +219,7 @@ export function StorefrontManagementPage({ role }: { role: MemberRole }) {
     {settingsExists && <section className="sf-admin-overview"><div className="sf-admin-overview-copy"><span className="sf-eyebrow">ویترین آنلاین شعبه</span><h2>{settings.publicName || "فروشگاه شما"}</h2><p>{settings.status === "PUBLISHED" ? "فروشگاه منتشر شده است؛ تنظیمات و سفارش‌های عمومی را از این صفحه دنبال کنید." : settings.status === "PAUSED" ? "ثبت سفارش تازه متوقف است. می‌توانید تنظیمات فروشگاه را بازبینی کنید." : "اطلاعات فروشگاه را کامل کنید تا برای انتشار آماده شود."}</p><div className="sf-admin-overview-meta"><span><Store size={15} />{settings.slug ? `/s/${settings.slug}` : "پیوند فروشگاه هنوز تنظیم نشده"}</span><span><ShoppingBag size={15} />{[settings.acceptsPickup && "تحویل حضوری", settings.acceptsLocalDelivery && "ارسال محلی"].filter(Boolean).join(" · ") || "روش تحویل تنظیم نشده"}</span></div></div><div className="sf-admin-overview-action">{settings.publicUrl ? <a className="sf-button sf-primary" href={settings.publicUrl} target="_blank" rel="noreferrer">ورود به ویترین<ArrowUpRight size={17} /></a> : <span className="sf-admin-setup-note">با ذخیرهٔ نام و نشانی فروشگاه، پیوند عمومی ساخته می‌شود.</span>}</div></section>}
     {error && <div className="sf-alert sf-alert-error" role="alert">{error} <button type="button" className="sf-link-button" onClick={() => { setError(""); if (tab === "orders") void loadOrders(); }}>بستن</button></div>}{notice && <div className="sf-alert sf-alert-success" role="status">{notice}</div>}
     {settingsExists && <nav className="sf-admin-tabs" aria-label="بخش‌های فروشگاه">{visibleTabs.map((item) => <button type="button" className={tab === item.id ? "active" : ""} key={item.id} onClick={() => { setTab(item.id); setSelectedOrder(null); }}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>}
-    {!settingsExists || tab === "settings" ? <SettingsPanel settings={settings} setSettings={setSettings} exists={settingsExists} canManage={canManage} busy={busy} onSubmit={(event) => void saveSettings(event)} /> : loading ? <div className="sf-card sf-state">در حال بارگذاری…</div> : <>
-      {tab === "products" && <ProductsPanel products={products} edits={listingEdits} setEdits={setListingEdits} canManage={canManage} busy={busy} onSave={(item) => void saveListing(item)} />}
+    {!settingsExists || tab === "settings" ? <SettingsPanel settings={settings} setSettings={setSettings} exists={settingsExists} canManage={canManage} busy={busy} onSubmit={(event) => void saveSettings(event)} /> : tab === "products" ? <ProductsPanel products={products} edits={listingEdits} setEdits={setListingEdits} canManage={canManage} busy={busy} loading={productsLoading} search={productSearch} setSearch={setProductSearch} categoryId={productCategoryId} onCategoryChange={(value) => { setProductCategoryId(value); setProductPage(1); }} page={productPage} pageSize={productPageSize} onPageChange={setProductPage} onPageSizeChange={(value) => { setProductPageSize(value); setProductPage(1); }} onSave={(item) => void saveListing(item)} /> : loading ? <div className="sf-card sf-state">در حال بارگذاری…</div> : <>
       {tab === "cards" && isOwner && <CardsPanel cards={cards} accounts={accounts} draft={cardDraft} setDraft={setCardDraft} busy={busy} onSubmit={(event) => void createCard(event)} onToggle={(card) => void toggleCard(card)} onMove={(card, direction) => void moveCard(card, direction)} />}
       {tab === "orders" && <OrdersPanel orders={orders} status={orderStatus} setStatus={(value) => { setOrderStatus(value); void loadOrders(undefined, false, value); }} onMore={() => { if (orders.nextCursor) void loadOrders(orders.nextCursor, true); }} onOpen={(id) => void openOrder(id)} selected={selectedOrder} loading={busy} canReview={isOwner} canManage={role === "OWNER" || role === "MANAGER"} onAccept={() => void orderAction("accept")} onReject={() => { const reason = window.prompt("دلیل رد سفارش را بنویسید:"); if (reason?.trim()) void orderAction("reject", { reason }); }} onTransition={(status) => void transition(status)} onCancel={() => { const reason = window.prompt("دلیل لغو سفارش را بنویسید:"); if (reason?.trim()) void transition("CANCELLED", reason); }} onVerify={(attemptId, amount, reference) => void verifyAttempt(attemptId, amount, reference)} onRejectAttempt={(attemptId) => void rejectAttempt(attemptId)} onResolveOverpayment={(attemptId) => void resolveOverpayment(attemptId)} onReceipt={(path) => void downloadReceipt(path)} onClose={() => setSelectedOrder(null)} />}
       {tab === "analytics" && analytics && <AnalyticsPanel analytics={analytics} days={days} setDays={(value) => { setDays(value); void loadAnalytics(value); }} />}
@@ -224,12 +232,76 @@ function SettingsPanel({ settings, setSettings, exists, canManage, busy, onSubmi
   return <form className="sf-card sf-admin-form" onSubmit={onSubmit}><div className="sf-section-head"><div><span className="sf-eyebrow">اطلاعات عمومی</span><h2>{exists ? "تنظیمات فروشگاه" : "ساخت فروشگاه این شعبه"}</h2></div>{settings.publicUrl && <a className="sf-button sf-secondary" href={settings.publicUrl} target="_blank" rel="noreferrer">مشاهدهٔ فروشگاه</a>}</div><div className="sf-form-grid"><label>نام نمایشی فروشگاه<input required maxLength={120} value={settings.publicName} disabled={!canManage} onChange={(event) => field("publicName", event.target.value)} /></label><label>نشانی انگلیسی فروشگاه<input required dir="ltr" minLength={3} maxLength={80} pattern="[a-zA-Z0-9-]+" value={settings.slug} disabled={!canManage} onChange={(event) => field("slug", event.target.value.toLowerCase())} placeholder="example-store" /><small>پیوند عمومی: /s/{settings.slug || "your-store"}</small></label><label className="sf-span-all">توضیحات<input maxLength={1000} value={settings.description} disabled={!canManage} onChange={(event) => field("description", event.target.value)} /></label><label>شمارهٔ تماس فروشگاه<input dir="ltr" inputMode="tel" value={settings.phone} disabled={!canManage} onChange={(event) => field("phone", event.target.value)} /></label><label>مدت آماده‌سازی به دقیقه<input type="number" min="0" max="10080" value={settings.preparationMinutes ?? ""} disabled={!canManage} onChange={(event) => field("preparationMinutes", event.target.value ? Number(event.target.value) : null)} /></label><label className="sf-span-all">نشانی شعبه<input maxLength={500} value={settings.address} disabled={!canManage} onChange={(event) => field("address", event.target.value)} /></label><label>هزینهٔ ارسال محلی به ریال<input dir="ltr" inputMode="numeric" value={settings.deliveryFeeRial} disabled={!canManage} onChange={(event) => field("deliveryFeeRial", event.target.value.replace(/\D/g, ""))} /></label><label>وضعیت انتشار<select value={settings.status} disabled={!canManage} onChange={(event) => field("status", event.target.value as Settings["status"])}><option value="DRAFT">پیش‌نویس</option><option value="PUBLISHED">انتشار و پذیرش سفارش</option><option value="PAUSED">توقف سفارش جدید</option></select></label><label className="sf-span-all">راهنمای پرداخت کارت‌به‌کارت<textarea maxLength={1000} value={settings.paymentInstructions} disabled={!canManage} onChange={(event) => field("paymentInstructions", event.target.value)} rows={2} /></label><label className="sf-span-all">قانون لغو سفارش<textarea maxLength={1000} value={settings.cancellationPolicy} disabled={!canManage} onChange={(event) => field("cancellationPolicy", event.target.value)} rows={2} /></label></div><div className="sf-check-grid"><Check label="تحویل حضوری فعال است" checked={settings.acceptsPickup} disabled={!canManage} onChange={(value) => field("acceptsPickup", value)} /><Check label="ارسال محلی فعال است" checked={settings.acceptsLocalDelivery} disabled={!canManage} onChange={(value) => field("acceptsLocalDelivery", value)} /><Check label="نمایش نشانی شعبه در فروشگاه" checked={settings.showAddress} disabled={!canManage} onChange={(value) => field("showAddress", value)} /><Check label="نمایش تعداد دقیق موجودی" checked={settings.showExactStock} disabled={!canManage} onChange={(value) => field("showExactStock", value)} /></div>{canManage && <button className="sf-button sf-primary" disabled={busy}>{busy ? "در حال ذخیره…" : "ذخیرهٔ تنظیمات"}</button>}<p className="sf-footnote">سفارش جدید فقط زمانی پذیرفته می‌شود که فروشگاه منتشر باشد و اشتراک شعبه اجازه دهد.</p></form>;
 }
 
-function ProductsPanel({ products, edits, setEdits, canManage, busy, onSave }: { products: ListingProduct[]; edits: Record<string, ListingConfig>; setEdits: (value: Record<string, ListingConfig>) => void; canManage: boolean; busy: boolean; onSave: (item: ListingProduct) => void }) {
-  const update = (id: string, key: keyof ListingConfig, value: ListingConfig[keyof ListingConfig]) => setEdits({ ...edits, [id]: { ...edits[id], [key]: value } });
-  return <section className="sf-admin-products"><div className="sf-section-head"><div><span className="sf-eyebrow">فهرست کالاهای شعبه</span><h2>انتخاب کالا و قیمت عمومی</h2></div><span>{products.length} کالا و خدمت</span></div>{!products.length ? <div className="sf-card sf-empty">ابتدا کالا یا خدمت را در بخش اطلاعات پایه ثبت کنید.</div> : products.map((item) => { const edit = edits[item.productId]; if (!edit) return null; return <article className="sf-card sf-listing-row" key={item.productId}><div className="sf-listing-main"><div><strong>{item.name}</strong><small>{item.sku} · {item.category ?? item.kind} · {item.unit} · موجودی: {item.quantityOnHand}</small></div><span className={`sf-badge ${edit.isPublished ? "is-good" : ""}`}>{edit.isPublished ? "در فروشگاه" : "پنهان"}</span></div><div className="sf-listing-form"><label>عنوان عمومی<input value={edit.publicTitle} disabled={!canManage} onChange={(event) => update(item.productId, "publicTitle", event.target.value)} /></label><label>قیمت به ریال<input dir="ltr" inputMode="numeric" placeholder={`قیمت پایه: ${item.salePriceRial}`} value={edit.publicPriceRial} disabled={!canManage} onChange={(event) => update(item.productId, "publicPriceRial", event.target.value.replace(/\D/g, ""))} /></label><label>حداقل تعداد<input dir="ltr" inputMode="decimal" value={edit.minimumQuantity} disabled={!canManage} onChange={(event) => update(item.productId, "minimumQuantity", event.target.value)} /></label><label>حداکثر تعداد (اختیاری)<input dir="ltr" inputMode="decimal" value={edit.maximumQuantity} disabled={!canManage} onChange={(event) => update(item.productId, "maximumQuantity", event.target.value)} /></label><label>نمایش موجودی<select value={edit.stockPolicy} disabled={!canManage} onChange={(event) => update(item.productId, "stockPolicy", event.target.value as ListingConfig["stockPolicy"])}><option value="EXACT">موجودی دقیق طبق تنظیم فروشگاه</option><option value="APPROXIMATE">فقط موجود/ناموجود</option><option value="INQUIRY">استعلام موجودی</option></select></label><label className="sf-span-all">توضیحات عمومی<input value={edit.publicDescription} maxLength={1000} disabled={!canManage} onChange={(event) => update(item.productId, "publicDescription", event.target.value)} /></label></div><div className="sf-listing-actions"><Check label="انتشار در فروشگاه" checked={edit.isPublished} disabled={!canManage} onChange={(value) => update(item.productId, "isPublished", value)} /><Check label="پذیرش سفارش این کالا" checked={edit.canOrder} disabled={!canManage} onChange={(value) => update(item.productId, "canOrder", value)} />{canManage && <button type="button" className="sf-button sf-secondary" disabled={busy} onClick={() => onSave(item)}>ذخیرهٔ کالا</button>}</div></article>; })}</section>;
-}
+function ProductsPanel({ products, edits, setEdits, canManage, busy, loading, search, setSearch, categoryId, onCategoryChange, page, pageSize, onPageChange, onPageSizeChange, onSave }: {
+  products: ListingPage;
+  edits: Record<string, ListingConfig>;
+  setEdits: (value: Record<string, ListingConfig> | ((current: Record<string, ListingConfig>) => Record<string, ListingConfig>)) => void;
+  canManage: boolean;
+  busy: boolean;
+  loading: boolean;
+  search: string;
+  setSearch: (value: string) => void;
+  categoryId: string;
+  onCategoryChange: (value: string) => void;
+  page: number;
+  pageSize: number;
+  onPageChange: (value: number) => void;
+  onPageSizeChange: (value: number) => void;
+  onSave: (item: ListingProduct) => void;
+}) {
+  const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const update = (id: string, key: keyof ListingConfig, value: ListingConfig[keyof ListingConfig]) => setEdits((current) => ({ ...current, [id]: { ...current[id], [key]: value } }));
+  const allCount = products.categories.reduce((sum, category) => sum + category.count, 0);
+  const firstPage = Math.max(1, Math.min(page - 2, products.totalPages - 4));
+  const pageNumbers = Array.from({ length: Math.min(5, products.totalPages) }, (_, index) => firstPage + index);
+  const start = products.total ? (page - 1) * pageSize + 1 : 0;
+  const end = Math.min(page * pageSize, products.total);
+  const stockPolicyLabels: Record<ListingConfig["stockPolicy"], string> = { EXACT: "تعداد دقیق", APPROXIMATE: "موجود / ناموجود", INQUIRY: "استعلام" };
 
-function CardsPanel({ cards, accounts, draft, setDraft, busy, onSubmit, onToggle, onMove }: { cards: Card[]; accounts: Account[]; draft: { financeAccountId: string; bankName: string; holderName: string; cardNumber: string; label: string; instructions: string }; setDraft: (value: { financeAccountId: string; bankName: string; holderName: string; cardNumber: string; label: string; instructions: string }) => void; busy: boolean; onSubmit: (event: FormEvent) => void; onToggle: (card: Card) => void; onMove: (card: Card, direction: -1 | 1) => void }) {
+  return <section className="sf-admin-products" aria-busy={loading}>
+    <div className="sf-section-head">
+      <div><span className="sf-eyebrow">فهرست کالاهای شعبه</span><h2>مدیریت نمایش کالا در فروشگاه</h2></div>
+      <span>{faNumber(products.total)} مورد{loading ? " · در حال به‌روزرسانی" : ""}</span>
+    </div>
+    <div className="sf-products-toolbar">
+      <label className="sf-products-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جست‌وجوی نام، کد یا بارکد" aria-label="جست‌وجوی کالاهای فروشگاه" /></label>
+      <label className="sf-page-size"><span>نمایش</span><select value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))}><option value={10}>۱۰</option><option value={20}>۲۰</option><option value={50}>۵۰</option></select><span>مورد</span></label>
+    </div>
+    <div className="sf-admin-category-chips" role="group" aria-label="فیلتر دسته‌بندی کالاها">
+      <button type="button" className={!categoryId ? "active" : ""} aria-pressed={!categoryId} onClick={() => onCategoryChange("")}>همه <small>{faNumber(allCount)}</small></button>
+      {products.categories.map((category) => <button type="button" key={category.id ?? "uncategorized"} className={categoryId === (category.id ?? "uncategorized") ? "active" : ""} aria-pressed={categoryId === (category.id ?? "uncategorized")} onClick={() => onCategoryChange(category.id ?? "uncategorized")}>{category.name} <small>{faNumber(category.count)}</small></button>)}
+    </div>
+    {!products.total && !loading ? <div className="sf-card sf-empty">{search || categoryId ? <><strong>کالایی با این فیلتر پیدا نشد.</strong><button type="button" className="sf-link-button" onClick={() => { setSearch(""); onCategoryChange(""); }}>پاک‌کردن فیلترها</button></> : "ابتدا کالا یا خدمت را در بخش اطلاعات پایه ثبت کنید."}</div> : <div className="sf-listing-list">
+      {loading && <p className="sf-products-fetching" role="status">در حال دریافت فهرست…</p>}
+      {products.items.map((item) => {
+        const edit = edits[item.productId] ?? item.listing;
+        const expanded = expandedProductId === item.productId;
+        const publicPrice = edit.publicPriceRial || item.salePriceRial;
+        return <article className={"sf-card sf-listing-row " + (expanded ? "is-expanded" : "")} key={item.productId}>
+          <button type="button" className="sf-listing-summary" aria-expanded={expanded} aria-controls={"listing-fields-" + item.productId} onClick={() => setExpandedProductId(expanded ? null : item.productId)}>
+            <span className="sf-listing-identity" title={item.name + " · " + (item.category ?? "بدون دسته‌بندی") + " · " + item.unit}><strong>{item.name}</strong><small>{item.category ?? "بدون دسته‌بندی"} · {item.kind === "SERVICE" ? "خدمت" : "کالا"} · {item.unit}{item.trackInventory ? " · موجودی " + faNumber(item.quantityOnHand) : ""}</small></span>
+            <span className="sf-listing-public-title" title={"عنوان فروشگاه: " + (edit.publicTitle.trim() || item.name) + (edit.publicDescription ? " · " + edit.publicDescription : "")} aria-label={"اطلاعات نمایش در فروشگاه: " + (edit.publicTitle.trim() || item.name)}><strong>{edit.publicTitle.trim() || item.name}</strong>{edit.publicDescription && <small> · {edit.publicDescription}</small>}</span>
+            <span className="sf-listing-public-price" title="قیمت فروشگاه"><strong>{money(publicPrice, "IRR")}</strong></span>
+            <span className="sf-listing-status"><span className={"sf-badge " + (edit.isPublished ? "is-good" : "")}>{edit.isPublished ? "منتشرشده" : item.isConfigured ? "پنهان" : "تنظیم‌نشده"}</span><span className={"sf-badge " + (edit.canOrder ? "is-good" : "")}>{edit.canOrder ? "سفارش‌پذیر" : "سفارش بسته"}</span><small>موجودی: {stockPolicyLabels[edit.stockPolicy]}</small></span>
+            <ChevronDown size={17} className={expanded ? "is-open" : ""} aria-hidden="true" />
+          </button>
+          {expanded && <div className="sf-listing-editor" id={"listing-fields-" + item.productId}>
+            <StorefrontListingFields item={item} value={edit} canManage={canManage} busy={busy} onChange={(key, value) => update(item.productId, key, value)} onSave={() => onSave(item)} />
+          </div>}
+        </article>;
+      })}
+    </div>}
+    {products.total > 0 && <nav className="sf-pagination" aria-label="صفحه‌بندی فهرست کالاها">
+      <span className="sf-pagination-range">{faNumber(start)} تا {faNumber(end)} از {faNumber(products.total)} کالا</span>
+      <div className="sf-pagination-controls">
+        <button type="button" className="sf-page-button" aria-label="صفحهٔ قبل" title="صفحهٔ قبل" disabled={page <= 1 || loading} onClick={() => onPageChange(page - 1)}><ChevronRight size={16} />قبلی</button>
+        {pageNumbers.map((number) => <button type="button" key={number} className={"sf-page-number " + (number === page ? "active" : "")} aria-current={number === page ? "page" : undefined} onClick={() => onPageChange(number)} disabled={loading}>{faNumber(number)}</button>)}
+        <button type="button" className="sf-page-button" aria-label="صفحهٔ بعد" title="صفحهٔ بعد" disabled={page >= products.totalPages || loading} onClick={() => onPageChange(page + 1)}>بعدی<ChevronLeft size={16} /></button>
+      </div>
+      <span className="sf-pagination-total">صفحهٔ {faNumber(page)} از {faNumber(products.totalPages)}</span>
+    </nav>}
+  </section>;
+}function CardsPanel({ cards, accounts, draft, setDraft, busy, onSubmit, onToggle, onMove }: { cards: Card[]; accounts: Account[]; draft: { financeAccountId: string; bankName: string; holderName: string; cardNumber: string; label: string; instructions: string }; setDraft: (value: { financeAccountId: string; bankName: string; holderName: string; cardNumber: string; label: string; instructions: string }) => void; busy: boolean; onSubmit: (event: FormEvent) => void; onToggle: (card: Card) => void; onMove: (card: Card, direction: -1 | 1) => void }) {
   return <section className="sf-card sf-admin-form"><div className="sf-section-head"><div><span className="sf-eyebrow">تنظیمات مالک</span><h2>کارت‌های مقصد پرداخت</h2></div></div><div className="sf-alert sf-alert-neutral">شمارهٔ کارت فقط برای نمایش به مشتری ذخیره می‌شود. هیچ اطلاعات کارت مشتری دریافت نمی‌شود. دریافت‌های تأییدشده به حساب بانکی انتخاب‌شده ثبت می‌شوند.</div>{cards.length ? <div className="sf-admin-card-list">{[...cards].sort((left, right) => left.displayOrder - right.displayOrder).map((card, index, ordered) => <article className="sf-bank-card" key={card.id}><div><b>{card.bankName}</b><span className={`sf-badge ${card.isActive && card.accountActive ? "is-good" : ""}`}>{card.isActive && card.accountActive ? "فعال" : "غیرفعال"}</span></div><strong className="sf-card-number" dir="ltr">{card.maskedCardNumber}</strong><div className="sf-card-foot"><span>{card.holderName} · حساب: {card.financeAccountName}</span><div className="sf-card-tools"><button type="button" aria-label="انتقال کارت به بالا" disabled={busy || index === 0} onClick={() => onMove(card, -1)}>↑</button><button type="button" aria-label="انتقال کارت به پایین" disabled={busy || index === ordered.length - 1} onClick={() => onMove(card, 1)}>↓</button><button type="button" className="sf-link-button" disabled={busy} onClick={() => onToggle(card)}>{card.isActive ? "غیرفعال‌کردن" : "فعال‌کردن"}</button></div></div>{card.label && <small>{card.label}</small>}</article>)}</div> : <p className="sf-empty">کارت مقصدی ثبت نشده است.</p>}<form className="sf-form-grid sf-card-create" onSubmit={onSubmit}><h3 className="sf-span-all">افزودن کارت مقصد</h3><label>حساب بانکی فعال<select required value={draft.financeAccountId} onChange={(event) => setDraft({ ...draft, financeAccountId: event.target.value })}><option value="">انتخاب حساب</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{accounts.length === 0 && <small>ابتدا یک حساب از نوع «بانک» در بخش مالی بسازید.</small>}</label><label>نام بانک<input required maxLength={80} value={draft.bankName} onChange={(event) => setDraft({ ...draft, bankName: event.target.value })} /></label><label>نام صاحب کارت<input required maxLength={120} value={draft.holderName} onChange={(event) => setDraft({ ...draft, holderName: event.target.value })} /></label><label>شمارهٔ کارت ۱۶ رقمی<input required dir="ltr" inputMode="numeric" autoComplete="off" maxLength={23} value={draft.cardNumber} onChange={(event) => setDraft({ ...draft, cardNumber: event.target.value.replace(/[^0-9۰-۹٠-٩]/g, "").slice(0, 16) })} /></label><label>عنوان اختیاری<input maxLength={80} value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} /></label><label className="sf-span-all">راهنمای پرداخت برای این کارت<input maxLength={500} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></label><button className="sf-button sf-primary sf-span-all" disabled={busy || !draft.financeAccountId}>ثبت کارت مقصد</button></form></section>;
 }
 

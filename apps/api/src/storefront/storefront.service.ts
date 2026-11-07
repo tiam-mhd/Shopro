@@ -10,6 +10,7 @@ import { SalesService } from "../sales/sales.service.js";
 import { AttachmentStorageService } from "../expenses/attachment-storage.service.js";
 import { MAX_ATTACHMENT_BYTES, prepareExpenseAttachment } from "../expenses/attachment-files.js";
 import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
+import { assertUuid } from "../common/uuid-param.pipe.js";
 import { entitlementDenial } from "../subscriptions/subscription-entitlement.guard.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
 import type { CreateStorePaymentCardDto, CreateStorefrontOrderDto, CreateStorefrontReceiptDto, RejectStorefrontOrderDto, RejectStorefrontPaymentDto, ResolveStorefrontOverpaymentDto, SetStorePaymentCardActiveDto, StorefrontListingDto, StorefrontSettingsDto, TransitionStorefrontOrderDto, VerifyStorefrontPaymentDto } from "./storefront.dto.js";
@@ -62,8 +63,8 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
   async requestCustomerOtp(slug: string, phone: string, request: AppRequest) {
     await this.checkPublicRateLimit("customer-otp", request.ip, 5);
     const store = await this.findCustomerStore(slug);
-    await this.auth.requestOtp(phone, "STOREFRONT_CUSTOMER", request.ip, request.requestId);
-    return { ok: true, message: "اگر شماره معتبر باشد، کد ورود برای آن ارسال می‌شود." };
+    const timing = await this.auth.requestOtp(phone, "STOREFRONT_CUSTOMER", request.ip, request.requestId);
+    return { ok: true, message: "اگر شماره معتبر باشد، کد ورود برای آن ارسال می‌شود.", ...timing };
   }
 
   async verifyCustomerOtp(slug: string, phone: string, code: string, ipAddress?: string) {
@@ -127,8 +128,8 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     await this.checkPublicRateLimit("otp", request.ip, 5);
     const store = await this.findPublicStore(slug, true);
     if (!await this.newOrdersAllowed(store.businessId, store.branchId)) throw new ConflictException("این شعبه فعلاً سفارش جدید نمی‌پذیرد.");
-    await this.auth.requestOtp(phone, "STOREFRONT_CHECKOUT", request.ip, request.requestId);
-    return { ok: true, message: "اگر شماره معتبر باشد، کد تأیید برای آن ارسال می‌شود." };
+    const timing = await this.auth.requestOtp(phone, "STOREFRONT_CHECKOUT", request.ip, request.requestId);
+    return { ok: true, message: "اگر شماره معتبر باشد، کد تأیید برای آن ارسال می‌شود.", ...timing };
   }
 
   async verifyCheckoutOtp(slug: string, phone: string, code: string, ipAddress?: string) {
@@ -176,7 +177,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
           images: { where: { branchId: store.branchId }, orderBy: { position: "asc" }, select: { id: true, position: true } },
         } },
       },
-      orderBy: [{ displayOrder: "asc" }, { id: "asc" }], take: limit + 1,
+      orderBy: [{ displayOrder: "asc" }, { product: { normalizedName: "asc" } }, { id: "asc" }], take: limit + 1,
     });
     const products = rows.map((row) => {
       const product = row.product;
@@ -248,20 +249,79 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async listings(user: AuthenticatedUser) {
+  async listings(user: AuthenticatedUser, requestedPage?: string, requestedLimit?: string, categoryId?: string, search?: string, productId?: string) {
     const scope = this.scope(user); this.requireRole(user, ["OWNER", "MANAGER"]);
     const store = await this.requireStore(scope);
-    const products = await this.prisma.product.findMany({ where: { businessId: scope.businessId, isActive: true, archivedAt: null }, include: { unit: { select: { labelFa: true } }, category: { select: { name: true } }, balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } }, storefrontListings: { where: { branchId: scope.branchId }, take: 1 } }, orderBy: [{ normalizedName: "asc" }, { id: "asc" }], take: 500 });
-    return { storefrontId: store.id, items: products.map((product) => {
-      const row = product.storefrontListings[0];
+    const page = requestedPage === undefined ? 1 : /^\d{1,5}$/.test(requestedPage) ? Number(requestedPage) : Number.NaN;
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) throw new BadRequestException("شمارهٔ صفحهٔ کالا معتبر نیست.");
+    const limit = pageLimit(requestedLimit, 20, 50);
+    if (categoryId && categoryId !== "uncategorized") assertUuid(categoryId, "دسته‌بندی کالا معتبر نیست.");
+    if (productId) assertUuid(productId, "شناسهٔ کالا معتبر نیست.");
+    const query = search?.trim().slice(0, 100);
+    const normalized = query ? normalizePersianSearch(query) : "";
+    const baseWhere: Prisma.ProductWhereInput = {
+      businessId: scope.businessId, isActive: true, archivedAt: null,
+      ...(productId ? { id: productId } : {}),
+      ...(normalized ? { OR: [
+        { normalizedName: { contains: normalized } },
+        { sku: { contains: query ?? "", mode: "insensitive" } },
+        { barcode: { contains: toAsciiDigits(query ?? "") } },
+      ] } : {}),
+    };
+    const where: Prisma.ProductWhereInput = {
+      ...baseWhere,
+      ...(categoryId === "uncategorized" ? { categoryId: null } : categoryId ? { categoryId } : {}),
+    };
+    const skip = (page - 1) * limit;
+    const [products, total, categoryGroups] = await Promise.all([
+      this.prisma.product.findMany({
+        where, skip, take: limit,
+        include: {
+          unit: { select: { labelFa: true, precision: true } },
+          category: { select: { id: true, name: true } },
+          balances: { where: { branchId: scope.branchId }, select: { quantityOnHand: true } },
+          storefrontListings: { where: { branchId: scope.branchId }, take: 1 },
+        },
+        orderBy: [{ normalizedName: "asc" }, { id: "asc" }],
+      }),
+      this.prisma.product.count({ where }),
+      this.prisma.product.groupBy({ by: ["categoryId"], where: baseWhere, _count: { _all: true } }),
+    ]);
+    const categoryIds = categoryGroups.flatMap((group) => group.categoryId ? [group.categoryId] : []);
+    const categoryRows = categoryIds.length ? await this.prisma.productCategory.findMany({ where: { businessId: scope.businessId, id: { in: categoryIds } }, select: { id: true, name: true } }) : [];
+    const categoryNames = new Map(categoryRows.map((category) => [category.id, category.name]));
+    const categories: Array<{ id: string | null; name: string; count: number }> = [];
+    for (const group of categoryGroups) {
+      categories.push(group.categoryId
+        ? { id: group.categoryId, name: categoryNames.get(group.categoryId) ?? "دسته‌بندی دیگر", count: group._count._all }
+        : { id: null, name: "بدون دسته‌بندی", count: group._count._all });
+    }
+    categories.sort((left, right) => left.id === null ? 1 : right.id === null ? -1 : left.name.localeCompare(right.name, "fa"));
+    const items = products.map((product) => {
+      const row = product.storefrontListings[0] ?? null;
+      const priceInherited = !row || row.publicPriceRial === null;
       return {
         productId: product.id, name: product.name, sku: product.sku, kind: product.kind,
-        category: product.category?.name ?? null, unit: product.unit.labelFa,
+        categoryId: product.category?.id ?? null, category: product.category?.name ?? null,
+        unit: product.unit.labelFa, unitPrecision: product.unit.precision,
         salePriceRial: product.salePriceRial.toString(), taxRateBasisPoints: product.taxRateBasisPoints,
         quantityOnHand: product.balances[0]?.quantityOnHand.toString() ?? "0", trackInventory: product.trackInventory,
-        listing: row ? { id: row.id, publicTitle: row.publicTitle ?? product.name, publicDescription: row.publicDescription ?? "", publicPriceRial: row.publicPriceRial?.toString() ?? "", isPublished: row.isPublished, canOrder: row.canOrder, stockPolicy: row.stockPolicy, minimumQuantity: row.minimumQuantity.toString(), maximumQuantity: row.maximumQuantity?.toString() ?? "", displayOrder: row.displayOrder } : null,
+        isConfigured: Boolean(row), priceInherited,
+        listing: {
+          publicTitle: row?.publicTitle?.trim() || product.name,
+          publicDescription: row?.publicDescription ?? "",
+          publicPriceRial: row?.publicPriceRial?.toString() ?? product.salePriceRial.toString(),
+          isPublished: row?.isPublished ?? false,
+          canOrder: row?.canOrder ?? true,
+          stockPolicy: row?.stockPolicy ?? (product.trackInventory && store.showExactStock ? "EXACT" : "APPROXIMATE"),
+          minimumQuantity: row?.minimumQuantity.toString() ?? "1",
+          maximumQuantity: row?.maximumQuantity?.toString() ?? "",
+          displayOrder: row?.displayOrder ?? 0,
+        },
       };
-    }) };
+    });
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return { storefrontId: store.id, items, total, page, pageSize: limit, totalPages, categories };
   }
 
   async updateListing(user: AuthenticatedUser, productId: string, dto: StorefrontListingDto, request: AppRequest) {

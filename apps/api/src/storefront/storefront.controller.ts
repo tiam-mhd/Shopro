@@ -75,7 +75,7 @@ export class StorefrontController {
   @Get() settings(@CurrentUser() user: AuthenticatedUser) { return this.storefront.settings(user); }
   @Patch() updateSettings(@CurrentUser() user: AuthenticatedUser, @Body() dto: StorefrontSettingsDto, @Req() request: AppRequest) { return this.storefront.updateSettings(user, dto, request); }
 
-  @Get("listings") listings(@CurrentUser() user: AuthenticatedUser) { return this.storefront.listings(user); }
+  @Get("listings") listings(@CurrentUser() user: AuthenticatedUser, @Query("page") page?: string, @Query("limit") limit?: string, @Query("categoryId") categoryId?: string, @Query("q") q?: string, @Query("productId") productId?: string) { return this.storefront.listings(user, page, limit, categoryId, q, productId); }
   @Patch("listings/:productId") updateListing(@CurrentUser() user: AuthenticatedUser, @Param("productId", UuidParamPipe) productId: string, @Body() dto: StorefrontListingDto, @Req() request: AppRequest) { return this.storefront.updateListing(user, productId, dto, request); }
 
   @Get("cards") cards(@CurrentUser() user: AuthenticatedUser) { return this.storefront.cards(user); }
