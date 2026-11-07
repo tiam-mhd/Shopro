@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { BookOpen, Download } from "lucide-react";
+import { BookOpen, Download, Filter, RotateCcw } from "lucide-react";
 import type { CursorPage } from "@shopro/contracts";
 import { get } from "../lib/api.js";
 import { downloadCsv } from "../lib/csv.js";
 import { faNumber, jalaliDate, money } from "../lib/format.js";
-import { EmptyState, InlineError, LoadMoreButton, LoadingBlock, PageHeader, SectionTitle, SelectField } from "../App.js";
+import { EmptyState, InlineError, LoadMoreButton, LoadingBlock, PageHeader, SelectField } from "../App.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
 
 type LedgerAccount = { id: string; code: string; name: string; type: string };
@@ -38,10 +38,16 @@ export function LedgerPage({ currency }: { currency: "IRR" | "IRT" }) {
   });
   const rows = ledger.data?.pages.flatMap((page) => page.items) ?? [];
   const totals = ledger.data?.pages[0];
+  const activeFilterLabels = [
+    filters.from ? `از ${jalaliDate(filters.from)}` : "",
+    filters.to ? `تا ${jalaliDate(filters.to)}` : "",
+    filters.accountId ? accounts.data?.find((account) => account.id === filters.accountId)?.name ?? "حساب انتخاب‌شده" : "",
+  ].filter(Boolean);
   const applyFilters = () => {
     if (from && to && from > to) { setFilterError("تاریخ شروع نباید پس از تاریخ پایان باشد."); return; }
     setFilterError(""); setFilters({ from, to, accountId });
   };
+  const clearFilters = () => { setFrom(""); setTo(""); setAccountId(""); setFilters({ from: "", to: "", accountId: "" }); setFilterError(""); };
   const exportLedger = async () => {
     setExporting(true); setFilterError("");
     try {
@@ -63,12 +69,35 @@ export function LedgerPage({ currency }: { currency: "IRR" | "IRT" }) {
     } catch (cause) { setFilterError(cause instanceof Error ? cause.message : "دریافت دفتر مالی انجام نشد."); }
     finally { setExporting(false); }
   };
-  return <PageHeader title="دفتر مالی" subtitle="ردیف‌های ثبت‌شده و برگشت‌شدهٔ این شعبه" actions={<button type="button" className="button button-secondary" disabled={!totals || exporting} onClick={() => void exportLedger()}><Download size={15} />{exporting ? "در حال آماده‌سازی…" : "دریافت CSV"}</button>}>
-    <section className="card ledger-filters"><div className="form-grid"><JalaliDatePicker value={from} onChange={setFrom} label="از تاریخ" clearable /><JalaliDatePicker value={to} onChange={setTo} label="تا تاریخ" clearable /><SelectField label="حساب دفتر" value={accountId} onChange={setAccountId} options={(accounts.data ?? []).map((account) => ({ value: account.id, label: `${account.code} · ${account.name}` }))} placeholder="همهٔ حساب‌ها" /></div><button type="button" className="button button-primary" onClick={applyFilters}>اعمال فیلتر</button>{accounts.isError && <InlineError error={accounts.error} retry={() => void accounts.refetch()} />}{filterError && <p className="field-error" role="alert">{filterError}</p>}</section>
-    {ledger.isPending ? <LoadingBlock /> : ledger.isError ? <InlineError error={ledger.error} retry={() => void ledger.refetch()} /> : <>
-      <div className="metric-grid ledger-totals"><article className="metric-card"><span>جمع بدهکار</span><strong>{money(totals?.totalDebitRial ?? "0", currency)}</strong></article><article className="metric-card"><span>جمع بستانکار</span><strong>{money(totals?.totalCreditRial ?? "0", currency)}</strong></article><article className="metric-card"><span>ردیف‌های دیده‌شده</span><strong>{faNumber(rows.length)}{ledger.hasNextPage ? "+" : ""}</strong></article></div>
-      <section className="card ledger-list"><SectionTitle title="گردش حساب‌ها" />{rows.length ? <div className="ledger-rows">{rows.map((row) => <article className="ledger-row" key={row.id}><div className="ledger-row-heading"><strong>{row.accountCode} · {row.account}</strong><span>{jalaliDate(row.date)}</span></div><div className="ledger-row-meta"><span>{row.entryNo}</span><span>{row.party ?? entryTypeLabel(row.sourceType)}</span><span>{row.status === "REVERSED" ? "برگشت‌شده" : "ثبت‌شده"}</span></div><p>{row.description ?? row.memo ?? "بدون شرح"}</p><div className="ledger-row-amounts"><span>بدهکار <strong>{money(row.debitRial, currency)}</strong></span><span>بستانکار <strong>{money(row.creditRial, currency)}</strong></span></div></article>)}</div> : <EmptyState icon={BookOpen} title="ردیفی پیدا نشد" text="در بازه یا حساب انتخاب‌شده سندی ثبت نشده است." />}<LoadMoreButton hasMore={Boolean(ledger.hasNextPage)} isLoading={ledger.isFetchingNextPage} onClick={() => void ledger.fetchNextPage()} /></section>
-    </>}
+  return <PageHeader title="دفتر مالی" subtitle="گردش حساب‌های ثبت‌شده در شعبهٔ جاری" actions={<button type="button" className="button button-secondary" disabled={!totals || exporting} onClick={() => void exportLedger()}><Download size={15} />{exporting ? "در حال آماده‌سازی…" : "خروجی CSV"}</button>}>
+    <div className="ledger-page">
+      <section className="card ledger-filter-panel" aria-label="فیلتر دفتر مالی">
+        <div className="ledger-filter-top"><div><span className="eyebrow">جست‌وجوی دفتر</span><strong>فیلتر گردش حساب</strong></div><span className="ledger-filter-scope">{activeFilterLabels.length ? `${faNumber(activeFilterLabels.length)} فیلتر فعال` : "تمام سوابق این شعبه"}</span></div>
+        <div className="ledger-filter-fields"><JalaliDatePicker value={from} onChange={setFrom} label="از تاریخ" clearable /><JalaliDatePicker value={to} onChange={setTo} label="تا تاریخ" clearable /><SelectField label="حساب دفتر" value={accountId} onChange={setAccountId} options={(accounts.data ?? []).map((account) => ({ value: account.id, label: `${account.code} · ${account.name}` }))} placeholder="همهٔ حساب‌ها" /><div className="ledger-filter-actions"><button type="button" className="button button-primary" onClick={applyFilters}><Filter size={15} />اعمال</button>{activeFilterLabels.length > 0 && <button type="button" className="button button-text" onClick={clearFilters}><RotateCcw size={14} />پاک‌کردن</button>}</div></div>
+        {activeFilterLabels.length > 0 && <div className="ledger-filter-chips" aria-label="فیلترهای اعمال‌شده">{activeFilterLabels.map((label) => <span key={label}>{label}</span>)}</div>}
+        {accounts.isError && <InlineError error={accounts.error} retry={() => void accounts.refetch()} />}{filterError && <p className="field-error" role="alert">{filterError}</p>}
+      </section>
+      {ledger.isPending ? <LoadingBlock /> : ledger.isError ? <InlineError error={ledger.error} retry={() => void ledger.refetch()} /> : <>
+        <section className="ledger-summary-strip" aria-label="خلاصهٔ دفتر مالی">
+          <article className="ledger-summary-card is-debit"><span>جمع بدهکار</span><strong>{money(totals?.totalDebitRial ?? "0", currency)}</strong><small>بر اساس فیلترهای اعمال‌شده</small></article>
+          <article className="ledger-summary-card is-credit"><span>جمع بستانکار</span><strong>{money(totals?.totalCreditRial ?? "0", currency)}</strong><small>بر اساس فیلترهای اعمال‌شده</small></article>
+          <article className="ledger-summary-card is-count"><span>ردیف‌های بارگذاری‌شده</span><strong>{faNumber(rows.length)}{ledger.hasNextPage ? "+" : ""}</strong><small>{ledger.hasNextPage ? "موارد قدیمی‌تر در دسترس است" : "تمام ردیف‌های این فیلتر"}</small></article>
+        </section>
+        <section className="card ledger-register">
+          <header className="ledger-register-head"><div><span className="eyebrow">دفتر کل</span><h2>گردش حساب‌ها</h2><p>اسناد جدیدتر در ابتدای فهرست نمایش داده می‌شوند.</p></div><span className="ledger-register-count"><BookOpen size={15} />{faNumber(rows.length)} ردیف</span></header>
+          {rows.length ? <>
+            <div className="ledger-table-head" aria-hidden="true"><span>تاریخ و حساب</span><span>شمارهٔ سند و طرف‌حساب</span><span>بدهکار</span><span>بستانکار</span></div>
+            <div className="ledger-rows">{rows.map((row) => <article className="ledger-entry" key={row.id}>
+              <div className="ledger-entry-primary"><time dateTime={row.date}>{jalaliDate(row.date)}</time><div><strong>{row.accountCode} · {row.account}</strong><small>{row.description ?? row.memo ?? entryTypeLabel(row.sourceType)}</small></div></div>
+              <div className="ledger-entry-reference"><strong dir="ltr">{row.entryNo}</strong><span>{row.party ?? entryTypeLabel(row.sourceType)}</span><small className={row.status === "REVERSED" ? "is-reversed" : ""}>{row.status === "REVERSED" ? "برگشت‌شده" : "ثبت‌شده"}</small></div>
+              <div className="ledger-entry-amount is-debit"><span>بدهکار</span><strong>{row.debitRial === "0" ? "—" : money(row.debitRial, currency)}</strong></div>
+              <div className="ledger-entry-amount is-credit"><span>بستانکار</span><strong>{row.creditRial === "0" ? "—" : money(row.creditRial, currency)}</strong></div>
+            </article>)}</div>
+            <LoadMoreButton hasMore={Boolean(ledger.hasNextPage)} isLoading={ledger.isFetchingNextPage} onClick={() => void ledger.fetchNextPage()} />
+          </> : <EmptyState icon={BookOpen} title="ردیفی برای نمایش نیست" text={activeFilterLabels.length ? "با فیلترهای فعلی سندی پیدا نشد؛ فیلترها را پاک کنید یا بازهٔ دیگری را انتخاب کنید." : "با ثبت فروش، خرید، هزینه یا دریافت و پرداخت، گردش دفتر در اینجا نمایش داده می‌شود."} action={activeFilterLabels.length ? <button type="button" className="button button-secondary" onClick={clearFilters}>نمایش همهٔ سوابق</button> : undefined} />}
+        </section>
+      </>}
+    </div>
   </PageHeader>;
 }
 
