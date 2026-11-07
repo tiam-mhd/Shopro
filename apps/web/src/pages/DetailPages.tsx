@@ -1,24 +1,26 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, Boxes, Download, FileText, PackagePlus, Pencil, ReceiptText, RotateCw, ShoppingBag, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
+import { Archive, Boxes, ChevronLeft, ChevronRight, Download, FileText, ImagePlus, PackagePlus, Pencil, ReceiptText, RotateCw, ShoppingBag, ShoppingCart, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
-import type { CursorPage } from "@shopro/contracts";
+import type { CursorPage, MemberRole } from "@shopro/contracts";
 import { toAsciiDigits } from "@shopro/contracts";
 import { del, downloadFile, get, newOperationId, patch, post, uploadFile } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
 import { partyPicker, productPicker } from "../lib/picker-options.js";
 import { trackOnboardingEvent } from "../lib/onboarding-events.js";
 import { downloadCsv } from "../lib/csv.js";
-import { DataRows, EmptyState, Field, InlineError, LoadMoreButton, LoadingBlock, PageHeader, SectionTitle, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
+import { EmptyState, Field, InlineError, LoadMoreButton, LoadingBlock, PageHeader, SectionTitle, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
 import { QuickAccountModal, QuickExpenseCategoryModal, QuickPartyModal, QuickProductModal } from "../components/EntryHelpers.js";
+import { ProductStorefrontSettings } from "../components/StorefrontListingEditor.js";
 
 type MoneyCurrency = "IRR" | "IRT";
 type PartyDetail = { id: string; name: string; type: string; phone: string | null; email: string | null; address: string | null };
 type PartyStatement = { party: PartyDetail; balanceRial: string; hasMore: boolean; nextCursor: string | null; openingBalanceRial: string; entries: Array<{ id: string; date: string; entryNo: string; description: string | null; sourceType: string; debitRial: string; creditRial: string; balanceRial: string }> };
-type ProductDetail = { id: string; name: string; sku: string | null; barcode: string | null; kind: string; unit: { labelFa: string }; category: { name: string } | null; salePriceRial: string; defaultCostRial: string | null; taxRateBasisPoints: number; trackInventory: boolean; isActive: boolean; reorderPoint: string | null; quantityOnHand: string; averageCostRial: string | null; inventoryValueRial: string | null };
+type ProductDetailImage = { id: string; position: number; path: string };
+type ProductDetail = { id: string; name: string; sku: string | null; barcode: string | null; kind: string; unit: { labelFa: string }; category: { name: string } | null; salePriceRial: string; defaultCostRial: string | null; taxRateBasisPoints: number; trackInventory: boolean; isActive: boolean; reorderPoint: string | null; quantityOnHand: string; averageCostRial: string | null; inventoryValueRial: string | null; images: ProductDetailImage[] };
 type InvoiceDetail = { id: string; invoiceNo: string | null; date: string; customerId: string | null; customer: { id?: string; name: string; phone: string | null } | null; status: string; documentType: "SALE" | "RETURN"; returnOf: { invoiceNo: string | null } | null; returnReason: string | null; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ id: string; productId: string | null; description: string; sku: string | null; quantity: string; returnedQuantity: string; unitCode: string; unitPriceRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string }>; payments: Array<{ amountRial: string; method: string }>; returns: Array<{ id: string; invoiceNo: string | null; date: string; reason: string | null; totalRial: string; lines: number }> };
 type PurchaseDetail = { id: string; purchaseNo: string | null; date: string; dueDate: string | null; supplierId: string | null; supplier: { name: string; phone: string | null; email: string | null; address: string | null } | null; status: string; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ productId: string | null; description: string; sku: string | null; unit: string | null; quantity: string; unitCostRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string }>; payments: Array<{ amountRial: string; method: string; account: string | null }> };
 type ExpenseAttachment = { fileName: string; mimeType: string; bytes: string; uploadedAt: string };
@@ -50,7 +52,7 @@ export function PartyDetailsPage({ currency }: { currency: MoneyCurrency }) {
     } catch (cause) { setExportError(messageOf(cause)); }
     finally { setExporting(false); }
   };
-  return <PageHeader title={party?.name ?? "جزئیات طرف‌حساب"} subtitle="اطلاعات تماس و گردش مالی" actions={<Link className="button button-secondary" to="/app/parties"><UsersRound size={16} />بازگشت به فهرست</Link>}>
+  return <PageHeader title={party?.name ?? "جزئیات طرف‌حساب"} subtitle="اطلاعات تماس و گردش مالی" actions={<div className="detail-actions">{party && (party.type === "CUSTOMER" || party.type === "BOTH") && <Link className="button button-primary" to={`/app/sales?customerId=${encodeURIComponent(party.id)}`}><ShoppingCart size={16} />ثبت فروش برای این مشتری</Link>}<Link className="button button-secondary" to="/app/parties"><UsersRound size={16} />بازگشت به فهرست</Link></div>}>
     {query.isPending ? <LoadingBlock /> : query.isError ? <InlineError error={query.error} retry={() => void query.refetch()} /> : party && <div className="detail-page">
       <section className="card"><SectionTitle title="اطلاعات طرف‌حساب" /><div className="detail-grid"><DetailField label="نوع" value={partyTypeLabel(party.type)} /><DetailField label="شمارهٔ همراه" value={party.phone || "ثبت نشده"} /><DetailField label="ایمیل" value={party.email || "ثبت نشده"} /><DetailField label="نشانی" value={party.address || "ثبت نشده"} /><DetailField label="ماندهٔ حساب" value={money(statement.balanceRial, currency)} /></div></section>
       <section className="card"><SectionTitle title="گردش مالی" action={<button type="button" className="button button-secondary" disabled={!party || query.isPending || exporting} onClick={() => void exportStatement()}><Download size={15} />{exporting ? "در حال آماده‌سازی…" : "دریافت CSV"}</button>} />{exportError && <InlineError error={exportError} />}{query.data.pages.some((page) => page.entries.length) ? <><div className="statement-detail-list">{query.data.pages.flatMap((page) => page.entries).map((entry) => <article className="statement-detail-row" key={entry.id}><div><strong>{entry.description || sourceLabel(entry.sourceType)}</strong><small>{entry.entryNo} · {jalaliDate(entry.date)}</small></div><div><span>بدهکار {money(entry.debitRial, currency)}</span><span>بستانکار {money(entry.creditRial, currency)}</span></div><strong>مانده {money(entry.balanceRial, currency)}</strong></article>)}</div>{query.hasNextPage && <button className="button button-secondary" type="button" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "در حال دریافت…" : "نمایش گردش‌های قدیمی‌تر"}</button>}</> : <EmptyState icon={FileText} title="گردشی ثبت نشده" text="با ثبت فروش، خرید یا دریافت و پرداخت، گردش حساب اینجا نمایش داده می‌شود." />}</section>
@@ -58,19 +60,86 @@ export function PartyDetailsPage({ currency }: { currency: MoneyCurrency }) {
   </PageHeader>;
 }
 
-export function ProductDetailsPage({ currency }: { currency: MoneyCurrency }) {
+export function ProductDetailsPage({ currency, role }: { currency: MoneyCurrency; role: MemberRole }) {
   const { id = "" } = useParams();
   const product = useQuery({ queryKey: ["product-detail", id], queryFn: () => get<ProductDetail>("/products/" + id), enabled: !!id });
   const movements = useInfiniteQuery({ queryKey: ["product-movements", id], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<{ id: string; date: string; sourceType: string; quantityDelta: string; unitCostRial: string; valueDeltaRial: string }>>(`/inventory/movements?productId=${encodeURIComponent(id)}&limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined, enabled: !!id });
   const movementRows = movements.data?.pages.flatMap((page) => page.items) ?? [];
   const item = product.data;
-  return <PageHeader title={item?.name ?? "جزئیات کالا یا خدمت"} subtitle="مشخصات کالا، قیمت و وضعیت موجودی" actions={<Link className="button button-secondary" to="/app/products"><PackagePlus size={16} />بازگشت به فهرست</Link>}>
-    {product.isPending ? <LoadingBlock /> : product.isError ? <InlineError error={product.error} retry={() => void product.refetch()} /> : item && <div className="detail-page">
-      <section className="card"><SectionTitle title="مشخصات" /><div className="detail-grid"><DetailField label="نوع" value={item.kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"} /><DetailField label="واحد" value={item.unit.labelFa} /><DetailField label="دسته‌بندی" value={item.category?.name ?? "بدون دسته‌بندی"} /><DetailField label="کد کالا" value={item.sku || "ثبت نشده"} /><DetailField label="بارکد" value={item.barcode || "ثبت نشده"} /><DetailField label="وضعیت" value={item.isActive ? "فعال" : "بایگانی‌شده"} /><DetailField label="قیمت فروش" value={money(item.salePriceRial, currency)} /><DetailField label="بهای خرید پیش‌فرض" value={item.defaultCostRial ? money(item.defaultCostRial, currency) : "ثبت نشده"} /><DetailField label="نرخ مالیات" value={faNumber(item.taxRateBasisPoints / 100) + "٪"} /><DetailField label="حد هشدار موجودی" value={item.reorderPoint ?? "تنظیم نشده"} /></div></section>
-      {item.kind === "STOCK" && <section className="card"><SectionTitle title="موجودی این شعبه" /><div className="detail-grid"><DetailField label="موجودی فعلی" value={faNumber(item.quantityOnHand) + " " + item.unit.labelFa} /><DetailField label="میانگین بهای تمام‌شده" value={item.averageCostRial ? money(item.averageCostRial, currency) : "ثبت نشده"} /><DetailField label="ارزش موجودی" value={item.inventoryValueRial ? money(item.inventoryValueRial, currency) : money("0", currency)} /></div></section>}
-      <section className="card"><SectionTitle title="گردش موجودی" />{movements.isPending ? <LoadingBlock /> : movements.isError ? <InlineError error={movements.error} retry={() => void movements.refetch()} /> : <><DataRows icon={Boxes} rows={movementRows.map((row) => ({ id: row.id, title: sourceLabel(row.sourceType), subtitle: jalaliDate(row.date) + " · " + faNumber(row.quantityDelta) + " " + item.unit.labelFa, amount: money(row.valueDeltaRial, currency) }))} emptyTitle="گردشی ثبت نشده" emptyText="خرید، فروش و شمارش موجودی در این بخش دیده می‌شوند." /><LoadMoreButton hasMore={Boolean(movements.hasNextPage)} isLoading={movements.isFetchingNextPage} onClick={() => void movements.fetchNextPage()} /></>}</section>
+  return <PageHeader title="جزئیات کالا یا خدمت" subtitle="نمای کامل مشخصات، قیمت و عملکرد در این شعبه" actions={<div className="detail-actions">{item?.isActive && <Link className="button button-primary" to={`/app/sales?productId=${encodeURIComponent(item.id)}`}><ShoppingCart size={16} />ثبت فروش</Link>}<Link className="button button-secondary" to="/app/products"><PackagePlus size={16} />بازگشت به کالاها</Link></div>}>
+    {product.isPending ? <LoadingBlock /> : product.isError ? <InlineError error={product.error} retry={() => void product.refetch()} /> : !item ? <EmptyState icon={Boxes} title="کالا یا خدمت پیدا نشد" text="اطلاعات این مورد در کسب‌وکار فعلی در دسترس نیست." /> : <div className="product-detail-page">
+      <section className="card product-detail-hero">
+        <div className="product-detail-copy">
+          <div className="product-detail-badges"><span className="product-detail-kind">{item.kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"}</span><span className={`product-detail-status ${item.isActive ? "is-active" : "is-archived"}`}><i />{item.isActive ? "فعال" : "بایگانی‌شده"}</span>{item.category && <span className="product-detail-category">{item.category.name}</span>}</div>
+          <h2>{item.name}</h2>
+          <p className="product-detail-description">{item.kind === "SERVICE" ? "خدمت ثبت‌شده در اطلاعات پایهٔ کسب‌وکار" : "کالای قابل پیگیری در موجودی این شعبه"}</p>
+          <div className="product-detail-identifiers">{item.sku && <span><small>کد کالا</small><bdi dir="ltr">{item.sku}</bdi></span>}{item.barcode && <span><small>بارکد</small><bdi dir="ltr">{item.barcode}</bdi></span>}{!item.sku && !item.barcode && <span className="product-detail-no-identifiers">کد کالا و بارکدی ثبت نشده است</span>}</div>
+          <div className="product-detail-price"><span>قیمت فروش <small>برای هر {item.unit.labelFa}</small></span><strong>{money(item.salePriceRial, currency)}</strong></div>
+        </div>
+        <ProductDetailGallery images={item.images ?? []} name={item.name} />
+      </section>
+
+      {item.kind === "STOCK" && <section className="product-detail-metrics" aria-label="خلاصهٔ موجودی این شعبه">
+        <article className="card product-detail-metric"><span className="product-detail-metric-icon is-stock"><Boxes size={18} /></span><div><small>موجودی فعلی شعبه</small><strong>{faNumber(item.quantityOnHand)} <em>{item.unit.labelFa}</em></strong><span>{item.reorderPoint !== null && Number(item.quantityOnHand) <= Number(item.reorderPoint) ? "نیازمند بررسی و تأمین" : "موجودی ثبت‌شده"}</span></div></article>
+        <article className="card product-detail-metric"><span className="product-detail-metric-icon"><ReceiptText size={18} /></span><div><small>میانگین بهای تمام‌شده</small><strong>{item.averageCostRial ? money(item.averageCostRial, currency) : "ثبت نشده"}</strong><span>بر پایهٔ اسناد موجودی</span></div></article>
+        <article className="card product-detail-metric"><span className="product-detail-metric-icon"><PackagePlus size={18} /></span><div><small>ارزش موجودی</small><strong>{money(item.inventoryValueRial ?? "0", currency)}</strong><span>در همین شعبه</span></div></article>
+      </section>}
+
+      <section className="card product-detail-specs"><SectionTitle title="مشخصات کالا یا خدمت" /><div className="detail-grid product-detail-spec-grid"><DetailField label="نوع" value={item.kind === "SERVICE" ? "خدمت" : "کالای انبارشونده"} /><DetailField label="واحد" value={item.unit.labelFa} /><DetailField label="دسته‌بندی" value={item.category?.name ?? "بدون دسته‌بندی"} /><DetailField label="وضعیت" value={item.isActive ? "فعال" : "بایگانی‌شده"} /><DetailField label="کد کالا" value={item.sku || "ثبت نشده"} /><DetailField label="بارکد" value={item.barcode ? <bdi dir="ltr">{item.barcode}</bdi> : "ثبت نشده"} /><DetailField label="بهای خرید پیش‌فرض" value={item.defaultCostRial ? money(item.defaultCostRial, currency) : "ثبت نشده"} /><DetailField label="نرخ مالیات" value={faNumber(item.taxRateBasisPoints / 100) + "٪"} />{item.kind === "STOCK" && <DetailField label="حد هشدار موجودی" value={item.reorderPoint ? faNumber(item.reorderPoint) + " " + item.unit.labelFa : "تنظیم نشده"} />}</div></section>
+
+      {item.isActive && (role === "OWNER" || role === "MANAGER") && <ProductStorefrontSettings productId={item.id} productName={item.name} />}
+
+      {item.kind === "STOCK" && <section className="card product-detail-history"><SectionTitle title="گردش موجودی" action={<span className="product-detail-history-count">{movements.data ? "نمایش " + faNumber(movementRows.length) + " مورد" : ""}</span>} />
+        {movements.isPending ? <LoadingBlock /> : movements.isError ? <InlineError error={movements.error} retry={() => void movements.refetch()} /> : movementRows.length ? <div className="product-movement-list">{movementRows.map((row) => {
+          const quantity = Number(row.quantityDelta);
+          const movementClass = quantity > 0 ? "is-increase" : quantity < 0 ? "is-decrease" : "is-neutral";
+          return <article className="product-movement-row" key={row.id}><span className={`product-movement-direction ${movementClass}`}>{quantity > 0 ? "+" : quantity < 0 ? "−" : "•"}</span><div className="product-movement-copy"><strong>{productMovementLabel(row.sourceType)}</strong><small>{jalaliDate(row.date)} · {faNumber(row.quantityDelta)} {item.unit.labelFa}</small></div><div className="product-movement-value"><strong>{money(row.valueDeltaRial, currency)}</strong><small>تغییر ارزش موجودی</small></div></article>;
+        })}</div> : <EmptyState icon={Boxes} title="گردشی ثبت نشده" text="خرید، فروش و شمارش موجودی در این بخش دیده می‌شوند." />}
+        <LoadMoreButton hasMore={Boolean(movements.hasNextPage)} isLoading={movements.isFetchingNextPage} onClick={() => void movements.fetchNextPage()} />
+      </section>}
     </div>}
   </PageHeader>;
+}
+
+function ProductDetailGallery({ images, name }: { images: ProductDetailImage[]; name: string }) {
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [failedCount, setFailedCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const objectUrls: string[] = [];
+    setUrls({}); setActiveIndex(0); setFailedCount(0); setLoading(images.length > 0);
+    if (!images.length) return () => { active = false; };
+    void Promise.all(images.map(async (image) => {
+      try {
+        const url = URL.createObjectURL(await downloadFile(image.path));
+        if (!active) { URL.revokeObjectURL(url); return null; }
+        objectUrls.push(url);
+        return [image.id, url] as const;
+      } catch { return null; }
+    })).then((loaded) => {
+      if (!active) return;
+      const available = loaded.filter((entry): entry is readonly [string, string] => entry !== null);
+      setUrls(Object.fromEntries(available)); setFailedCount(images.length - available.length); setLoading(false);
+    });
+    return () => { active = false; objectUrls.forEach((url) => URL.revokeObjectURL(url)); };
+  }, [images]);
+
+  if (!images.length) return <div className="product-detail-gallery-empty"><span><ImagePlus size={29} /></span><strong>تصویری برای این کالا ثبت نشده</strong><small>تصویر اصلی و گالری در فرم افزودن یا ویرایش کالا تنظیم می‌شوند.</small></div>;
+  const index = activeIndex % images.length;
+  const activeImage = images[index];
+  const step = (change: number) => setActiveIndex((current) => (current + change + images.length) % images.length);
+  return <div className="product-detail-gallery">
+    <div className="product-detail-gallery-stage">
+      {urls[activeImage.id] ? <img src={urls[activeImage.id]} alt={`${name}، تصویر ${index + 1}`} /> : <div className="product-detail-gallery-placeholder"><ImagePlus size={28} /><span>{loading ? "در حال بارگیری تصویر…" : "این تصویر بارگیری نشد"}</span></div>}
+      <span className="product-detail-gallery-count">{faNumber(index + 1)} از {faNumber(images.length)}</span>
+      {images.length > 1 && <><button type="button" className="product-gallery-nav is-next" aria-label="تصویر بعدی" onClick={() => step(1)}><ChevronLeft size={18} /></button><button type="button" className="product-gallery-nav is-previous" aria-label="تصویر قبلی" onClick={() => step(-1)}><ChevronRight size={18} /></button></>}
+    </div>
+    {images.length > 1 && <div className="product-detail-gallery-thumbnails" aria-label="انتخاب تصویر">{images.map((image, imageIndex) => <button type="button" className={imageIndex === index ? "active" : ""} key={image.id} onClick={() => setActiveIndex(imageIndex)} aria-label={`نمایش تصویر ${imageIndex + 1}`} aria-pressed={imageIndex === index}>{urls[image.id] ? <img src={urls[image.id]} alt="" /> : <ImagePlus size={15} />}</button>)}</div>}
+    {failedCount > 0 && !loading && <small className="product-detail-gallery-warning">بارگیری {faNumber(failedCount)} تصویر ناموفق بود.</small>}
+  </div>;
 }
 
 export function InvoiceDetailsPage({ currency, branchName }: { currency: MoneyCurrency; branchName: string }) {
@@ -276,7 +345,8 @@ function displayToRial(value: string, currency: MoneyCurrency) {
 function rialToDisplay(value: string, currency: MoneyCurrency) { const amount = BigInt(value || "0"); return currency === "IRT" ? `${amount / 10n}.${amount % 10n}` : amount.toString(); }
 function partyTypeLabel(value: string) { return ({ CUSTOMER: "مشتری", SUPPLIER: "تأمین‌کننده", BOTH: "مشتری و تأمین‌کننده" } as Record<string, string>)[value] ?? value; }
 function statusLabel(value: string) { return ({ POSTED: "ثبت‌شده", DRAFT: "پیش‌نویس", VOIDED: "باطل‌شده" } as Record<string, string>)[value] ?? value; }
-function sourceLabel(value: string) { return ({ SALE: "فروش", PURCHASE: "خرید", EXPENSE: "هزینه", STOCK_COUNT: "شمارش موجودی", RECEIPT: "دریافت وجه", PAYMENT: "پرداخت", TRANSFER: "انتقال" } as Record<string, string>)[value] ?? value; }
+function sourceLabel(value: string) { return ({ SALE: "فروش", PURCHASE: "خرید", EXPENSE: "هزینه", STOCK_COUNT: "شمارش موجودی", PRODUCT_OPENING: "موجودی اولیه", RECEIPT: "دریافت وجه", PAYMENT: "پرداخت", TRANSFER: "انتقال" } as Record<string, string>)[value] ?? value; }
+function productMovementLabel(value: string) { return sourceLabel(value); }
 function cashKindLabel(value: string) { return ({ RECEIPT: "دریافت وجه", PAYMENT: "پرداخت", TRANSFER: "انتقال" } as Record<string, string>)[value] ?? value; }
 function methodLabel(value: string) { return ({ CASH: "نقدی", POS: "کارت‌خوان", BANK: "بانکی", OTHER: "سایر" } as Record<string, string>)[value] ?? value; }
 function accountKindLabel(value: string) { return ({ CASH: "صندوق", BANK: "بانک", POS: "کارت‌خوان", OTHER: "سایر" } as Record<string, string>)[value] ?? value; }
