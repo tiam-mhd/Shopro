@@ -9,7 +9,8 @@ import Tesseract from "tesseract.js";
 import { normalizePersianSearch, toAsciiDigits } from "@shopro/contracts";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AppRequest, AuthenticatedUser } from "../common/request-context.js";
-import { extractSalesInvoice, type RecognizedOcrLine, type SalesOcrCurrency, type SalesOcrLine } from "./sales-ocr-local.js";
+import { extractSalesInvoice, type RecognizedOcrLine, type RecognizedOcrWord, type SalesOcrCurrency, type SalesOcrLine } from "./sales-ocr-local.js";
+import { deskewInvoiceImage } from "./sales-ocr-image.js";
 
 export const MAX_SALES_OCR_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_SALES_OCR_IMAGE_PIXELS = 40_000_000;
@@ -20,7 +21,7 @@ const require = createRequire(import.meta.url);
 
 type OcrImageFile = { buffer?: Uint8Array; size?: number };
 type OcrProfile = { psm: Tesseract.PSM; image: Buffer };
-type OcrCandidate = { lines: RecognizedOcrLine[]; confidence: number; score: number };
+type OcrCandidate = { lines: RecognizedOcrLine[]; confidence: number; score: number; parsed: ReturnType<typeof extractSalesInvoice> };
 
 @Injectable()
 export class SalesOcrService implements OnModuleDestroy {
@@ -45,6 +46,7 @@ export class SalesOcrService implements OnModuleDestroy {
 
     const source = Buffer.from(file.buffer);
     let prepared: { base: Buffer; highContrast: Buffer };
+    let deskewCorrectionDegrees = 0;
     try {
       const sharpOptions = { limitInputPixels: MAX_SALES_OCR_IMAGE_PIXELS };
       const metadata = await sharp(source, sharpOptions).metadata();
@@ -52,7 +54,9 @@ export class SalesOcrService implements OnModuleDestroy {
         throw new BadRequestException("فایل انتخاب‌شده تصویر قابل‌خواندن نیست. تصویر JPG، PNG یا WebP انتخاب کنید.");
       }
       if ((metadata.pages ?? 1) > 1) throw new BadRequestException("تصویر متحرک یا چندصفحه‌ای را به شکل یک عکس ثابت بارگذاری کنید.");
-      const base = await sharp(source, sharpOptions)
+      const deskewed = await deskewInvoiceImage(source, MAX_SALES_OCR_IMAGE_PIXELS);
+      deskewCorrectionDegrees = deskewed.correctionDegrees;
+      const base = await sharp(deskewed.image, sharpOptions)
         .rotate()
         .resize({ width: 2400, height: 3600, fit: "inside", withoutEnlargement: false })
         .flatten({ background: { r: 255, g: 255, b: 255 } })
@@ -101,6 +105,7 @@ export class SalesOcrService implements OnModuleDestroy {
         customerMatchCount: customerMatches.length,
         recognizedLineCount: parsed.recognizedLineCount,
         confidence: parsed.confidence,
+        deskewCorrectionDegrees,
       },
     } });
     return { ...parsed, customerMatches, items };
@@ -125,8 +130,10 @@ export class SalesOcrService implements OnModuleDestroy {
     try {
       const worker = await this.getWorker();
       const profiles: OcrProfile[] = [
+        { image: images.base, psm: Tesseract.PSM.AUTO },
         { image: images.base, psm: Tesseract.PSM.SINGLE_BLOCK },
         { image: images.base, psm: Tesseract.PSM.SPARSE_TEXT },
+        { image: images.highContrast, psm: Tesseract.PSM.AUTO },
         { image: images.highContrast, psm: Tesseract.PSM.SINGLE_BLOCK },
       ];
       const candidates: OcrCandidate[] = [];
@@ -138,15 +145,17 @@ export class SalesOcrService implements OnModuleDestroy {
           lines.push(...result.data.text.split(/\r?\n/).map((text) => ({ text, confidence: result.data.confidence })));
         }
         const joined = lines.map((line) => line.text).join("\n").slice(0, MAX_RECOGNIZED_CHARACTERS);
+        const parsed = extractSalesInvoice(lines, currency);
         candidates.push({
           lines,
           confidence: Math.max(0, Math.min(100, result.data.confidence)),
-          score: this.scoreCandidate(joined, result.data.confidence),
+          score: this.scoreCandidate(joined, result.data.confidence, parsed),
+          parsed,
         });
       }
       const chosen = candidates.sort((a, b) => b.score - a.score)[0];
       if (!chosen) throw new BadGatewayException("متنی از تصویر خوانده نشد.");
-      return extractSalesInvoice(chosen.lines, currency);
+      return chosen.parsed;
     } finally {
       this.activeRequests--;
       release();
@@ -196,19 +205,40 @@ export class SalesOcrService implements OnModuleDestroy {
       for (const paragraph of block.paragraphs ?? []) {
         for (const line of paragraph.lines ?? []) {
           const text = line.text?.trim() || line.words.map((word) => word.text).join(" ").trim();
-          if (text) result.push({ text, confidence: Number.isFinite(line.confidence) ? line.confidence : 0 });
+          const words: RecognizedOcrWord[] = line.words.map((word) => ({
+            text: word.text,
+            confidence: Number.isFinite(word.confidence) ? word.confidence : 0,
+            x0: word.bbox.x0,
+            y0: word.bbox.y0,
+            x1: word.bbox.x1,
+            y1: word.bbox.y1,
+          }));
+          if (text) result.push({
+            text,
+            confidence: Number.isFinite(line.confidence) ? line.confidence : 0,
+            bbox: { x0: line.bbox.x0, y0: line.bbox.y0, x1: line.bbox.x1, y1: line.bbox.y1 },
+            words,
+          });
         }
       }
     }
     return result;
   }
 
-  private scoreCandidate(text: string, confidence: number) {
+  private scoreCandidate(text: string, confidence: number, parsed: ReturnType<typeof extractSalesInvoice>) {
     const normalized = normalizePersianSearch(text).toLocaleLowerCase("fa-IR");
     const signals = ["تاریخ", "فاکتور", "مشتری", "خریدار", "مبلغ", "جمع", "تعداد", "قیمت", "total", "date", "item", "qty"];
     const signalCount = signals.reduce((count, signal) => count + Number(normalized.includes(signal)), 0);
     const numberCount = (toAsciiDigits(text).match(/\d+/g) ?? []).length;
-    return confidence + Math.min(text.replace(/\s/g, "").length, 1_500) / 100 + signalCount * 1.5 + Math.min(numberCount, 40) * 0.15;
+    const extractionSignal = Number(Boolean(parsed.extraction.customer)) * 8
+      + Number(Boolean(parsed.extraction.invoiceNumber)) * 3
+      + Number(Boolean(parsed.extraction.invoiceDate)) * 2
+      + Number(Boolean(parsed.extraction.totals.totalRial || parsed.extraction.totals.sourceTotal)) * 8
+      + Number(Boolean(parsed.extraction.totals.subtotalRial || parsed.extraction.totals.sourceSubtotal)) * 2
+      + Number(Boolean(parsed.extraction.paidAmountRial || parsed.extraction.paidAmountSource)) * 2
+      + Math.min(parsed.extraction.items.length, 20) * 5
+      + parsed.extraction.items.filter((item) => item.quantity && (item.unitPriceRial || item.sourceUnitPrice)).length * 2;
+    return confidence * 0.65 + Math.min(text.replace(/\s/g, "").length, 1_500) / 100 + signalCount * 1.5 + Math.min(numberCount, 40) * 0.15 + extractionSignal;
   }
 
   private assertCanCreateSale(user: AuthenticatedUser) {

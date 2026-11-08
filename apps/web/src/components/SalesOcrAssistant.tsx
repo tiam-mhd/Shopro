@@ -8,14 +8,15 @@ import { Modal } from "./Modal.js";
 import { CameraControls, useCameraSession } from "./CameraSession.js";
 
 export type SalesOcrCustomer = { name: string | null; phone: string | null; email: string | null; nationalId: string | null; address: string | null };
-export type SalesOcrLine = { name: string | null; sku: string | null; barcode: string | null; kind: "STOCK" | "SERVICE" | null; quantity: string | null; unit: string | null; unitPriceRial: string | null; discountRial: string | null; taxRateBasisPoints: number | null; lineTotalRial: string | null; confidence: number };
+export type SalesOcrSourceAmount = { value: string; currency: string };
+export type SalesOcrLine = { name: string | null; sku: string | null; barcode: string | null; kind: "STOCK" | "SERVICE" | null; quantity: string | null; unit: string | null; unitPriceRial: string | null; sourceUnitPrice?: SalesOcrSourceAmount | null; discountRial: string | null; sourceDiscount?: SalesOcrSourceAmount | null; taxRateBasisPoints: number | null; lineTotalRial: string | null; sourceLineTotal?: SalesOcrSourceAmount | null; confidence: number };
 export type SalesOcrCatalogMatch = { id: string; name: string; sku: string | null; barcode: string | null; kind: "STOCK" | "SERVICE"; unit: { id: string; code: string; labelFa: string; precision: number }; salePriceRial: string; taxRateBasisPoints: number; trackInventory: boolean; matchedBy: "barcode" | "sku" | "name" };
 export type SalesOcrPartyMatch = { id: string; name: string; phone: string | null; matchedBy: "phone" | "name" };
 export type SalesOcrAnalysis = {
   documentText: string;
   confidence: number;
   recognizedLineCount: number;
-  extraction: { customer: SalesOcrCustomer | null; invoiceDate: string | null; invoiceNumber: string | null; note: string | null; paidAmountRial: string | null; paymentMethod: "CASH" | "POS" | "BANK" | "OTHER" | null; paymentAccountName: string | null; totals: { subtotalRial: string | null; discountRial: string | null; taxRial: string | null; totalRial: string | null }; items: SalesOcrLine[]; warnings: string[] };
+  extraction: { customer: SalesOcrCustomer | null; invoiceDate: string | null; invoiceNumber: string | null; note: string | null; paidAmountRial: string | null; sourceCurrency?: string | null; paidAmountSource?: SalesOcrSourceAmount | null; paymentMethod: "CASH" | "POS" | "BANK" | "OTHER" | null; paymentAccountName: string | null; totals: { subtotalRial: string | null; sourceSubtotal?: SalesOcrSourceAmount | null; discountRial: string | null; sourceDiscount?: SalesOcrSourceAmount | null; taxRial: string | null; sourceTax?: SalesOcrSourceAmount | null; totalRial: string | null; sourceTotal?: SalesOcrSourceAmount | null }; items: SalesOcrLine[]; warnings: string[] };
   customerMatches: SalesOcrPartyMatch[];
   items: Array<SalesOcrLine & { matches: SalesOcrCatalogMatch[] }>;
 };
@@ -109,7 +110,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
         <section className="sales-ocr-review-section">
           <div className="sales-ocr-section-title"><strong>اقلام فاکتور</strong><span>{faNumber(analysis.items.length)} ردیف</span></div>
           {analysis.items.length ? <div className="sales-ocr-item-list">{analysis.items.map((item, index) => <article className="sales-ocr-item" key={`${item.name ?? "item"}-${index}`}>
-            <div className="sales-ocr-item-main"><strong>{item.name || `ردیف نامشخص ${faNumber(index + 1)}`}</strong><small>{item.quantity ? `تعداد ${item.quantity}${item.unit ? ` ${item.unit}` : ""}` : "تعداد خوانده نشد"}{item.unitPriceRial ? ` · واحد ${money(item.unitPriceRial, currency)}` : " · قیمت واحد خوانده نشد"}{item.lineTotalRial ? ` · جمع ${money(item.lineTotalRial, currency)}` : ""}</small></div>
+            <div className="sales-ocr-item-main"><strong>{item.name || `ردیف نامشخص ${faNumber(index + 1)}`}</strong><small>{item.quantity ? `تعداد ${item.quantity}${item.unit ? ` ${item.unit}` : ""}` : "تعداد خوانده نشد"}{item.unitPriceRial ? ` · واحد ${money(item.unitPriceRial, currency)}` : " · قیمت واحد خوانده نشد"}{item.lineTotalRial ? ` · جمع ${money(item.lineTotalRial, currency)}` : ""}</small>{(item.sourceUnitPrice || item.sourceLineTotal) && <small className="sales-ocr-source-amount">مبلغ درج‌شده: {item.sourceUnitPrice && <bdi dir="ltr">{sourceAmountLabel(item.sourceUnitPrice)}</bdi>}{item.sourceUnitPrice && item.sourceLineTotal ? " · " : ""}{item.sourceLineTotal && <bdi dir="ltr">جمع ردیف {sourceAmountLabel(item.sourceLineTotal)}</bdi>}</small>}</div>
             <span className={`sales-ocr-confidence ${item.confidence >= 0.8 ? "high" : ""}`}>اطمینان {faNumber(Math.round(item.confidence * 100))}٪</span>
             <label className="field-label">انتخاب کالا یا خدمت
               <select className="field-input" value={itemIds[index] ?? ""} onChange={(event) => setItemIds((current) => current.map((id, position) => position === index ? event.target.value : id))}>
@@ -120,6 +121,7 @@ export function SalesOcrImportModal({ open, currency, onClose, onApply }: { open
           </article>)}</div> : <p className="muted">ردیف کالایی پیدا نشد؛ اطلاعات دیگر را می‌توانید به فرم منتقل کنید.</p>}
         </section>
         <section className="sales-ocr-totals"><strong>مبالغ و پرداخت خوانده‌شده</strong><span>جمع اقلام: {formatMaybe(analysis.extraction.totals.subtotalRial, currency)}</span><span>تخفیف: {formatMaybe(analysis.extraction.totals.discountRial, currency)}</span><span>مالیات: {formatMaybe(analysis.extraction.totals.taxRial, currency)}</span><span>جمع نهایی: {formatMaybe(analysis.extraction.totals.totalRial, currency)}</span><span>دریافتی: {formatMaybe(analysis.extraction.paidAmountRial, currency)}</span>{analysis.extraction.paymentMethod && <span>روش: {paymentMethodLabel(analysis.extraction.paymentMethod)}</span>}{analysis.extraction.paymentAccountName && <span>حساب: {analysis.extraction.paymentAccountName}</span>}{analysis.extraction.invoiceDate && <span>تاریخ: {analysis.extraction.invoiceDate}</span>}</section>
+        {(analysis.extraction.totals.sourceSubtotal || analysis.extraction.totals.sourceDiscount || analysis.extraction.totals.sourceTax || analysis.extraction.totals.sourceTotal || analysis.extraction.paidAmountSource) && <div className="sales-ocr-source-amounts"><strong>مبالغ اصلی روی فاکتور</strong>{analysis.extraction.totals.sourceSubtotal && <span>جمع اقلام: <bdi dir="ltr">{sourceAmountLabel(analysis.extraction.totals.sourceSubtotal)}</bdi></span>}{analysis.extraction.totals.sourceDiscount && <span>تخفیف: <bdi dir="ltr">{sourceAmountLabel(analysis.extraction.totals.sourceDiscount)}</bdi></span>}{analysis.extraction.totals.sourceTax && <span>مالیات: <bdi dir="ltr">{sourceAmountLabel(analysis.extraction.totals.sourceTax)}</bdi></span>}{analysis.extraction.totals.sourceTotal && <span>جمع نهایی: <bdi dir="ltr">{sourceAmountLabel(analysis.extraction.totals.sourceTotal)}</bdi></span>}{analysis.extraction.paidAmountSource && <span>دریافتی: <bdi dir="ltr">{sourceAmountLabel(analysis.extraction.paidAmountSource)}</bdi></span>}</div>}
         {analysis.extraction.warnings.length > 0 && <div className="sales-ocr-warnings"><AlertTriangle size={17} /><ul>{analysis.extraction.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
         <details className="sales-ocr-source-text"><summary>متن خام خوانده‌شده از تصویر</summary><pre dir="auto">{analysis.documentText || "متنی از تصویر تشخیص داده نشد."}</pre></details>
         {error && <InlineError error={error} />}
@@ -193,6 +195,10 @@ export function SalesOcrCatalogItemModal({ open, line, currency, onClose, onCrea
   </Modal>;
 }
 
+function sourceAmountLabel(value: SalesOcrSourceAmount) {
+  const unit = value.currency === "IRT" ? "تومان" : value.currency === "IRR" ? "ریال" : value.currency;
+  return `${value.value} ${unit}`;
+}
 function formatMaybe(value: string | null, currency: Currency) { return value === null ? "—" : money(value, currency); }
 function paymentMethodLabel(value: "CASH" | "POS" | "BANK" | "OTHER") { return ({ CASH: "نقدی", POS: "کارت‌خوان", BANK: "واریز بانکی", OTHER: "سایر" })[value]; }
 function rialToDisplay(value: string, currency: Currency) { const amount = BigInt(value); return currency === "IRT" ? `${amount / 10n}${amount % 10n ? `.${amount % 10n}` : ""}` : amount.toString(); }

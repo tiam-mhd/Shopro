@@ -63,12 +63,14 @@ test("does not treat English decimal receipts as amounts in the business currenc
   assert.equal(result.extraction.paidAmountRial, null);
   assert.equal(result.extraction.items.length, 1);
   assert.equal(result.extraction.items[0].name, "ENGINE OIL");
-  assert.equal(result.extraction.items[0].quantity, null);
+  assert.equal(result.extraction.items[0].quantity, "1");
   assert.equal(result.extraction.items[0].lineTotalRial, null);
+  assert.deepEqual(result.extraction.items[0].sourceUnitPrice, { value: "17.00", currency: "UNKNOWN" });
+  assert.deepEqual(result.extraction.items[0].sourceLineTotal, { value: "17.00", currency: "UNKNOWN" });
   assert.match(result.extraction.warnings.join(" "), /واحد پول این تصویر/);
 });
 
-test("keeps a clear item name from a foreign-currency row while leaving its money and quantity blank", () => {
+test("keeps clear foreign-currency quantities and source prices without converting them to Rials", () => {
   const result = extractSalesInvoice([
     line("Description Qty Price Amount"),
     line("Socks 1 RM 9.50 RM 9.50"),
@@ -77,9 +79,11 @@ test("keeps a clear item name from a foreign-currency row while leaving its mone
   ], "IRT");
   assert.equal(result.extraction.items.length, 1);
   assert.equal(result.extraction.items[0].name, "Socks");
-  assert.equal(result.extraction.items[0].quantity, null);
+  assert.equal(result.extraction.items[0].quantity, "1");
   assert.equal(result.extraction.items[0].unitPriceRial, null);
   assert.equal(result.extraction.items[0].lineTotalRial, null);
+  assert.deepEqual(result.extraction.items[0].sourceUnitPrice, { value: "9.50", currency: "MYR" });
+  assert.deepEqual(result.extraction.items[0].sourceLineTotal, { value: "9.50", currency: "MYR" });
 });
 
 test("pairs split item descriptions with code-led rows without importing foreign amounts", () => {
