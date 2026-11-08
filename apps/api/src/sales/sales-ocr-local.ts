@@ -136,6 +136,59 @@ function findAmount(lines: RecognizedOcrLine[], labels: RegExp[], currency: Sale
   return null;
 }
 
+function persianWordsAmount(value: string) {
+  const words = folded(value)
+    .replace(/(?:ریال|ریالی|تومان|تومن|به\s*حروف|فقط)/g, " ")
+    .replace(/[^\p{L}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word && word !== "و");
+  if (!words.length || words.length > 40) return null;
+
+  const values = new Map<string, bigint>([
+    ["صفر", 0n], ["یک", 1n], ["دو", 2n], ["سه", 3n], ["چهار", 4n], ["پنج", 5n], ["شش", 6n], ["هفت", 7n], ["هشت", 8n], ["نه", 9n],
+    ["ده", 10n], ["یازده", 11n], ["دوازده", 12n], ["سیزده", 13n], ["چهارده", 14n], ["پانزده", 15n], ["شانزده", 16n], ["هفده", 17n], ["هجده", 18n], ["نوزده", 19n],
+    ["بیست", 20n], ["سی", 30n], ["چهل", 40n], ["پنجاه", 50n], ["شصت", 60n], ["هفتاد", 70n], ["هشتاد", 80n], ["نود", 90n],
+    ["صد", 100n], ["یکصد", 100n], ["دویست", 200n], ["سیصد", 300n], ["چهارصد", 400n], ["پانصد", 500n], ["ششصد", 600n], ["هفتصد", 700n], ["هشتصد", 800n], ["نهصد", 900n],
+  ]);
+  const scales = new Map<string, bigint>([["هزار", 1_000n], ["میلیون", 1_000_000n], ["میلیارد", 1_000_000_000n], ["تریلیون", 1_000_000_000_000n]]);
+  let group = 0n;
+  let total = 0n;
+  for (const word of words) {
+    const scale = scales.get(word);
+    if (scale) {
+      total += (group || 1n) * scale;
+      group = 0n;
+      continue;
+    }
+    const amount = values.get(word);
+    if (amount === undefined) return null;
+    group += amount;
+  }
+  const result = total + group;
+  return result > 0n && result.toString().length <= 20 ? result : null;
+}
+
+function findPersianWordsTotal(lines: RecognizedOcrLine[], currency: SalesOcrCurrency) {
+  const label = /(?:کل\s*)?مبلغ\s*(?:به\s*)?حروف\s*[:：]?/iu;
+  for (const line of lines) {
+    if (line.confidence < 28) continue;
+    const text = clean(line.text);
+    const match = label.exec(text);
+    if (!match) continue;
+    const tail = text.slice((match.index ?? 0) + match[0].length);
+    const words = persianWordsAmount(tail);
+    if (words === null) continue;
+    const normalizedTail = folded(tail);
+    const hasToman = /تومان|تومن/.test(normalizedTail);
+    const hasRial = /ریال/.test(normalizedTail);
+    if (currency === "UNSUPPORTED" && !hasToman && !hasRial) continue;
+    const toman = hasToman || (!hasRial && currency === "IRT");
+    const rial = toman ? words * 10n : words;
+    if (rial.toString().length <= 20) return rial.toString();
+  }
+  return null;
+}
+
 function persianToGregorian(year: number, month: number, day: number) {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const start = new Date(Date.UTC(year + 621, 0, 1, 12));
@@ -196,9 +249,11 @@ function extractCustomer(lines: RecognizedOcrLine[]) {
     if (name && !/\d/.test(name) && !/^(?:اول|اولین|دوم|سوم|second|third|name|نام|خریدار|مشتری|نامشخص|ناشناس)$/iu.test(name)) break;
     name = null;
   }
-  const contextLines = index < 0 ? [] : [lines[index]].filter((line) => !/فروشنده|seller/i.test(folded(line.text)));
+  const contextLines = index < 0 ? [] : lines.slice(index, index + 4).filter((line) =>
+    !/فروشنده|seller/i.test(folded(line.text)) && !isTableHeader(line.text) && !isInvoiceEnd(line.text),
+  );
   const contextText = contextLines.map((line) => line.text).join(" ");
-  const phoneCandidate = contextText.match(/(?:موبایل|همراه|تلفن|phone|mobile)\s*[:：\-]?\s*((?:\+?98|0098|0)?\s*9(?:[\s-]*\d){9})/iu)?.[1] ?? null;
+  const phoneCandidate = contextText.match(/(?:شماره\s*تماس|موبایل|همراه|تلفن|phone|mobile)\s*[:：\-]?\s*((?:\+?98|0098|0)?\s*9(?:[\s-]*\d){9})/iu)?.[1] ?? null;
   let phone = phoneCandidate ? toAsciiDigits(phoneCandidate).replace(/\D/g, "") : null;
   if (phone?.startsWith("0098")) phone = `0${phone.slice(4)}`;
   else if (phone?.startsWith("98")) phone = `0${phone.slice(2)}`;
@@ -246,12 +301,16 @@ function itemKind(text: string): "STOCK" | "SERVICE" | null {
 
 function isTableHeader(text: string) {
   const value = folded(text);
-  return /شرح|نام\s*کالا|ردیف|تعداد|qty|description|item/.test(value)
-    && /مبلغ|قیمت|فی|واحد|amount|price|total/.test(value);
+  return /شرح|نام\s*(?:کالا|محصول)|ردیف|تعداد|qty|description|item/.test(value)
+    && /مبلغ|قیمت|فی|واحد|amount|price|total|discount|final\s*p?rice|finalpice/.test(value);
 }
 
 function isTotalOrFooter(text: string) {
   return /جمع|مجموع|تخفیف|مالیات|ارزش\s*افزوده|مبلغ\s*(?:کل|نهایی|قابل)|قابل\s*پرداخت|پرداخت\s*شده|دریافتی|مانده|total|subtotal|discount|tax|cash|change|rounding|page|صفحه|امضا|توضیحات|کد\s*پستی|شناسه\s*ملی|شماره\s*(?:فاکتور|سند|رسید|اقتصادی)|تلفن|موبایل|نشانی|آدرس|فروشنده|خریدار|مشتری|تاریخ|date|invoice|receipt|فکس|ایمیل|وب\s*سایت/.test(folded(text));
+}
+
+function isInvoiceEnd(text: string) {
+  return /(?:جمع\s*(?:کل|فاکتور|اقلام)|مجموع\s*(?:کل|فاکتور)|کل\s*مبلغ|مبلغ\s*(?:کل|نهایی|قابل)|قیمت\s*کل|قیمت\s*نهایی|قابل\s*پرداخت|به\s*حروف|grand\s*total|total(?:\s*(?:sales|amount|incl\.?|due))?\s*[:：]|subtotal|amount\s*due|cash\s*[:：]|change\s*[:：]|مانده\s*[:：])/i.test(folded(text));
 }
 
 function itemNameFromLine(text: string) {
@@ -260,6 +319,38 @@ function itemNameFromLine(text: string) {
     .replace(/\b(?:RM|MYR|USD|EUR|GBP|CAD|AUD|IDR|PHP|SGD)\b/giu, " ")
       .replace(/(?:شرح|ردیف|تعداد|قیمت|مبلغ|واحد|qty|amount|price|item|description)/giu, " ")
     .replace(/[|:：#=+*<>()[\]{}%٪]/g, " "), 160);
+}
+
+function quantityFromDelimitedCell(value: string | undefined) {
+  if (!value || /[\p{L}%٪]/u.test(value)) return null;
+  const first = tokensOf(value)[0]?.value;
+  if (!first || !/^\d{1,6}$/.test(first)) return null;
+  const parsed = quantityValue(first);
+  return parsed && Number(parsed) > 0 && Number(parsed) <= 100_000 ? parsed : null;
+}
+
+function exactMoneyCell(value: string | undefined, context: string, currency: SalesOcrCurrency) {
+  if (!value || /[\p{L}%٪]/u.test(value)) return null;
+  const tokens = tokensOf(value);
+  return tokens.length === 1 ? rialAmount(tokens[0].value, context, currency) : null;
+}
+
+function delimitedItem(text: string, currency: SalesOcrCurrency) {
+  const cells = clean(text).split(/[|¦│]/).map((cell) => cell.trim()).filter(Boolean);
+  if (cells.length < 2) return null;
+  const nameIndex = cells.findIndex((cell) => {
+    const name = itemNameFromLine(cell);
+    const letters = name?.match(/[\p{L}]/gu)?.length ?? 0;
+    return letters >= 4 && !isTableHeader(cell) && !isTotalOrFooter(cell);
+  });
+  if (nameIndex < 0) return null;
+  const name = itemNameFromLine(cells[nameIndex]);
+  const later = cells.slice(nameIndex + 1);
+  if (!later.some((cell) => tokensOf(cell).length > 0)) return null;
+  const quantity = quantityFromDelimitedCell(later[0]);
+  const noisy = cells.length < 4 || later.some((cell) => /[\p{L}\[\]{}*]/u.test(cell));
+  const unitPrice = quantity && !noisy ? exactMoneyCell(later[1], text, currency) : null;
+  return name ? { name, quantity, unitPrice, noisy } : null;
 }
 
 function quantityValue(raw: string | undefined) {
@@ -312,15 +403,16 @@ function extractItems(lines: RecognizedOcrLine[], currency: SalesOcrCurrency): S
   let tableSeen = headerIndex >= 0 || invoiceStart >= 0;
   const usedDescriptionLines = new Set<number>();
   for (let index = start; index < lines.length && items.length < 100; index++) {
+    if (usedDescriptionLines.has(index)) continue;
     const line = lines[index];
     const text = clean(line.text);
     if (isTableHeader(text)) { tableSeen = true; continue; }
-    if (tableSeen && isTotalOrFooter(text)) break;
-    if (!tableSeen && isTotalOrFooter(text)) continue;
+    if (tableSeen && (isInvoiceEnd(text) || /(?:توضیحات|امضا(?:ی)?|seller|فروشنده|خریدار|buyer)/iu.test(text)) && !isTableHeader(text)) break;
+    if (isTotalOrFooter(text)) continue;
     if (line.confidence < 40) continue;
     const numbers = tokensOf(text).filter((token) => !DATE_TOKEN.test(token.value) && amountInteger(token.value) !== null);
-    if (numbers.length < 3) continue;
-    let name = itemNameFromLine(text);
+    const delimited = tableSeen ? delimitedItem(text, currency) : null;
+    let name = delimited?.name ?? itemNameFromLine(text);
     let descriptionIndex = -1;
     if (!name || name.replace(/\s/g, "").length < 2 || !/[\p{L}]/u.test(name)) {
       if (currency !== "UNSUPPORTED") continue;
@@ -329,6 +421,12 @@ function extractItems(lines: RecognizedOcrLine[], currency: SalesOcrCurrency): S
       if (!description) continue;
       name = description.name;
       descriptionIndex = description.index;
+    }
+    if (numbers.length < 3) {
+      if (tableSeen && delimited?.name && (delimited.noisy || delimited.quantity) && line.confidence >= 40) {
+        items.push({ name, sku: null, barcode: null, kind: itemKind(name), quantity: delimited.quantity, unit: itemUnit(text), unitPriceRial: delimited.unitPrice, discountRial: null, taxRateBasisPoints: taxRate(text), lineTotalRial: null, confidence: Number(Math.min(0.75, line.confidence / 100 * 0.75).toFixed(2)) });
+      }
+      continue;
     }
     let verifiedRow: { quantity: string; unitPrice: string; lineTotal: string } | null = null;
     for (let numberIndex = numbers.length - 3; numberIndex >= 0; numberIndex--) {
@@ -345,11 +443,11 @@ function extractItems(lines: RecognizedOcrLine[], currency: SalesOcrCurrency): S
     const code = text.match(/(?:کد\s*کالا|sku)\s*[:：#-]?\s*([A-Za-z0-9-]{2,48})/iu)?.[1] ?? null;
     const barcode = text.match(/(?:بارکد|barcode)\s*[:：#-]?\s*(\d{8,14})/iu)?.[1] ?? null;
     if (!verifiedRow) {
-      if (currency === "UNSUPPORTED" && tableSeen && numbers.length >= 2 && line.confidence >= 60 && name.replace(/\s/g, "").length >= 4) {
+      if (tableSeen && line.confidence >= 40 && name.replace(/\s/g, "").length >= 4 && (delimited?.noisy || currency === "UNSUPPORTED")) {
         const quantity = hasQuantityColumn && /^\s*\d{4,}\b/.test(text) ? quantityValue(numbers[1]?.value) : null;
         items.push({
-          name, sku: code, barcode: barcode ? toAsciiDigits(barcode) : null, kind: itemKind(text), quantity,
-          unit: itemUnit(text), unitPriceRial: null, discountRial: null, taxRateBasisPoints: taxRate(text),
+          name, sku: code, barcode: barcode ? toAsciiDigits(barcode) : null, kind: itemKind(name), quantity: delimited?.quantity ?? quantity,
+          unit: itemUnit(text), unitPriceRial: delimited?.noisy ? null : delimited?.unitPrice ?? null, discountRial: null, taxRateBasisPoints: taxRate(text),
           lineTotalRial: null, confidence: Number(Math.min(0.75, Math.min(line.confidence, lines[descriptionIndex]?.confidence ?? line.confidence) / 100 * 0.75).toFixed(2)),
         });
         if (descriptionIndex >= 0) usedDescriptionLines.add(descriptionIndex);
@@ -398,10 +496,17 @@ export function extractSalesInvoice(linesInput: RecognizedOcrLine[], displayCurr
   const foreignCurrencyCode = /(?:\b(?:rm|myr|usd|eur|gbp|cad|aud|idr|php|sgd)\b\s*(?:[:\-]?\s*)\d|\d\s*\b(?:rm|myr|usd|eur|gbp|cad|aud|idr|php|sgd)\b|\bcurrency\s*[:=]?\s*(?:rm|myr|usd|eur|gbp|cad|aud|idr|php|sgd)\b)/i.test(fullText);
   const foreignCurrencySymbol = /(?:[$€£¥]\s*\d|\d\s*[$€£¥])/.test(fullText);
   const unsupportedCurrency = foreignCurrencyCode || foreignCurrencySymbol || (!hasPersianUnit && englishInvoice && hasEnglishDecimalAmounts && englishLetters > persianLetters);
-  const effectiveCurrency = unsupportedCurrency ? "UNSUPPORTED" : globalToman && !globalRial ? "IRT" : displayCurrency;
+  const effectiveCurrency = unsupportedCurrency
+    ? "UNSUPPORTED"
+    : globalToman && !globalRial
+      ? "IRT"
+      : globalRial && !globalToman
+        ? "IRR"
+        : displayCurrency;
   const totalRial = findAmount(lines, [
-    /(?:مبلغ\s*نهایی|قابل\s*پرداخت|جمع\s*(?:کل|فاکتور)|مبلغ\s*قابل\s*پرداخت|total\s*sales|grand\s*total|amount\s*due|net\s*amount|total\s*:)/iu,
+    /(?:مبلغ\s*(?:کل|نهایی)|قیمت\s*(?:کل|نهایی)|کل\s*مبلغ|قابل\s*پرداخت|جمع\s*(?:کل|فاکتور)|مبلغ\s*قابل\s*پرداخت|total\s*sales|grand\s*total|amount\s*due|net\s*amount|total\s*:)/iu,
   ], effectiveCurrency, [/جمع\s*اقلام/]);
+  const resolvedTotalRial = totalRial ?? findPersianWordsTotal(lines, effectiveCurrency);
   const subtotalRial = findAmount(lines, [/(?:جمع\s*اقلام|جمع\s*جزء|جمع\s*قبل\s*از|subtotal|sub\s*total)/iu], effectiveCurrency);
   const discountRial = findAmount(lines, [/(?:تخفیف|discount)/iu], effectiveCurrency);
   const taxRial = findAmount(lines, [/(?:مالیات|ارزش\s*افزوده|tax\s*amount|vat\s*amount)/iu], effectiveCurrency);
@@ -417,9 +522,9 @@ export function extractSalesInvoice(linesInput: RecognizedOcrLine[], displayCurr
   else if (averageConfidence < 40) warnings.push("کیفیت تشخیص متن پایین است؛ پیش از ثبت، همهٔ اعداد و نام‌ها را با تصویر تطبیق دهید.");
   else if (averageConfidence < 70) warnings.push("کیفیت تشخیص متوسط است؛ پیش از ثبت، همهٔ اطلاعات استخراج‌شده را با تصویر تطبیق دهید.");
   if (!items.length) warnings.push("ردیف کالایی قابل‌اعتماد پیدا نشد؛ اقلام را در فرم فروش کامل کنید.");
-  if (globalToman && (totalRial || subtotalRial || discountRial || taxRial || paidAmountRial)) warnings.push("مبالغ با فرض واحد تومان به ریال تبدیل شده‌اند؛ واحد پول را بررسی کنید.");
+  if (globalToman && (resolvedTotalRial || subtotalRial || discountRial || taxRial || paidAmountRial)) warnings.push("مبالغ با فرض واحد تومان به ریال تبدیل شده‌اند؛ واحد پول را بررسی کنید.");
   if (unsupportedCurrency) warnings.push("واحد پول این تصویر قابل تأیید نیست؛ مقادیر مالی بدون برچسب صریح ریال یا تومان منتقل نشدند.");
-  if (!totalRial && !items.length && !customer && !invoiceDate(lines) && !paidAmountRial) warnings.push("اطلاعات فروش قابل‌استفاده‌ای پیدا نشد؛ تصویر واضح‌تر انتخاب کنید یا فروش را دستی ثبت کنید.");
+  if (!resolvedTotalRial && !items.length && !customer && !invoiceDate(lines) && !paidAmountRial) warnings.push("اطلاعات فروش قابل‌استفاده‌ای پیدا نشد؛ تصویر واضح‌تر انتخاب کنید یا فروش را دستی ثبت کنید.");
   const extraction: SalesOcrExtraction = {
     customer,
     invoiceDate: invoiceDate(lines),
@@ -428,7 +533,7 @@ export function extractSalesInvoice(linesInput: RecognizedOcrLine[], displayCurr
     paidAmountRial,
     paymentMethod,
     paymentAccountName: labelledValue(lines, /(?:حساب\s*(?:مقصد|دریافت|بانکی)|پرداخت\s*به)\s*[:：]?\s*/iu, 120),
-    totals: { subtotalRial, discountRial, taxRial, totalRial },
+    totals: { subtotalRial, discountRial, taxRial, totalRial: resolvedTotalRial },
     items,
     warnings: [...new Set(warnings)].slice(0, 12),
   };

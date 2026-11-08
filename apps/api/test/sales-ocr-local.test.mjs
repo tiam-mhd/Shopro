@@ -146,6 +146,58 @@ test("retains product names containing the word کالا when row math verifies"
   assert.equal(result.extraction.items[0].taxRateBasisPoints, 1000);
 });
 
+test("extracts delimited Persian invoice rows even when the Discount header and OCR noise interrupt row math", () => {
+  const result = extractSalesInvoice([
+    line("محل لوگوفاکت"),
+    line("کتور فروش"),
+    line("[EE"),
+    line("FEES"),
+    line("[Eee"),
+    line("3 (ریال) مبلغ کل(ریال)"),
+    line("finalpice | Discount | 0035 | QTY | 060000 | ["),
+    line("| اسم‌نموه محصول 1 | 5 | 1399999 | 9 ]9]11198191919"),
+    line("سم نموه محصول 2 | 2 ] 1599999 | vex | *]*]*1113]7]511"),
+    line("اسم نمونه محصول 3 | 3 | 355799499 ]| vex |*]*]131116]7]519"),
+    line("4 سم نموه محصول 4 ]| JF 85999 | اس [LL [afafe]efefe]"),
+    line("اسم‌نمونه محصول 5 | 1 ]39399 | — ]16119 LLL"),
+    line("شب شا]ما1"),
+    line("اب لبلب cere errr"),
+    line("شرب لبلب با ]|ا"),
+    line("ee لبلب ای eee"),
+    line("بر لبلب با]چا"),
+    line("RY 0 شت Sg بنجاههزا"),
+    line("Ju,"),
+    line("11|] توضیحات: له"),
+    line("1313]8]9]5]0[]01010[] est |"),
+  ], "IRT");
+
+  assert.equal(result.extraction.customer, null);
+  assert.equal(result.extraction.items.length, 5);
+  assert.deepEqual(result.extraction.items.map((item) => item.quantity), ["5", "2", "3", null, "1"]);
+  assert.equal(result.extraction.items[0].name, "اسم‌نموه محصول");
+  assert.equal(result.extraction.items[0].unitPriceRial, null);
+  assert.equal(result.extraction.items[1].unitPriceRial, null);
+  assert.equal(result.extraction.totals.totalRial, null);
+});
+
+test("recognizes numeric totals labelled مبلغ کل or قیمت کل", () => {
+  assert.equal(extractSalesInvoice([line("مبلغ کل: ۳۳۸,۸۹۵,۰۰۰ ریال")], "IRT").extraction.totals.totalRial, "338895000");
+  assert.equal(extractSalesInvoice([line("قیمت کل: ۳۳۸,۸۹۵,۰۰۰ ریال")], "IRT").extraction.totals.totalRial, "338895000");
+});
+
+test("reads customer fields on nearby lines and converts a legible Persian amount in words", () => {
+  const result = extractSalesInvoice([
+    line("خریدار: آقای حمیدی"),
+    line("شماره تماس: ۰۹۱۲۳۴۵۶۷۸۹"),
+    line("آدرس: تهران"),
+    line("کل مبلغ به حروف: سیصد و سی و هشت میلیون و هشتصد و نود و پنج هزار ریال"),
+  ], "IRT");
+  assert.equal(result.extraction.customer.name, "آقای حمیدی");
+  assert.equal(result.extraction.customer.phone, "09123456789");
+  assert.equal(result.extraction.customer.address, "تهران");
+  assert.equal(result.extraction.totals.totalRial, "338895000");
+});
+
 test("leaves ambiguous and invalid dates empty while accepting Gregorian dates", () => {
   assert.equal(extractSalesInvoice([line("تاریخ: 03/04/24")], "IRR").extraction.invoiceDate, null);
   assert.equal(extractSalesInvoice([line("تاریخ: ۱۴۰۰/۱۲/۳۰")], "IRR").extraction.invoiceDate, null);
