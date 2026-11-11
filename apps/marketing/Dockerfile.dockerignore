@@ -1,0 +1,9 @@
+**
+!apps
+!apps/marketing
+!apps/marketing/package.json
+!apps/marketing/server.mjs
+!apps/marketing/scripts
+!apps/marketing/scripts/**
+!apps/marketing/src
+!apps/marketing/src/**

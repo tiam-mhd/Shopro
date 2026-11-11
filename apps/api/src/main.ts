@@ -9,6 +9,7 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module.js";
 import { ApiExceptionFilter } from "./common/api-exception.filter.js";
+import { createMarketingHostMiddleware } from "./marketing-host.middleware.js";
 import { validateProductionEnv, webOrigins } from "./common/production-env.js";
 import type { AppRequest } from "./common/request-context.js";
 import type { NextFunction, Response } from "express";
@@ -29,6 +30,15 @@ async function bootstrap() {
     response.setHeader("x-request-id", request.requestId);
     next();
   });
+  if (process.env.MARKETING_PUBLIC_URL) {
+    app.use(await createMarketingHostMiddleware({
+      publicUrl: process.env.MARKETING_PUBLIC_URL,
+      productUrl: process.env.PRODUCT_URL ?? "https://shoproapp.ir",
+      allowedOrigins: webOrigins(),
+      staticRoot: resolve(process.cwd(), "apps/marketing/dist"),
+      httpsOnly: process.env.NODE_ENV === "production",
+    }));
+  }
   if (process.env.NODE_ENV === "production") {
     const webRoot = resolve(process.cwd(), "apps/web/dist");
     app.use(express.static(webRoot, { index: false }));

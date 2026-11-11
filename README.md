@@ -38,6 +38,8 @@
 
 برای استقرار با کمترین تعداد آیتم، یک سرویس Docker رابط PWA و API را با هم اجرا می‌کند و یک سرویس PostgreSQL داده‌ها را نگه می‌دارد. Dockerfile چندمرحله‌ای در ریشهٔ مخزن قرار دارد. راهنمای ساخت دو سرویس، تنظیم محیط، migration و ساخت مدیر سامانه در [راهنمای Runflare](docs/runflare-deployment.md) است؛ الگوی env قابل کپی نیز در `infra/runflare.env.example` قرار دارد.
 
+لندینگ معرفی محصول با build مستقل در `apps/marketing` ساخته می‌شود و در production از همان Dockerfile و آیتم Runflare فعلی سرویس می‌گیرد. `MARKETING_PUBLIC_URL` میزبان لندینگ را از `WEB_ORIGIN` محصول جدا می‌کند؛ هر دو روی listener موجود پورت `3000` پاسخ می‌گیرند و آیتم تازه‌ای لازم نیست. راهنمای اتصال دامنه و شبکه در [راهنمای لندینگ روی Runflare](docs/runflare-marketing-deployment.md) آمده است.
+
 ابزار رمزگذاری‌شدهٔ backup/restore برای runner جداگانه و محدودیت‌های فعلی آن در [راهنمای پشتیبان‌گیری](docs/backup-restore.md) آمده است. این runner و فضای پایدار در Runflare هنوز پیکربندی نشده‌اند.
 
 ## مدیر سامانه

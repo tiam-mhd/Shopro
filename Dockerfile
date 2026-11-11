@@ -19,6 +19,7 @@ COPY . .
 ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
 RUN npm run db:generate \
   && npm run build \
+  && npm run build --prefix apps/marketing \
   && npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime
@@ -34,6 +35,7 @@ COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/web/package.json ./apps/web/package.json
 COPY --from=build /app/apps/web/dist ./apps/web/dist
+COPY --from=build /app/apps/marketing/dist ./apps/marketing/dist
 COPY --from=build /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /app/prisma ./prisma
