@@ -557,11 +557,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .stock-count-line { grid-template-columns: minmax(0, 1fr) 120px 32px; gap: 7px; }
 }
 @media print {
+  @page { margin: 14mm; }
   body * { visibility: hidden !important; }
   .modal-backdrop, .invoice-modal, .invoice-modal * { visibility: visible !important; }
+  .invoice-detail-page, .invoice-detail-page * { visibility: visible !important; }
   .modal-backdrop { position: fixed; inset: 0; display: block; padding: 0; background: white; backdrop-filter: none; }
   .invoice-modal { width: 100%; max-height: none; overflow: visible; padding: 16mm; border: 0; border-radius: 0; color: #17211b; background: white; box-shadow: none; }
-  .invoice-actions, .modal-close, .invoice-hint, .side-nav, .topbar, .bottom-nav { display: none !important; }
+  .invoice-detail-page { position: absolute; inset: 0; width: 100%; margin: 0; padding: 0; color: #17211b; background: white; }
+  .invoice-detail-accessbar, .invoice-detail-actions, .invoice-actions, .modal-close, .invoice-hint, .side-nav, .topbar, .bottom-nav { display: none !important; }
+  .invoice-detail-page .card { border-color: #d6d6d6; background: white; box-shadow: none; }
   .invoice-print-head, .invoice-payments { background: #f5f7f4; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
@@ -2332,6 +2336,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .invoice-detail-access-copy small { color: var(--muted); font-size: 9px; }
 .invoice-detail-access-copy strong { overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .invoice-detail-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; min-width: 0; }
+.invoice-detail-actions .invoice-detail-icon-action.is-danger { color: var(--danger-ink); background: var(--red-soft); }
+.invoice-detail-actions .invoice-detail-icon-action.is-return { color: var(--amber); background: var(--amber-soft); }
+.invoice-detail-actions .invoice-detail-icon-action:hover { background: var(--surface-soft); }
 .invoice-detail-hero, .invoice-detail-lines, .invoice-detail-summary, .invoice-detail-returns { min-width: 0; padding: 19px; }
 .invoice-detail-hero { display: grid; gap: 17px; background: linear-gradient(125deg, color-mix(in srgb, var(--surface-active) 56%, var(--surface)), var(--surface) 72%); }
 .invoice-detail-hero-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; min-width: 0; }
@@ -2410,6 +2417,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .invoice-detail-access-copy { display: none; }
   .invoice-detail-actions { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
   .invoice-detail-actions .button { min-width: 0; min-height: 36px; gap: 5px; padding-inline: 6px; border-radius: 9px; font-size: 9px; white-space: normal; }
+  .invoice-detail-actions .invoice-detail-icon-action { width: 38px; height: 38px; justify-self: end; }
   .invoice-detail-hero, .invoice-detail-lines, .invoice-detail-summary, .invoice-detail-returns { padding: 13px; border-radius: 15px; }
   .invoice-detail-hero-heading { flex-direction: column; gap: 12px; }
   .invoice-detail-total { justify-items: start; width: 100%; min-width: 0; }

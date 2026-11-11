@@ -1,9 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Boxes, ChartNoAxesCombined, CirclePlus, Download, FileText, PackagePlus, ReceiptText, RotateCw, Search, ShoppingBag, ShoppingCart, Tags, UsersRound, Wallet } from "lucide-react";
-import { parseQuantityMilli, toAsciiDigits } from "@shopro/contracts";
+import { toAsciiDigits } from "@shopro/contracts";
 import type { BusinessSummary, CursorPage, MemberRole } from "@shopro/contracts";
 import { del, get, newOperationId, patch, post } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
@@ -21,7 +21,6 @@ type Party = { id: string; name: string; type: "CUSTOMER" | "SUPPLIER" | "BOTH";
 type PartyBalance = { id: string; name: string; phone: string | null; balanceRial: string };
 type CashAccount = { id: string; name: string; kind: string; balanceRial: string };
 type Invoice = { id: string; invoiceNo: string | null; date: string; customer: string | null; totalRial: string; status: string; documentType?: "SALE" | "RETURN" };
-type InvoiceDetail = { id: string; invoiceNo: string | null; date: string; customer: { name: string; phone: string | null } | null; status: string; documentType: "SALE" | "RETURN"; returnOf: { id: string; invoiceNo: string | null } | null; returnReason: string | null; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ id: string; description: string; sku: string | null; quantity: string; returnedQuantity: string; returnedDiscountRial: string; returnedTaxRial: string; restockAllowed: boolean; unitCode: string; unitPriceRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string; cogsRial: string | null }>; payments: Array<{ amountRial: string; method: string }>; returns: Array<{ id: string; invoiceNo: string | null; date: string; reason: string | null; totalRial: string; lines: number }> };
 type Expense = { id: string; expenseNo: string | null; date: string; amountRial: string; category: string; status: string; note: string | null };
 type Purchase = { id: string; purchaseNo: string | null; date: string; supplier: string | null; totalRial: string; status: string };
 type InventoryRow = { productId: string; name: string; sku: string | null; unit: string; quantity: string; averageCostRial: string; valueRial: string; low: boolean };
@@ -30,102 +29,24 @@ type StockCount = { id: string; txnDate: string; status: string; reason: string;
 type CountDraftLine = { productId: string; countedQuantity: string; productName: string; unitLabel: string; systemQuantity: string };
 type Dashboard = { displayCurrency: MoneyCurrency; netSalesRial: string; grossProfitRial: string | null; grossProfitAvailable: boolean; cashPositionRial: string; salesCount: number; expenseCount: number; salesRial: string; receiptsRial: string; expensesRial: string; accountBalances: Array<{ id: string; name: string; balanceRial: string }>; lowStock: Array<{ id: string; name: string; quantity: string; reorderPoint: string; unit: string }> };
 
+function XIcon() { return <span aria-hidden="true">×</span>; }
+
 export { SalesPage } from './SalesPage.js';
 
 export function InvoicesPage({ currency }: { currency: MoneyCurrency }) {
-  const invalidate = useInvalidate();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
-  const [returnOpen, setReturnOpen] = useState(false);
-  const [returnDate, setReturnDate] = useState(() => todayISO());
-  const [returnReason, setReturnReason] = useState("");
-  const [returnQuantities, setReturnQuantities] = useState<Record<string, string>>({});
-  const [returnRestock, setReturnRestock] = useState<Record<string, boolean>>({});
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundAccountId, setRefundAccountId] = useState("");
-  const [refundMethod, setRefundMethod] = useState<"CASH" | "POS" | "BANK" | "OTHER">("CASH");
-  const [actionError, setActionError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const invoices = useInfiniteQuery({ queryKey: ["invoices", search, status], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<Invoice>>(`/sales?limit=50&q=${encodeURIComponent(search)}${status ? `&status=${status}` : ""}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined });
+  const invoices = useInfiniteQuery({ queryKey: ["invoices", search, status], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<Invoice>>("/sales?limit=50&q=" + encodeURIComponent(search) + (status ? "&status=" + status : "") + (pageParam ? "&cursor=" + encodeURIComponent(pageParam) : "")), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined });
   const invoiceRows = invoices.data?.pages.flatMap((page) => page.items) ?? [];
-  const detail = useQuery({ queryKey: ["invoice", selectedId], queryFn: () => get<InvoiceDetail>(`/sales/${selectedId}`), enabled: !!selectedId });
-  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => get<CashAccount[]>("/finance/accounts") });
-  const estimate = useMemo<ReturnEstimate>(() => detail.data ? estimateSalesReturn(detail.data, returnQuantities, returnRestock) : { lines: [], total: 0n, invalid: false }, [detail.data, returnQuantities, returnRestock]);
-  const openInvoice = (id: string) => { setSelectedId(id); setReason(""); setReturnOpen(false); setReturnDate(todayISO()); setReturnReason(""); setReturnQuantities({}); setReturnRestock({}); setRefundAmount(""); setRefundAccountId(""); setActionError(""); };
-  const voidInvoice = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedId || reason.trim().length < 3) return;
-    setBusy(true); setActionError("");
-    try { await post(`/sales/${selectedId}/void`, { reason: reason.trim() }, { "Idempotency-Key": newOperationId() }); setReason(""); await invalidate(); await detail.refetch(); }
-    catch (cause) { setActionError(messageOf(cause)); }
-    finally { setBusy(false); }
-  };
-  const submitReturn = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedId || !detail.data || estimate.invalid || estimate.lines.length === 0 || returnReason.trim().length < 3) return;
-    setBusy(true); setActionError("");
-    try {
-      const cashRefundRial = refundAmount.trim() ? displayToRial(refundAmount, currency) : undefined;
-      await post(`/sales/${selectedId}/returns`, { txnDate: returnDate, reason: returnReason.trim(), lines: estimate.lines, ...(cashRefundRial === undefined ? {} : { cashRefundRial, refundFinanceAccountId: refundAccountId || undefined, refundMethod }) }, { "Idempotency-Key": newOperationId() });
-      setReturnOpen(false); setReturnReason(""); setReturnQuantities({}); setRefundAmount(""); setRefundAccountId("");
-      await invalidate(); await detail.refetch();
-    } catch (cause) { setActionError(messageOf(cause)); }
-    finally { setBusy(false); }
-  };
-  const refundValue = refundAmount.trim() ? (() => { try { return BigInt(displayToRial(refundAmount, currency)); } catch { return -1n; } })() : detail.data?.customer ? 0n : estimate.total;
-  const needsRefundAccount = refundValue > 0n;
-  const canReturn = detail.data?.status === "POSTED" && detail.data.documentType === "SALE";
+  const openInvoice = (id: string) => navigate("/app/invoices/" + id);
   return <PageHeader title="فاکتورها" subtitle="فروش‌های ثبت‌شده، برگشت‌ها و پیش‌نویس‌ها" actions={<Link className="button button-primary" to="/app/sales"><ShoppingCart size={17} />ثبت فروش</Link>}>
     <div className="toolbar card"><div className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جست‌وجوی شماره یا مشتری" /></div><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="وضعیت فاکتور"><option value="">همهٔ وضعیت‌ها</option><option value="POSTED">ثبت‌شده</option><option value="DRAFT">پیش‌نویس</option><option value="VOIDED">باطل‌شده</option></select></div>
     {invoices.isError && <InlineError error={invoices.error} retry={() => void invoices.refetch()} />}
-    {invoices.isPending ? <LoadingBlock /> : <><DataRows icon={FileText} onRowClick={openInvoice} rows={invoiceRows.map((item) => ({ id: item.id, title: item.documentType === "RETURN" ? `برگشت ${item.invoiceNo ?? "فروش"}` : item.invoiceNo ?? "پیش‌نویس فروش", subtitle: `${item.customer ?? "بدون مشتری"} · ${jalaliDate(item.date)}`, amount: money(item.totalRial, currency), status: statusLabel(item.status), tone: item.status.toLowerCase() }))} emptyTitle="هنوز فاکتوری ندارید" emptyText="پس از ثبت فروش، فاکتورها در این فهرست نمایش داده می‌شوند." action={<Link to="/app/sales" className="button button-secondary">ثبت اولین فروش</Link>} /><LoadMoreButton hasMore={Boolean(invoices.hasNextPage)} isLoading={invoices.isFetchingNextPage} onClick={() => void invoices.fetchNextPage()} /></>}
-    <div className="card invoice-hint"><FileText size={18} /><span>برای دیدن جزئیات، چاپ، ثبت برگشت یا ابطال مجاز، فاکتور را باز کنید.</span></div>
-    {selectedId && <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setSelectedId(null); }}><section className="invoice-modal" role="dialog" aria-modal="true" aria-labelledby="invoice-detail-title" onMouseDown={(event) => event.stopPropagation()}>
-      {detail.isPending ? <LoadingBlock /> : detail.isError ? <InlineError error={detail.error} retry={() => void detail.refetch()} /> : detail.data && <>
-        <div className="modal-heading"><div><span className="eyebrow">{jalaliDate(detail.data.date)} · {detail.data.documentType === "RETURN" ? "برگشت فروش" : "فاکتور فروش"}</span><h2 id="invoice-detail-title">{detail.data.documentType === "RETURN" ? "برگشت " : "فاکتور "}{detail.data.invoiceNo ?? "پیش‌نویس"}</h2><p>{detail.data.customer?.name ?? "مشتری گذری"}{detail.data.customer?.phone ? ` · ${detail.data.customer.phone}` : ""}</p>{detail.data.returnOf && <small>مرتبط با فاکتور {detail.data.returnOf.invoiceNo}</small>}</div><button className="icon-button modal-close" type="button" aria-label="بستن جزئیات" onClick={() => setSelectedId(null)}><XIcon /></button></div>
-        <div className="invoice-print-table"><div className="invoice-print-head"><span>شرح</span><span>تعداد</span><span>مبلغ</span></div>{detail.data.lines.map((line) => <div className="invoice-print-row" key={line.id}><span><strong>{line.description}</strong><small>{money(line.unitPriceRial, currency)} / {line.unitCode}{line.sku ? ` · ${line.sku}` : ""}{detail.data?.documentType === "SALE" && line.returnedQuantity !== "0" ? ` · برگشت‌شده: ${faNumber(line.returnedQuantity)}` : ""}</small></span><span>{faNumber(line.quantity)}</span><strong>{money(line.totalRial, currency)}</strong></div>)}</div>
-        <div className="invoice-totals"><span>جمع ردیف‌ها <strong>{money(detail.data.subtotalRial, currency)}</strong></span>{BigInt(detail.data.discountRial) !== 0n && <span>{detail.data.documentType === "RETURN" ? "تخفیف برگشتی" : "تخفیف"} <strong>{money(-BigInt(detail.data.discountRial), currency)}</strong></span>}{BigInt(detail.data.taxRial) !== 0n && <span>مالیات <strong>{money(detail.data.taxRial, currency)}</strong></span>}<span className="invoice-total">جمع فاکتور <strong>{money(detail.data.totalRial, currency)}</strong></span></div>
-        {detail.data.payments.length > 0 && <div className="invoice-payments"><strong>{detail.data.documentType === "RETURN" ? "بازپرداخت‌های ثبت‌شده" : "دریافت‌های ثبت‌شده"}</strong>{detail.data.payments.map((payment, index) => <span key={`${payment.method}-${index}`}>{cashKindLabel(payment.method)} · {money(payment.amountRial, currency)}</span>)}</div>}
-        {detail.data.returnReason && <p className="muted">دلیل برگشت: {detail.data.returnReason}</p>}{detail.data.note && <p className="muted">توضیح: {detail.data.note}</p>}{detail.data.status === "VOIDED" && <div className="notice notice-warning">این سند باطل شده است.</div>}
-        {detail.data.returns.length > 0 && <section className="return-history"><strong>برگشت‌های این فاکتور</strong>{detail.data.returns.map((row) => <button type="button" className="return-history-row" key={row.id} onClick={() => openInvoice(row.id)}><span>برگشت {row.invoiceNo} · {jalaliDate(row.date)}{row.reason ? <small>{row.reason}</small> : null}</span><strong>{money(row.totalRial, currency)}</strong></button>)}</section>}
-        <div className="invoice-actions"><Link className="button button-secondary" to={"/app/invoices/" + selectedId}>جزئیات کامل فاکتور</Link><button className="button button-secondary" type="button" onClick={() => window.print()}>چاپ / ذخیره PDF</button>{canReturn && <button className="button button-secondary" type="button" onClick={() => { setReturnOpen(!returnOpen); setActionError(""); }}>{returnOpen ? "بستن فرم برگشت" : "ثبت برگشت فروش"}</button>}{detail.data.status !== "VOIDED" && <form className="invoice-void-form" onSubmit={(event) => void voidInvoice(event)}><label className="field"><span className="field-label">دلیل ابطال</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} minLength={3} maxLength={500} rows={2} placeholder="علت اصلاح سند را ثبت کنید" required /></label><button className="button button-danger" type="submit" disabled={busy || reason.trim().length < 3}>{busy ? "در حال ثبت…" : "ابطال با سند معکوس"}</button></form>}</div>
-        {returnOpen && canReturn && <form className="invoice-void-form return-form" onSubmit={(event) => void submitReturn(event)}><div><strong>ثبت برگشت کالا یا خدمت</strong><p className="muted">فقط تعداد برگشت‌نشدهٔ هر ردیف پذیرفته می‌شود. اقلام انتخابی برای انبار به موجودی شعبه بازمی‌گردند.</p></div><div className="return-line-list">{detail.data.lines.map((line) => { const remainingMilli = parseQuantityMilli(line.quantity) - parseQuantityMilli(line.returnedQuantity); const remaining = quantityFromMilli(remainingMilli > 0n ? remainingMilli : 0n); return <div className="return-line" key={line.id}><span className="row-grow"><strong>{line.description}</strong><small>باقی‌ماندهٔ قابل برگشت: {faNumber(remaining)}</small></span><Field label="تعداد برگشت" value={returnQuantities[line.id] ?? ""} onChange={(value) => setReturnQuantities((rows) => ({ ...rows, [line.id]: value }))} inputMode="decimal" placeholder="۰" /><label className="return-restock"><input type="checkbox" disabled={!line.restockAllowed} checked={line.restockAllowed && (returnRestock[line.id] ?? true)} onChange={(event) => setReturnRestock((rows) => ({ ...rows, [line.id]: event.target.checked }))} />بازگشت به انبار</label></div>; })}</div><div className="form-grid"><JalaliDatePicker value={returnDate} onChange={setReturnDate} label="تاریخ برگشت" /><Field label="دلیل برگشت" value={returnReason} onChange={setReturnReason} required /><Field label={`مبلغ بازپرداخت نقدی (${currency === "IRT" ? "تومان" : "ریال"})`} value={refundAmount} onChange={setRefundAmount} inputMode={currency === "IRT" ? "decimal" : "numeric"} placeholder="اختیاری" /><SelectField label="حساب بازپرداخت" value={refundAccountId} onChange={setRefundAccountId} options={(accounts.data ?? []).map((account) => ({ value: account.id, label: account.name }))} placeholder="انتخاب صندوق یا بانک" /><SelectField label="روش بازپرداخت" value={refundMethod} onChange={(value) => setRefundMethod(value as typeof refundMethod)} options={[{ value: "CASH", label: "نقدی" }, { value: "POS", label: "کارت‌خوان" }, { value: "BANK", label: "بانکی" }, { value: "OTHER", label: "سایر" }]} /></div><div className="notice"><span>مبلغ برآوردی برگشت: <strong>{money(estimate.total, currency)}</strong></span><small>{detail.data.customer ? "مبلغ بازپرداخت نقدی اختیاری است و باقیمانده به اعتبار مشتری افزوده می‌شود." : "برای مشتری گذری، مبلغ کامل برگشت به حساب پرداخت انتخابی برمی‌گردد."}</small></div>{actionError && <InlineError error={actionError} />}{accounts.isError && <InlineError error={accounts.error} retry={() => void accounts.refetch()} />}<button className="button button-primary" type="submit" disabled={busy || estimate.invalid || estimate.lines.length === 0 || returnReason.trim().length < 3 || (needsRefundAccount && !refundAccountId) || refundValue < 0n || refundValue > estimate.total}>{busy ? "در حال ثبت…" : "ثبت برگشت و سند مالی"}</button></form>}
-        {actionError && !returnOpen && <InlineError error={actionError} />}
-      </>}
-    </section></div>}
+    {invoices.isPending ? <LoadingBlock /> : <><DataRows icon={FileText} onRowClick={openInvoice} rows={invoiceRows.map((item) => ({ id: item.id, title: item.documentType === "RETURN" ? "برگشت " + (item.invoiceNo ?? "فروش") : item.invoiceNo ?? "پیش‌نویس فروش", subtitle: (item.customer ?? "بدون مشتری") + " · " + jalaliDate(item.date), amount: money(item.totalRial, currency), status: statusLabel(item.status), tone: item.status.toLowerCase() }))} emptyTitle="هنوز فاکتوری ندارید" emptyText="پس از ثبت فروش، فاکتورها در این فهرست نمایش داده می‌شوند." action={<Link to="/app/sales" className="button button-secondary">ثبت اولین فروش</Link>} /><LoadMoreButton hasMore={Boolean(invoices.hasNextPage)} isLoading={invoices.isFetchingNextPage} onClick={() => void invoices.fetchNextPage()} /></>}
+    <div className="card invoice-hint"><FileText size={18} /><span>برای دیدن جزئیات و عملیات، فاکتور را باز کنید.</span></div>
   </PageHeader>;
 }
-
-type ReturnEstimate = { lines: Array<{ invoiceLineId: string; quantity: string; restock: boolean }>; total: bigint; invalid: boolean };
-function quantityFromMilli(value: bigint) { const whole = value / 1000n; const fraction = (value % 1000n).toString().padStart(3, "0").replace(/0+$/, ""); return fraction ? `${whole}.${fraction}` : whole.toString(); }
-function estimateSalesReturn(invoice: InvoiceDetail, quantities: Record<string, string>, restock: Record<string, boolean>): ReturnEstimate {
-  const lines: ReturnEstimate["lines"] = [];
-  let total = 0n;
-  let invalid = false;
-  for (const line of invoice.lines) {
-    const text = quantities[line.id]?.trim();
-    if (!text) continue;
-    try {
-      const quantity = parseQuantityMilli(text);
-      const originalQuantity = parseQuantityMilli(line.quantity);
-      const remaining = originalQuantity - parseQuantityMilli(line.returnedQuantity || "0");
-      if (quantity > remaining || quantity <= 0n) { invalid = true; continue; }
-      const base = (quantity * BigInt(line.unitPriceRial) + 500n) / 1000n;
-      const completesRemaining = quantity === remaining;
-      const discount = completesRemaining ? BigInt(line.discountRial) - BigInt(line.returnedDiscountRial || "0") : (BigInt(line.discountRial) * quantity + originalQuantity / 2n) / originalQuantity;
-      const taxable = base - discount;
-      const tax = completesRemaining ? BigInt(line.taxRial) - BigInt(line.returnedTaxRial || "0") : (taxable * BigInt(line.taxRateBasisPoints) + 5000n) / 10000n;
-      const amount = taxable + tax;
-      if (amount <= 0n) { invalid = true; continue; }
-      total += amount;
-      lines.push({ invoiceLineId: line.id, quantity: text, restock: line.restockAllowed && (restock[line.id] ?? true) });
-    } catch { invalid = true; }
-  }
-  return { lines, total, invalid };
-}
-
 export function InventoryPage({ currency }: { currency: MoneyCurrency }) {
   const invalidate = useInvalidate(); const [confirmCount, setConfirmCount] = useState<StockCount | null>(null); const [deleteCount, setDeleteCount] = useState<StockCount | null>(null); const [editCountId, setEditCountId] = useState<string | null>(null); const [counting, setCounting] = useState(false); const [quickProductOpen, setQuickProductOpen] = useState(false); const [countDate, setCountDate] = useState(() => todayISO()); const [countReason, setCountReason] = useState(""); const [countProductId, setCountProductId] = useState(""); const [countLines, setCountLines] = useState<CountDraftLine[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [exporting, setExporting] = useState(false); const [stockFilter, setStockFilter] = useState<"ALL" | "LOW">("ALL");
   const stockProductPickerOptions = productPicker("STOCK");
@@ -334,4 +255,3 @@ function statusLabel(status: string) { return ({ POSTED: "ثبت‌شده", DRAF
 function roleLabel(role: string) { return ({ OWNER: "مالک", MANAGER: "مدیر", ACCOUNTANT: "حسابدار", CASHIER: "صندوقدار", VIEWER: "مشاهده‌گر" } as Record<string, string>)[role] ?? role; }
 function cashKindLabel(kind: string) { return ({ RECEIPT: "دریافت وجه", PAYMENT: "پرداخت", TRANSFER: "انتقال", OPENING: "موجودی آغاز دوره" } as Record<string, string>)[kind] ?? kind; }
 function financeAccountKindLabel(kind: string) { return ({ CASH: "صندوق", BANK: "حساب بانکی", POS: "کارت‌خوان", OTHER: "سایر" } as Record<string, string>)[kind] ?? "حساب مالی"; }
-function XIcon() { return <span aria-hidden="true">×</span>; }

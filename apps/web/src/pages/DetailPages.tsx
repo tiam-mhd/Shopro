@@ -1,10 +1,10 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, ArrowLeftRight, BadgeCheck, Boxes, BriefcaseBusiness, Building2, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, FileText, ImagePlus, Mail, MapPin, PackagePlus, Pencil, Phone, ReceiptText, RotateCw, ShoppingBag, ShoppingCart, Tags, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
+import { Archive, ArrowLeftRight, BadgeCheck, Ban, Boxes, BriefcaseBusiness, Building2, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, FileText, ImagePlus, Mail, MapPin, PackagePlus, Pencil, Phone, Printer, ReceiptText, RotateCw, ShoppingBag, ShoppingCart, Tags, Trash2, Upload, UsersRound, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CursorPage, MemberRole } from "@shopro/contracts";
-import { toAsciiDigits } from "@shopro/contracts";
+import { parseQuantityMilli, toAsciiDigits } from "@shopro/contracts";
 import { del, downloadFile, get, newOperationId, patch, post, uploadFile } from "../lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "../lib/format.js";
 import { partyPicker, productPicker } from "../lib/picker-options.js";
@@ -21,7 +21,7 @@ type PartyDetail = { id: string; name: string; type: string; phone: string | nul
 type PartyStatement = { party: PartyDetail; balanceRial: string; hasMore: boolean; nextCursor: string | null; openingBalanceRial: string; entries: Array<{ id: string; date: string; entryNo: string; description: string | null; sourceType: string; debitRial: string; creditRial: string; balanceRial: string }> };
 type ProductDetailImage = { id: string; position: number; path: string };
 type ProductDetail = { id: string; name: string; sku: string | null; barcode: string | null; kind: "STOCK"; unit: { labelFa: string }; category: { name: string } | null; salePriceRial: string; defaultCostRial: string | null; taxRateBasisPoints: number; trackInventory: boolean; isActive: boolean; reorderPoint: string | null; quantityOnHand: string; averageCostRial: string | null; inventoryValueRial: string | null; images: ProductDetailImage[] };
-type InvoiceDetail = { id: string; invoiceNo: string | null; date: string; customerId: string | null; customer: { id?: string; name: string; phone: string | null } | null; status: string; documentType: "SALE" | "RETURN"; returnOf: { invoiceNo: string | null } | null; returnReason: string | null; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ id: string; productId: string | null; description: string; sku: string | null; quantity: string; returnedQuantity: string; unitCode: string; unitPriceRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string }>; payments: Array<{ amountRial: string; method: string }>; returns: Array<{ id: string; invoiceNo: string | null; date: string; reason: string | null; totalRial: string; lines: number }> };
+type InvoiceDetail = { id: string; invoiceNo: string | null; date: string; customerId: string | null; customer: { id?: string; name: string; phone: string | null } | null; status: string; documentType: "SALE" | "RETURN"; returnOf: { invoiceNo: string | null } | null; returnReason: string | null; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ id: string; productId: string | null; description: string; sku: string | null; quantity: string; returnedQuantity: string; returnedDiscountRial: string; returnedTaxRial: string; restockAllowed: boolean; unitCode: string; unitPriceRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string }>; payments: Array<{ amountRial: string; method: string }>; returns: Array<{ id: string; invoiceNo: string | null; date: string; reason: string | null; totalRial: string; lines: number }> };
 type PurchaseDetail = { id: string; purchaseNo: string | null; date: string; dueDate: string | null; supplierId: string | null; supplier: { name: string; phone: string | null; email: string | null; address: string | null } | null; status: string; subtotalRial: string; discountRial: string; taxRial: string; totalRial: string; note: string | null; lines: Array<{ productId: string | null; description: string; sku: string | null; unit: string | null; quantity: string; unitCostRial: string; discountRial: string; taxRateBasisPoints: number; taxRial: string; totalRial: string }>; payments: Array<{ amountRial: string; method: string; account: string | null }> };
 type ExpenseAttachment = { fileName: string; mimeType: string; bytes: string; uploadedAt: string };
 type ExpenseDetail = { id: string; expenseNo: string | null; date: string; amountRial: string; taxRateBasisPoints: number; taxRial: string; categoryId: string; category: string; payeeId: string | null; payee: { name: string; phone: string | null; email: string | null; address: string | null } | null; status: string; note: string | null; postedAt: string | null; canManageAttachment: boolean; attachment: ExpenseAttachment | null };
@@ -260,14 +260,15 @@ function ProductDetailGallery({ images, name, entityLabel = "کالا" }: { imag
 export function InvoiceDetailsPage({ currency, branchName }: { currency: MoneyCurrency; branchName: string }) {
   const { id = "" } = useParams();
   const location = useLocation(); const navigate = useNavigate(); const invalidate = useInvalidate(); const autoPostHandled = useRef(false);
-  const [editOpen, setEditOpen] = useState(false); const [postOpen, setPostOpen] = useState(false); const [voidOpen, setVoidOpen] = useState(false); const [quickPartyOpen, setQuickPartyOpen] = useState(false); const [quickProductOpen, setQuickProductOpen] = useState(false); const [quickAccountOpen, setQuickAccountOpen] = useState(false); const [quickProductIndex, setQuickProductIndex] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [reason, setReason] = useState("");
+  const [editOpen, setEditOpen] = useState(false); const [postOpen, setPostOpen] = useState(false); const [voidOpen, setVoidOpen] = useState(false); const [returnOpen, setReturnOpen] = useState(false); const [quickPartyOpen, setQuickPartyOpen] = useState(false); const [quickProductOpen, setQuickProductOpen] = useState(false); const [quickAccountOpen, setQuickAccountOpen] = useState(false); const [quickProductIndex, setQuickProductIndex] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [reason, setReason] = useState("");
   const [date, setDate] = useState(todayISO()); const [customerId, setCustomerId] = useState(""); const [note, setNote] = useState(""); const [paymentAmount, setPaymentAmount] = useState(""); const [accountId, setAccountId] = useState(""); const [method, setMethod] = useState("CASH"); const [lineRows, setLineRows] = useState<Array<{ productId: string; quantity: string; unitPrice: string; discount: string }>>([]);
+  const [returnDate, setReturnDate] = useState(() => todayISO()); const [returnReason, setReturnReason] = useState(""); const [returnQuantities, setReturnQuantities] = useState<Record<string, string>>({}); const [returnRestock, setReturnRestock] = useState<Record<string, boolean>>({}); const [refundAmount, setRefundAmount] = useState(""); const [refundAccountId, setRefundAccountId] = useState(""); const [refundMethod, setRefundMethod] = useState<"CASH" | "POS" | "BANK" | "OTHER">("CASH");
   const query = useQuery({ queryKey: ["invoice", id], queryFn: () => get<InvoiceDetail>("/sales/" + id), enabled: !!id });
   const invoice = query.data;
   const customers = useQuery({ queryKey: ["sales-customers"], queryFn: () => get<Array<{ id: string; name: string }>>("/customers"), enabled: editOpen });
   const products = useQuery({ queryKey: ["sales-products"], queryFn: () => get<Array<{ id: string; name: string; salePriceRial: string }>>("/catalog"), enabled: editOpen });
   const customerPickerOptions = partyPicker("CUSTOMER"); const anyProductPickerOptions = productPicker();
-  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => get<Array<{ id: string; name: string }>>("/finance/accounts"), enabled: postOpen });
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => get<Array<{ id: string; name: string }>>("/finance/accounts"), enabled: postOpen || returnOpen });
   useEffect(() => { autoPostHandled.current = false; }, [id]);
   useEffect(() => {
     const state = location.state as { openPost?: boolean; payment?: { amountRial: string; financeAccountId: string; method: string } | null } | null;
@@ -281,6 +282,23 @@ export function InvoiceDetailsPage({ currency, branchName }: { currency: MoneyCu
   const saveDraft = async (event: FormEvent) => { event.preventDefault(); if (!lineRows.length || lineRows.some((line) => !line.productId)) { setError("برای هر ردیف یک کالا یا خدمت انتخاب کنید."); return; } setBusy(true); setError(""); try { await patch("/sales/" + id, { customerId: customerId || undefined, txnDate: date, note: note || undefined, lines: lineRows.map((line) => ({ productId: line.productId, quantity: line.quantity, unitPriceRial: displayToRial(line.unitPrice, currency), discountRial: line.discount ? displayToRial(line.discount, currency) : undefined })) }); setEditOpen(false); await invalidate(); await query.refetch(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
   const postDraft = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const amount = paymentAmount.trim() ? displayToRial(paymentAmount, currency) : "0"; if (amount !== "0" && !accountId) throw new Error("برای دریافت وجه، حساب مالی را انتخاب کنید."); await post("/sales/" + id + "/post", { payments: amount !== "0" ? [{ amountRial: amount, financeAccountId: accountId, method }] : [] }, { "Idempotency-Key": newOperationId() }); trackOnboardingEvent("first_document_posted", "first_operation"); setPostOpen(false); await invalidate(); await query.refetch(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
   const voidInvoice = async () => { setBusy(true); setError(""); try { await post("/sales/" + id + "/void", { reason }, { "Idempotency-Key": newOperationId() }); setVoidOpen(false); await invalidate(); await query.refetch(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
+  const canReturn = invoice?.status === "POSTED" && invoice.documentType === "SALE";
+  const returnEstimate = useMemo<ReturnEstimate>(() => invoice ? estimateSalesReturn(invoice, returnQuantities, returnRestock) : { lines: [], total: 0n, invalid: false }, [invoice, returnQuantities, returnRestock]);
+  const refundValue = refundAmount.trim() ? (() => { try { return BigInt(displayToRial(refundAmount, currency)); } catch { return -1n; } })() : invoice?.customer ? 0n : returnEstimate.total;
+  const needsRefundAccount = refundValue > 0n;
+  const openReturn = () => { setReturnDate(todayISO()); setReturnReason(""); setReturnQuantities({}); setReturnRestock({}); setRefundAmount(""); setRefundAccountId(""); setError(""); setReturnOpen(true); };
+  const submitReturn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!invoice || !canReturn || returnEstimate.invalid || returnEstimate.lines.length === 0 || returnReason.trim().length < 3) return;
+    setBusy(true); setError("");
+    try {
+      const cashRefundRial = refundAmount.trim() ? displayToRial(refundAmount, currency) : undefined;
+      await post(`/sales/${id}/returns`, { txnDate: returnDate, reason: returnReason.trim(), lines: returnEstimate.lines, ...(cashRefundRial === undefined ? {} : { cashRefundRial, refundFinanceAccountId: refundAccountId || undefined, refundMethod }) }, { "Idempotency-Key": newOperationId() });
+      setReturnOpen(false); setReturnReason(""); setReturnQuantities({}); setRefundAmount(""); setRefundAccountId("");
+      await invalidate(); await query.refetch();
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const title = invoice ? (invoice.documentType === "RETURN" ? "برگشت " : "فاکتور ") + (invoice.invoiceNo ?? "پیش‌نویس") : "جزئیات فاکتور";
   const paidTotalRial = invoice?.payments.reduce((total, payment) => total + BigInt(payment.amountRial), 0n) ?? 0n;
   return <PageHeader title={title} subtitle="پروندهٔ کامل فاکتور، اقلام و دریافت‌ها">
@@ -289,7 +307,11 @@ export function InvoiceDetailsPage({ currency, branchName }: { currency: MoneyCu
         <div className="invoice-detail-access-copy"><span className="icon-tile emerald"><ReceiptText size={18} /></span><span><small>{statusLabel(invoice.status)} · {invoice.documentType === "RETURN" ? "برگشت فروش" : "فروش"}</small><strong><bdi dir="ltr">{invoice.invoiceNo ?? "پیش‌نویس"}</bdi></strong></span></div>
         <div className="invoice-detail-actions">
           {invoice.status === "DRAFT" && invoice.documentType === "SALE" && <><button type="button" className="button button-secondary" onClick={openEdit}><Pencil size={15} />ویرایش پیش‌نویس</button><button type="button" className="button button-primary" onClick={() => { setPaymentAmount(""); setAccountId(""); setError(""); setPostOpen(true); }}>ثبت نهایی فروش</button><button type="button" className="button button-danger" onClick={() => { setReason(""); setError(""); setVoidOpen(true); }}>حذف پیش‌نویس</button></>}
-          {invoice.status === "POSTED" && invoice.documentType === "SALE" && <button type="button" className="button button-danger" onClick={() => { setReason(""); setError(""); setVoidOpen(true); }}>ابطال فاکتور</button>}
+          {invoice.status === "POSTED" && invoice.documentType === "SALE" && <>
+            <button type="button" className="icon-button invoice-detail-icon-action is-danger" title="ابطال فاکتور" aria-label="ابطال فاکتور" onClick={() => { setReason(""); setError(""); setVoidOpen(true); }}><Ban size={17} /></button>
+            {canReturn && <button type="button" className="icon-button invoice-detail-icon-action is-return" title="ثبت برگشت فروش" aria-label="ثبت برگشت فروش" onClick={openReturn}><RotateCw size={17} /></button>}
+          </>}
+          <button type="button" className="icon-button invoice-detail-icon-action" title="گزارش PDF" aria-label="گزارش PDF" onClick={() => window.print()}><Printer size={17} /></button>
           <Link className="button button-secondary" to="/app/invoices"><FileText size={15} />فهرست فاکتورها</Link>
         </div>
       </div>
@@ -336,8 +358,63 @@ export function InvoiceDetailsPage({ currency, branchName }: { currency: MoneyCu
     <Modal open={editOpen} onClose={() => setEditOpen(false)} title="ویرایش پیش‌نویس فروش" description="با ذخیره، مبلغ‌ها و مالیات بر اساس اطلاعات جاری کالاها دوباره محاسبه می‌شوند." size="wide"><form onSubmit={(event) => void saveDraft(event)}><div className="form-grid"><JalaliDatePicker value={date} onChange={setDate} label="تاریخ فاکتور" /><SelectField label="مشتری" value={customerId} onChange={setCustomerId} options={(customers.data ?? []).map((row) => ({ value: row.id, label: row.name }))} optionsKey={customerPickerOptions.key} loadOptions={customerPickerOptions.load} placeholder="بدون مشتری" onAdd={() => setQuickPartyOpen(true)} /><Field label="توضیح" value={note} onChange={setNote} /></div>{lineRows.map((line, index) => <div className="form-grid draft-line-editor" key={index}><SelectField label={`کالا یا خدمت ${faNumber(index + 1)}`} value={line.productId} onChange={(value) => setLineRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, productId: value } : row))} options={(products.data ?? []).map((row) => ({ value: row.id, label: row.name }))} optionsKey={anyProductPickerOptions.key} loadOptions={anyProductPickerOptions.load} onAdd={() => { setQuickProductIndex(index); setQuickProductOpen(true); }} /><Field label="تعداد" value={line.quantity} onChange={(value) => setLineRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: value } : row))} inputMode="decimal" required /><Field label={`قیمت واحد (${currency === "IRT" ? "تومان" : "ریال"})`} value={line.unitPrice} onChange={(value) => setLineRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, unitPrice: value } : row))} inputMode="decimal" required /><Field label={`تخفیف (${currency === "IRT" ? "تومان" : "ریال"})`} value={line.discount} onChange={(value) => setLineRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, discount: value } : row))} inputMode="decimal" placeholder="۰" />{lineRows.length > 1 && <button type="button" className="button button-danger" onClick={() => setLineRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}>حذف ردیف</button>}</div>)}<button type="button" className="button button-text" onClick={() => setLineRows((rows) => [...rows, { productId: "", quantity: "1", unitPrice: "", discount: "" }])}>افزودن ردیف</button>{error && <InlineError error={error} />}{products.isError && <InlineError error={products.error} retry={() => void products.refetch()} />}<div className="modal-form-actions"><SubmitButton busy={busy}>ذخیرهٔ پیش‌نویس</SubmitButton></div></form></Modal>
     <Modal open={postOpen} onClose={() => setPostOpen(false)} title="ثبت نهایی فروش" description="اطلاعات شعبه و فاکتور را بازبینی کنید؛ با تأیید، فروش در دفتر مالی و گردش موجودی همین شعبه ثبت می‌شود."><form onSubmit={(event) => void postDraft(event)}>{invoice && <div className="onboarding-operation-review" aria-label="بازبینی سند فروش"><span><small>شعبه</small><strong>{branchName || "شعبهٔ جاری"}</strong></span><span><small>تاریخ فاکتور</small><strong>{jalaliDate(invoice.date)}</strong></span><span><small>جمع کل</small><strong>{money(invoice.totalRial, currency)}</strong></span></div>}<div className="form-grid"><Field label={`مبلغ دریافتی (${currency === "IRT" ? "تومان" : "ریال"})`} value={paymentAmount} onChange={setPaymentAmount} inputMode="decimal" placeholder="۰ برای فروش اعتباری" /><SelectField label="حساب دریافت" value={accountId} onChange={setAccountId} options={(accounts.data ?? []).map((row) => ({ value: row.id, label: row.name }))} placeholder="بدون دریافت فعلی" onAdd={() => setQuickAccountOpen(true)} /><SelectField label="روش پرداخت" value={method} onChange={setMethod} options={[{ value: "CASH", label: "نقدی" }, { value: "POS", label: "کارت‌خوان" }, { value: "BANK", label: "واریز بانکی" }, { value: "OTHER", label: "سایر" }]} /></div>{error && <InlineError error={error} />}{accounts.isError && <InlineError error={accounts.error} retry={() => void accounts.refetch()} />}<div className="modal-form-actions"><SubmitButton busy={busy}>تأیید ثبت نهایی</SubmitButton></div></form></Modal>
     <Modal open={voidOpen} onClose={() => setVoidOpen(false)} title={invoice?.status === "DRAFT" ? "حذف پیش‌نویس فاکتور" : "ابطال فاکتور"} description={invoice?.status === "DRAFT" ? "پیش‌نویس از فهرست فعال کنار گذاشته می‌شود و سابقهٔ آن نگه داشته خواهد شد." : "فاکتور اصلی حفظ می‌شود و سندهای معکوس حسابداری و موجودی ثبت می‌شوند."}><Field label="دلیل" value={reason} onChange={setReason} required />{error && <InlineError error={error} />}<div className="modal-form-actions"><button type="button" className="button button-danger" disabled={busy || reason.trim().length < 3} onClick={() => void voidInvoice()}>{busy ? "در حال ثبت…" : invoice?.status === "DRAFT" ? "تأیید حذف پیش‌نویس" : "تأیید ابطال"}</button></div></Modal>
+    <Modal open={returnOpen} onClose={() => { if (!busy) setReturnOpen(false); }} title="ثبت برگشت فروش" description="تعداد برگشت‌نشدهٔ هر ردیف را وارد کنید. اقلام انتخابی برای انبار به موجودی شعبه بازمی‌گردند." size="wide">
+      {invoice && <form className="invoice-void-form return-form" onSubmit={(event) => void submitReturn(event)}>
+        <div className="return-line-list">{invoice.lines.map((line) => {
+          const remainingMilli = parseQuantityMilli(line.quantity) - parseQuantityMilli(line.returnedQuantity);
+          const remaining = quantityFromMilli(remainingMilli > 0n ? remainingMilli : 0n);
+          return <div className="return-line" key={line.id}>
+            <span className="row-grow"><strong>{line.description}</strong><small>باقی‌ماندهٔ قابل برگشت: {faNumber(remaining)}</small></span>
+            <Field label="تعداد برگشت" value={returnQuantities[line.id] ?? ""} onChange={(value) => setReturnQuantities((rows) => ({ ...rows, [line.id]: value }))} inputMode="decimal" placeholder="۰" />
+            <label className="return-restock"><input type="checkbox" disabled={!line.restockAllowed} checked={line.restockAllowed && (returnRestock[line.id] ?? true)} onChange={(event) => setReturnRestock((rows) => ({ ...rows, [line.id]: event.target.checked }))} />بازگشت به انبار</label>
+          </div>;
+        })}</div>
+        <div className="form-grid">
+          <JalaliDatePicker value={returnDate} onChange={setReturnDate} label="تاریخ برگشت" />
+          <Field label="دلیل برگشت" value={returnReason} onChange={setReturnReason} required />
+          <Field label={"مبلغ بازپرداخت نقدی (" + (currency === "IRT" ? "تومان" : "ریال") + ")"} value={refundAmount} onChange={setRefundAmount} inputMode={currency === "IRT" ? "decimal" : "numeric"} placeholder="اختیاری" />
+          <SelectField label="حساب بازپرداخت" value={refundAccountId} onChange={setRefundAccountId} options={(accounts.data ?? []).map((account) => ({ value: account.id, label: account.name }))} placeholder="انتخاب صندوق یا بانک" />
+          <SelectField label="روش بازپرداخت" value={refundMethod} onChange={(value) => setRefundMethod(value as typeof refundMethod)} options={[{ value: "CASH", label: "نقدی" }, { value: "POS", label: "کارت‌خوان" }, { value: "BANK", label: "بانکی" }, { value: "OTHER", label: "سایر" }]} />
+        </div>
+        <div className="notice"><span>مبلغ برآوردی برگشت: <strong>{money(returnEstimate.total, currency)}</strong></span><small>{invoice.customer ? "مبلغ بازپرداخت نقدی اختیاری است و باقیمانده به اعتبار مشتری افزوده می‌شود." : "برای مشتری گذری، مبلغ کامل برگشت به حساب پرداخت انتخابی برمی‌گردد."}</small></div>
+        {error && <InlineError error={error} />}{accounts.isError && <InlineError error={accounts.error} retry={() => void accounts.refetch()} />}
+        <div className="modal-form-actions"><button className="button button-primary" type="submit" disabled={busy || returnEstimate.invalid || returnEstimate.lines.length === 0 || returnReason.trim().length < 3 || (needsRefundAccount && !refundAccountId) || refundValue < 0n || refundValue > returnEstimate.total}>{busy ? "در حال ثبت…" : "ثبت برگشت و سند مالی"}</button></div>
+      </form>}
+    </Modal>
     <QuickPartyModal open={quickPartyOpen} type="CUSTOMER" onClose={() => setQuickPartyOpen(false)} onCreated={(party) => { setCustomerId(party.id); void invalidate(); }} /><QuickProductModal open={quickProductOpen} currency={currency} onClose={() => setQuickProductOpen(false)} onCreated={(product) => { setLineRows((rows) => rows.map((row, index) => index === quickProductIndex ? { ...row, productId: product.id } : row)); void invalidate(); }} /><QuickAccountModal open={quickAccountOpen} onClose={() => setQuickAccountOpen(false)} onCreated={(account) => { setAccountId(account.id); void invalidate(); }} />
   </PageHeader>;
+}
+
+type ReturnEstimate = { lines: Array<{ invoiceLineId: string; quantity: string; restock: boolean }>; total: bigint; invalid: boolean };
+function quantityFromMilli(value: bigint) {
+  const whole = value / 1000n;
+  const fraction = (value % 1000n).toString().padStart(3, "0").replace(/0+$/, "");
+  return fraction ? whole.toString() + "." + fraction : whole.toString();
+}
+function estimateSalesReturn(invoice: InvoiceDetail, quantities: Record<string, string>, restock: Record<string, boolean>): ReturnEstimate {
+  const lines: ReturnEstimate["lines"] = [];
+  let total = 0n;
+  let invalid = false;
+  for (const line of invoice.lines) {
+    const text = quantities[line.id]?.trim();
+    if (!text) continue;
+    try {
+      const quantity = parseQuantityMilli(text);
+      const originalQuantity = parseQuantityMilli(line.quantity);
+      const remaining = originalQuantity - parseQuantityMilli(line.returnedQuantity || "0");
+      if (quantity > remaining || quantity <= 0n) { invalid = true; continue; }
+      const base = (quantity * BigInt(line.unitPriceRial) + 500n) / 1000n;
+      const completesRemaining = quantity === remaining;
+      const discount = completesRemaining ? BigInt(line.discountRial) - BigInt(line.returnedDiscountRial || "0") : (BigInt(line.discountRial) * quantity + originalQuantity / 2n) / originalQuantity;
+      const taxable = base - discount;
+      const tax = completesRemaining ? BigInt(line.taxRial) - BigInt(line.returnedTaxRial || "0") : (taxable * BigInt(line.taxRateBasisPoints) + 5000n) / 10000n;
+      const amount = taxable + tax;
+      if (amount <= 0n) { invalid = true; continue; }
+      total += amount;
+      lines.push({ invoiceLineId: line.id, quantity: text, restock: line.restockAllowed && (restock[line.id] ?? true) });
+    } catch { invalid = true; }
+  }
+  return { lines, total, invalid };
 }
 
 export function PurchaseDetailsPage({ currency, branchName }: { currency: MoneyCurrency; branchName: string }) {
