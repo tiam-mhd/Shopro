@@ -31,6 +31,9 @@ async function bootstrap() {
     const supplied = request.header("x-request-id");
     request.requestId = supplied && /^[\w.-]{1,80}$/.test(supplied) ? supplied : randomUUID();
     response.setHeader("x-request-id", request.requestId);
+    if (request.path === "/api/v1/system-admin" || request.path.startsWith("/api/v1/system-admin/")) {
+      response.setHeader("Cache-Control", "private, no-store");
+    }
     next();
   });
   if (process.env.MARKETING_PUBLIC_URL) {

@@ -36,7 +36,7 @@ const ADMIN_SECTIONS: Array<{ key: Tab; label: string; Icon: typeof LayoutDashbo
 
 export function SystemAdminSubscriptionsApp() {
   const client = useQueryClient();
-  const session = useQuery({ queryKey: ["system-admin-session"], queryFn: () => get<AdminSession>("/system-admin/session"), retry: false, staleTime: 30_000 });
+  const session = useQuery({ queryKey: ["system-admin-session"], queryFn: () => adminApi<AdminSession>("/system-admin/session"), retry: false, staleTime: 30_000 });
   const [tab, setTab] = useState<Tab>("overview");
   const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set(["overview"]));
   const [sidebarExpanded, setSidebarExpanded] = useState(() => {

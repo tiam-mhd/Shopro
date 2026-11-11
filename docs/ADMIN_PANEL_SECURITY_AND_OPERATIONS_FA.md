@@ -24,7 +24,7 @@ Migration `20261111090000_admin_owner_panel` افزایشی است. داده‌�
 ## احراز هویت، نشست و کنترل درخواست
 
 - رمز با Argon2id و salt یکتای کتابخانه ذخیره می‌شود (پارامترهای فعلی: حافظهٔ ۱۹٬۴۵۶ KiB، دو گذر، parallelism برابر ۱). hash نشست تصادفی ۳۲ بایتی و hash CSRF در PostgreSQL نگه‌داری می‌شوند؛ مقدار خام نشست به مرورگر فقط در cookie می‌رود.
-- در HTTPS نام cookie نشست `__Host-shopro_admin_session` است: `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/` و بدون `Domain`. در توسعهٔ محلی نام غیر `__Host` برای HTTP محلی استفاده می‌شود. cookie CSRF جداگانه خواندنی است و هر mutation مدیریتی باید همان مقدار را در `X-CSRF-Token` بفرستد.
+- در HTTPS نام cookie نشست `__Host-shopro_admin_session` است: `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/` و بدون `Domain`. در توسعهٔ محلی نام غیر `__Host` برای HTTP محلی استفاده می‌شود. cookie CSRF جداگانه خواندنی است؛ کلاینت پنل فقط از cookie مدیریتی برای `X-CSRF-Token` استفاده می‌کند و پاسخ‌های API پنل با `private, no-store` ارسال می‌شوند.
 - نشست سمت سرور پس از ۳۰ دقیقه بی‌فعالیتی منقضی و در هر حال پس از ۱۲ ساعت باطل می‌شود. مقدارها از `ADMIN_SESSION_IDLE_MINUTES` و `ADMIN_SESSION_MAX_HOURS` قابل تنظیم‌اند و بازهٔ معتبرشان به‌ترتیب ۵–۲۴۰ دقیقه و ۱–۱۶۸ ساعت است.
 - ورود با Origin منطبق بر `WEB_ORIGIN` کنترل می‌شود. CORS محدود به originهای تنظیم‌شده است. Helmet، CSP پیش‌فرض، `nosniff` و cache خصوصی برای مسیرهای مدیریتی فعال‌اند.
 - در production، وقتی `ADMIN_APP_ORIGIN` تنظیم شده باشد، فقط host پنل را برای هدایت ریشه به `/system-admin` مشخص می‌کند؛ مجوز را ایجاد نمی‌کند. صفحه‌های محافظت‌شده همچنان نشست سمت سرور را بررسی می‌کنند و کاربر ناشناس را به `/system-admin/login` می‌فرستند. origin ادمین باید عضو `WEB_ORIGIN` نیز باشد.
