@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CursorPage } from "@shopro/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Download, Send, X } from "lucide-react";
+import { AdminPagination } from "../components/AdminPagination.js";
 import { adminApi, downloadFile, get } from "../lib/api.js";
 import { faNumber, jalaliDate, money } from "../lib/format.js";
 import { InlineError, LoadingBlock } from "../App.js";
@@ -20,19 +21,21 @@ type PaymentSettings = {
 };
 
 type ReviewAction = { row: PaymentRow; kind: "approve" | "reject" } | null;
+type AdminPaymentPage = { items: PaymentRow[]; page: number; pageSize: number; total: number; pageCount: number };
 
 export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
   const client = useQueryClient();
   const [status, setStatus] = useState("PENDING_REVIEW");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState("25");
   const [action, setAction] = useState<ReviewAction>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const rows = useInfiniteQuery({
-    queryKey: ["system-admin", "manual-payments", status],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => get<CursorPage<PaymentRow>>(`/system-admin/subscriptions/manual-payments?status=${status}&limit=50${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
-    getNextPageParam: (page) => page.nextCursor ?? undefined,
+  useEffect(() => { setPage(1); }, [status, pageSize]);
+  const rows = useQuery({
+    queryKey: ["system-admin", "manual-payments", status, page, pageSize],
+    queryFn: () => get<AdminPaymentPage>(`/system-admin/subscriptions/manual-payments?status=${status}&page=${page}&pageSize=${pageSize}`),
   });
 
   const refresh = async () => {
@@ -68,11 +71,11 @@ export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
     catch (cause) { setError(errorText(cause)); }
     finally { setBusy(false); }
   };
-  const allRows = rows.data?.pages.flatMap((page) => page.items) ?? [];
+  const allRows = rows.data?.items ?? [];
 
   return <section className="admin-panel">
     <div className="admin-panel-heading"><div><h2>بررسی رسیدهای کارت‌به‌کارت</h2><p>رسید تنها پس از تأیید مدیر به پرداخت و اشتراک فعال تبدیل می‌شود.</p></div></div>
-    <div className="admin-filter-row"><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="فیلتر رسیدها"><option value="PENDING_REVIEW">در انتظار بررسی</option><option value="APPROVED">تأییدشده</option><option value="REJECTED">ردشده</option></select></div>
+    <div className="admin-filter-row"><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="فیلتر رسیدها"><option value="PENDING_REVIEW">در انتظار بررسی</option><option value="APPROVED">تأییدشده</option><option value="REJECTED">ردشده</option></select><select value={pageSize} onChange={(event) => setPageSize(event.target.value)} aria-label="تعداد رسید در صفحه"><option value="25">۲۵ ردیف</option><option value="50">۵۰ ردیف</option><option value="100">۱۰۰ ردیف</option></select></div>
     {rows.isError ? <InlineError error={rows.error} retry={() => void rows.refetch()} /> : rows.isPending ? <LoadingBlock /> : <div className="admin-manual-payment-list">
       {allRows.map((row) => <article className="admin-manual-payment-row" key={row.id}>
         <div className="admin-manual-payment-main"><strong>{row.businessName} · {row.branchName}</strong><span>{row.planNameFa} · {durationLabel(row.durationMonths)} · {money(row.amountRial, "IRT")}</span><small>{jalaliDate(row.submittedAt)}{row.trackingCode ? ` · کد پیگیری ${row.trackingCode}` : " · کد پیگیری وارد نشده"}</small>{row.rejectionReason && <small className="danger-text">دلیل رد: {row.rejectionReason}</small>}</div>
@@ -80,13 +83,13 @@ export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
         <span className={`admin-status-tag ${row.telegramStatus.toLowerCase()}`}>تلگرام: {telegramStatus(row.telegramStatus)}</span>
         {row.telegramErrorCode && <small className="admin-safe-error">{row.telegramErrorCode}</small>}
         <div className="admin-row-actions">
-          <button className="button button-secondary" type="button" disabled={busy} onClick={() => void downloadReceipt(row)}>دریافت رسید</button>
-          {row.telegramStatus !== "SENT" && <button className="button button-secondary" type="button" disabled={busy} onClick={() => void retryTelegram(row)}>ارسال دوباره به تلگرام</button>}
-          {row.reviewStatus === "PENDING_REVIEW" && <><button className="button button-primary" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "approve" }); setReason(""); setError(""); }}>تأیید پرداخت</button><button className="button button-text danger-text" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "reject" }); setReason(""); setError(""); }}>رد رسید</button></>}
+          <button className="admin-icon-action" type="button" disabled={busy} title="دریافت رسید" aria-label={`دریافت رسید ${row.businessName} · ${row.branchName}`} onClick={() => void downloadReceipt(row)}><Download size={16} /></button>
+          {row.telegramStatus !== "SENT" && <button className="admin-icon-action" type="button" disabled={busy} title="ارسال دوباره به تلگرام" aria-label={`ارسال رسید ${row.businessName} به تلگرام`} onClick={() => void retryTelegram(row)}><Send size={16} /></button>}
+          {row.reviewStatus === "PENDING_REVIEW" && <><button className="admin-icon-action success" type="button" disabled={busy} title="تأیید پرداخت" aria-label={`تأیید پرداخت ${row.businessName} · ${row.branchName}`} onClick={() => { setAction({ row, kind: "approve" }); setReason(""); setError(""); }}><Check size={16} /></button><button className="admin-icon-action danger" type="button" disabled={busy} title="رد رسید" aria-label={`رد رسید ${row.businessName} · ${row.branchName}`} onClick={() => { setAction({ row, kind: "reject" }); setReason(""); setError(""); }}><X size={16} /></button></>}
         </div>
       </article>)}
       {!allRows.length && <p className="admin-empty">رسیدی با این وضعیت ثبت نشده است.</p>}
-      {rows.hasNextPage && <button className="button button-secondary full" type="button" disabled={rows.isFetchingNextPage} onClick={() => void rows.fetchNextPage()}>{rows.isFetchingNextPage ? "در حال دریافت…" : "رسیدهای بیشتر"}</button>}
+      <AdminPagination page={page} pageCount={rows.data.pageCount} total={rows.data.total} onPage={setPage} />
     </div>}
     {error && <p className="notice notice-error" role="alert">{error}</p>}
     <Modal open={Boolean(action)} onClose={() => { setAction(null); setError(""); }} title={action?.kind === "approve" ? "تأیید پرداخت" : "رد رسید"} description={action ? `${action.row.businessName} · ${action.row.branchName} · ${money(action.row.amountRial, "IRT")}` : undefined}>

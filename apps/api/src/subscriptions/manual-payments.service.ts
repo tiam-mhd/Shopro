@@ -158,10 +158,55 @@ export class ManualPaymentsService {
     return result;
   }
 
-  async submissions(admin: AuthenticatedSystemAdmin, request: AppRequest, requestedStatus?: string, requestedCursor?: string, requestedLimit?: string) {
+  async submissions(admin: AuthenticatedSystemAdmin, request: AppRequest, requestedStatus?: string, requestedCursor?: string, requestedLimit?: string, requestedPage?: string, requestedPageSize?: string) {
     if (requestedStatus && !["PENDING_REVIEW", "APPROVED", "REJECTED"].includes(requestedStatus)) throw new BadRequestException("وضعیت رسید معتبر نیست.");
-    assertUuid(requestedCursor, "نشانگر صفحهٔ رسیدها معتبر نیست.");
     const where: Prisma.SubscriptionManualPaymentSubmissionWhereInput = requestedStatus ? { reviewStatus: requestedStatus as "PENDING_REVIEW" | "APPROVED" | "REJECTED" } : {};
+    const mapItems = (items: Array<{
+      id: string; orderId: string; order: { business: { displayName: string }; branch: { name: string }; planNameFaSnapshot: string; durationMonths: number; amountRial: bigint; currency: string; status: string };
+      reviewStatus: string; trackingCode: string | null; fileName: string; mimeType: string; bytes: bigint; telegramStatus: string; telegramErrorCode: string | null;
+      rejectionReason: string | null; submittedAt: Date; reviewedAt: Date | null;
+    }>) => items.map((row) => ({
+      id: row.id,
+      orderId: row.orderId,
+      businessName: row.order.business.displayName,
+      branchName: row.order.branch.name,
+      planNameFa: row.order.planNameFaSnapshot,
+      durationMonths: row.order.durationMonths,
+      amountRial: row.order.amountRial.toString(),
+      currency: row.order.currency,
+      orderStatus: row.order.status,
+      reviewStatus: row.reviewStatus,
+      trackingCode: row.trackingCode,
+      fileName: row.fileName,
+      mimeType: row.mimeType,
+      bytes: row.bytes.toString(),
+      telegramStatus: row.telegramStatus,
+      telegramErrorCode: row.telegramErrorCode,
+      rejectionReason: row.rejectionReason,
+      submittedAt: row.submittedAt.toISOString(),
+      reviewedAt: row.reviewedAt?.toISOString() ?? null,
+    }));
+
+    if (requestedPage !== undefined) {
+      if (!/^\d{1,7}$/.test(requestedPage)) throw new BadRequestException("شمارهٔ صفحه معتبر نیست.");
+      const page = Number(requestedPage);
+      if (!Number.isInteger(page) || page < 1 || page > 1_000_000) throw new BadRequestException("شمارهٔ صفحه معتبر نیست.");
+      const pageSize = pageLimit(requestedPageSize, 25, 100);
+      const [total, rows] = await Promise.all([
+        this.prisma.subscriptionManualPaymentSubmission.count({ where }),
+        this.prisma.subscriptionManualPaymentSubmission.findMany({
+          where, orderBy: [{ submittedAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize,
+          include: {
+            order: { include: { business: { select: { displayName: true } }, branch: { select: { name: true } } } },
+            paymentAttempt: { select: { status: true } },
+          },
+        }),
+      ]);
+      await this.audit(admin, request, "subscription.manual_payment_submissions.read", "subscription_manual_payment_collection", null, { count: rows.length, status: requestedStatus ?? "ALL", page, pageSize });
+      return { items: mapItems(rows), page, pageSize, total, pageCount: Math.ceil(total / pageSize) };
+    }
+
+    assertUuid(requestedCursor, "نشانگر صفحهٔ رسیدها معتبر نیست.");
     const limit = pageLimit(requestedLimit, 30, 100);
     if (requestedCursor && !(await this.prisma.subscriptionManualPaymentSubmission.findFirst({ where: { ...where, id: requestedCursor }, select: { id: true } }))) {
       throw new BadRequestException("نشانگر صفحه برای این فیلتر معتبر نیست؛ فهرست را تازه‌سازی کنید.");
@@ -180,27 +225,7 @@ export class ManualPaymentsService {
     await this.audit(admin, request, "subscription.manual_payment_submissions.read", "subscription_manual_payment_collection", null, { count: page.items.length, status: requestedStatus ?? "ALL", cursorUsed: Boolean(requestedCursor) });
     return {
       ...page,
-      items: page.items.map((row) => ({
-        id: row.id,
-        orderId: row.orderId,
-        businessName: row.order.business.displayName,
-        branchName: row.order.branch.name,
-        planNameFa: row.order.planNameFaSnapshot,
-        durationMonths: row.order.durationMonths,
-        amountRial: row.order.amountRial.toString(),
-        currency: row.order.currency,
-        orderStatus: row.order.status,
-        reviewStatus: row.reviewStatus,
-        trackingCode: row.trackingCode,
-        fileName: row.fileName,
-        mimeType: row.mimeType,
-        bytes: row.bytes.toString(),
-        telegramStatus: row.telegramStatus,
-        telegramErrorCode: row.telegramErrorCode,
-        rejectionReason: row.rejectionReason,
-        submittedAt: row.submittedAt.toISOString(),
-        reviewedAt: row.reviewedAt?.toISOString() ?? null,
-      })),
+      items: mapItems(page.items),
     };
   }
 

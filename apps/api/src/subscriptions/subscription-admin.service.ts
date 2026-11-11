@@ -126,7 +126,7 @@ export class SubscriptionAdminService {
     };
   }
 
-  async branches(admin: AuthenticatedSystemAdmin, request: AppRequest, query: { q?: string; status?: string; cursor?: string; limit?: string }) {
+  async branches(admin: AuthenticatedSystemAdmin, request: AppRequest, query: { q?: string; status?: string; cursor?: string; limit?: string; page?: string; pageSize?: string }) {
     const q = query.q?.trim();
     if (q && (q.length > 80 || /[\u0000-\u001f\u007f]/.test(q))) throw new BadRequestException("عبارت جست‌وجو معتبر نیست.");
     const now = new Date();
@@ -143,6 +143,23 @@ export class SubscriptionAdminService {
     if (query.status && !["ACTIVE", "SUSPENDED", "REQUIRED", "EXPIRED"].includes(query.status)) throw new BadRequestException("وضعیت فیلتر معتبر نیست.");
     if (query.status === "EXPIRED") where.subscription = { some: { suspendedAt: null, periods: { some: { revokedAt: null, endsAt: { lte: now } }, none: { revokedAt: null, startsAt: { lte: now }, endsAt: { gt: now } } } } };
     if (predicates.length) where.AND = predicates;
+    if (query.page !== undefined) {
+      const page = this.adminPageNumber(query.page);
+      const pageSize = pageLimit(query.pageSize, 25, 100);
+      const [total, rows] = await Promise.all([
+        this.prisma.branch.count({ where }),
+        this.prisma.branch.findMany({
+          where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize,
+          include: { business: { select: { id: true, displayName: true } }, subscription: { take: 1, include: { periods: { where: { revokedAt: null }, orderBy: [{ endsAt: "desc" }, { id: "desc" }], take: 10, include: { order: true } } } } },
+        }),
+      ]);
+      await this.audit(admin, request, "subscription.branches.list", "branch_subscription_collection", null, { resultCount: rows.length, searched: Boolean(q), status: query.status ?? "ALL", page, pageSize });
+      const rollout = await this.prisma.subscriptionRolloutSetting.findUnique({ where: { id: "global" } });
+      return {
+        items: rows.map((branch) => this.branchDto(branch, now, rollout?.mode ?? "OBSERVE", rollout?.legacyGraceEndsAt ?? null)),
+        page, pageSize, total, pageCount: Math.ceil(total / pageSize),
+      };
+    }
     const limit = pageLimit(query.limit, 30, 100);
     if (query.cursor) {
       if (!UUID_PATTERN.test(query.cursor)) throw new BadRequestException("نشانگر صفحه معتبر نیست.");
@@ -165,7 +182,7 @@ export class SubscriptionAdminService {
     };
   }
 
-  async orders(admin: AuthenticatedSystemAdmin, request: AppRequest, query: { q?: string; status?: string; cursor?: string; limit?: string }) {
+  async orders(admin: AuthenticatedSystemAdmin, request: AppRequest, query: { q?: string; status?: string; cursor?: string; limit?: string; page?: string; pageSize?: string }) {
     const q = query.q?.trim();
     if (q && (q.length > 80 || /[\u0000-\u001f\u007f]/.test(q))) throw new BadRequestException("عبارت جست‌وجو معتبر نیست.");
     const where: Prisma.SubscriptionOrderWhereInput = {};
@@ -178,6 +195,28 @@ export class SubscriptionAdminService {
     if (query.status) {
       if (!["PENDING", "PAID", "FAILED", "CANCELLED", "REFUNDED"].includes(query.status)) throw new BadRequestException("وضعیت سفارش معتبر نیست.");
       where.status = query.status as Prisma.EnumSubscriptionOrderStatusFilter["equals"];
+    }
+    if (query.page !== undefined) {
+      const page = this.adminPageNumber(query.page);
+      const pageSize = pageLimit(query.pageSize, 25, 100);
+      const [total, rows] = await Promise.all([
+        this.prisma.subscriptionOrder.count({ where }),
+        this.prisma.subscriptionOrder.findMany({
+          where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize,
+          include: { business: { select: { displayName: true } }, branch: { select: { name: true } }, attempts: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 5 } },
+        }),
+      ]);
+      await this.audit(admin, request, "subscription.orders.list", "subscription_order_collection", null, { resultCount: rows.length, searched: Boolean(q), status: query.status ?? "ALL", page, pageSize });
+      return {
+        items: rows.map((row) => ({
+          id: row.id, businessName: row.business.displayName, branchName: row.branch.name,
+          planCode: row.planCodeSnapshot, planNameFa: row.planNameFaSnapshot, durationMonths: row.durationMonths,
+          amountRial: row.amountRial.toString(), currency: row.currency, status: row.status,
+          providerReference: row.providerReference, createdAt: row.createdAt.toISOString(), paidAt: row.paidAt?.toISOString() ?? null,
+          attempts: row.attempts.map((attempt) => ({ provider: attempt.provider, providerExternalId: attempt.providerExternalId, amountRial: attempt.amountRial.toString(), status: attempt.status, safeErrorCode: attempt.safeErrorCode, createdAt: attempt.createdAt.toISOString(), completedAt: attempt.completedAt?.toISOString() ?? null })),
+        })),
+        page, pageSize, total, pageCount: Math.ceil(total / pageSize),
+      };
     }
     const limit = pageLimit(query.limit, 30, 100);
     if (query.cursor) {
@@ -419,6 +458,13 @@ export class SubscriptionAdminService {
       unknown: [feeRial === null ? "provider_fee" : null, taxRial === null ? "tax_obligation" : null, variableCosts === null ? "variable_cost" : null].filter(Boolean),
       warning: "این گزارش برآورد بر پایهٔ ورودی‌های مدیر سامانه است و سودآوری را تضمین نمی‌کند.",
     };
+  }
+
+  private adminPageNumber(value: string) {
+    if (!/^\d{1,7}$/.test(value)) throw new BadRequestException("شمارهٔ صفحه معتبر نیست.");
+    const page = Number(value);
+    if (!Number.isInteger(page) || page < 1 || page > 1_000_000) throw new BadRequestException("شمارهٔ صفحه معتبر نیست.");
+    return page;
   }
 
   private branchDto(branch: {

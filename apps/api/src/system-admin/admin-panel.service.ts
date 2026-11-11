@@ -93,9 +93,8 @@ export class AdminPanelService {
         take: pageSize,
         select: {
           id: true, displayName: true, businessType: true, isActive: true, adminSuspendedAt: true, adminSuspensionReason: true, createdAt: true,
-          branches: { orderBy: { createdAt: "asc" }, select: { id: true, name: true, code: true, isActive: true } },
           subscriptionOrders: { where: { paidAt: { not: null } }, orderBy: [{ paidAt: "desc" }, { id: "desc" }], take: 1, select: { paidAt: true } },
-          _count: { select: { branches: true, members: true, subscriptionOrders: true } },
+          _count: { select: { branches: true, members: true } },
         },
       }),
     ]);
@@ -105,8 +104,7 @@ export class AdminPanelService {
         id: row.id, displayName: row.displayName, businessType: row.businessType, isActive: row.isActive,
         suspendedAt: row.adminSuspendedAt?.toISOString() ?? null, suspensionReason: row.adminSuspensionReason,
         createdAt: row.createdAt.toISOString(), branchCount: row._count.branches, memberCount: row._count.members,
-        subscriptionOrderCount: row._count.subscriptionOrders, lastPaidAt: row.subscriptionOrders[0]?.paidAt?.toISOString() ?? null,
-        branches: row.branches,
+        lastPaidAt: row.subscriptionOrders[0]?.paidAt?.toISOString() ?? null,
       })),
       page, pageSize, total, pageCount: Math.ceil(total / pageSize),
     };
