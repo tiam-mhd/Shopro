@@ -480,13 +480,20 @@ html.motion-ready [data-reveal].is-visible { opacity: 1; transform: translate3d(
   .mini-bars { left: 11px; bottom: 13px; height: 47px; gap: 4px; }.mini-bars i { width: 5px; }
   .card-underline { right: 13px; bottom: 14px; width: 51px; height: 2px; }
   .storefront-section { padding-block: 58px; }
-  .storefront-panel { grid-template-columns: 1fr; gap: 8px; padding: 25px 20px 18px; border-radius: 25px; }
+  .storefront-panel { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 25px 20px 18px; border-radius: 25px; }
+  .storefront-copy, .storefront-art { width: 100%; min-width: 0; }
   .storefront-copy .eyebrow { margin-bottom: 10px; font-size: 9px; }
-  .storefront-copy h2 { max-width: 390px; font-size: clamp(29px, 8vw, 39px); }
-  .storefront-copy > p:not(.eyebrow) { margin-bottom: 12px; font-size: 10px; }
+  .storefront-copy h2 { width: 100%; max-width: 100%; margin-bottom: 14px; font-size: clamp(28px, 6.5vw, 35px); line-height: 1.4; text-wrap: balance; overflow-wrap: anywhere; }
+  .storefront-copy > p:not(.eyebrow) { width: 100%; max-width: 100%; margin-bottom: 12px; font-size: 10px; overflow-wrap: anywhere; }
   .storefront-note { font-size: 9px !important; }.storefront-note span { width: 20px; height: 20px; }.storefront-note svg { width: 13px; height: 13px; }
-  .storefront-art { min-height: 280px; margin-top: 0; }
+  .storefront-art { min-height: clamp(280px, 76vw, 390px); margin-top: 0; aspect-ratio: 1.2 / 1; }
+  .storefront-art::before, .store-ring { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+  .store-bag { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-7deg); }
   .ring-one { --ring-size: 68%; }.ring-two { --ring-size: 82%; }
+  .tile-a { right: 24%; left: auto; }.tile-b { right: 19%; left: auto; }.tile-c { left: 12%; right: auto; }
+  .spark-a { right: 10%; left: auto; }.spark-b { left: 26%; right: auto; }
+  .store-caption { right: 8%; left: auto; }
+  .store-bag::after { right: 13%; left: auto; inset-inline-end: auto; }
   .together-layout { grid-template-columns: 1fr; gap: 7px; }
   .together-copy { max-width: 460px; margin-inline: auto; text-align: center; }
   .together-copy .eyebrow { justify-content: center; font-size: 9px; }.together-copy > p:not(.eyebrow) { font-size: 11px; }
@@ -528,6 +535,7 @@ html.motion-ready [data-reveal].is-visible { opacity: 1; transform: translate3d(
   .possibility-card p { font-size: 8px; }
   .storefront-panel { padding-inline: 16px; }
   .storefront-art { min-height: 260px; aspect-ratio: 1.25 / 1; }
+  .storefront-copy h2 { font-size: clamp(27px, 8vw, 32px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
