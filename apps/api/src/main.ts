@@ -33,7 +33,7 @@ async function bootstrap() {
   if (process.env.MARKETING_PUBLIC_URL) {
     app.use(await createMarketingHostMiddleware({
       publicUrl: process.env.MARKETING_PUBLIC_URL,
-      productUrl: process.env.PRODUCT_URL ?? "https://shoproapp.ir",
+      productUrl: process.env.PRODUCT_URL ?? "https://web.shoproapp.ir",
       allowedOrigins: webOrigins(),
       staticRoot: resolve(process.cwd(), "apps/marketing/dist"),
       httpsOnly: process.env.NODE_ENV === "production",

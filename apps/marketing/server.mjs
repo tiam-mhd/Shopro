@@ -27,7 +27,7 @@ function publicOrigin(value, variable, fallback) {
 }
 
 const siteOrigin = publicOrigin(process.env.PUBLIC_URL, "PUBLIC_URL", "http://localhost:" + port);
-const productOrigin = publicOrigin(process.env.PRODUCT_URL, "PRODUCT_URL", "https://shoproapp.ir");
+const productOrigin = publicOrigin(process.env.PRODUCT_URL, "PRODUCT_URL", "https://web.shoproapp.ir");
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],

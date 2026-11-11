@@ -31,10 +31,10 @@ HTTPS/TLS: برای همان دامنه در Runflare فعال شود
 ```dotenv
 PORT=3000
 MARKETING_PUBLIC_URL=https://landing-host-replace.example
-PRODUCT_URL=https://shoproapp.ir
+PRODUCT_URL=https://web.shoproapp.ir
 ```
 
-`WEB_ORIGIN` فعلی Shopro و بقیهٔ متغیرها و Secretها را حفظ کنید؛ دامنهٔ لندینگ را به `WEB_ORIGIN` اضافه نکنید. لندینگ برای نمایش خود API یا دیتابیس را فراخوانی نمی‌کند. `MARKETING_PUBLIC_URL` باید با `WEB_ORIGIN` متفاوت باشد تا صفحهٔ محصول و لندینگ جابه‌جا نشوند. `PRODUCT_URL` origin فعلی محصول است و مسیر دکمه‌های ورود از آن به `/app` ساخته می‌شود. اگر origin محصول در آینده عوض شد، همین مقدار را به‌روز کنید.
+`WEB_ORIGIN=https://web.shoproapp.ir` همان origin فعلی اپلیکیشن است؛ آن را حفظ کنید و میزبان لندینگ را به `WEB_ORIGIN` اضافه نکنید. بقیهٔ متغیرها و Secretهای موجود نیز دست‌نخورده بمانند. لندینگ برای نمایش خود API یا دیتابیس را فراخوانی نمی‌کند. `MARKETING_PUBLIC_URL` باید با `WEB_ORIGIN` متفاوت باشد تا صفحهٔ محصول و لندینگ جابه‌جا نشوند. `PRODUCT_URL=https://web.shoproapp.ir` لینک‌های ورود را به `/app` همین اپ می‌فرستد. اگر origin اپ تغییر کرد، این دو مقدار را هماهنگ به‌روز کنید.
 
 `MARKETING_PORT` یا `PUBLIC_URL` را در آیتم موجود تنظیم نکنید. پورت مستقل `8080` فقط برای پیش‌نمایش کانتینری جداست و در اتصال Runflare این راهنما استفاده نمی‌شود.
 
