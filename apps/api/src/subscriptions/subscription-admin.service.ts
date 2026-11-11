@@ -1,10 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "../generated/prisma/client.js";
+import { SystemAdminAuthService } from "../auth/system-admin-auth.service.js";
 import { cursorPage, pageLimit } from "../common/cursor-pagination.js";
 import type { AppRequest, AuthenticatedSystemAdmin } from "../common/request-context.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { addJalaliMonths, isSubscriptionPeriodActive } from "./jalali-period.js";
-import type { CreateSubscriptionPlanDto, CreateSubscriptionPriceDto, SubscriptionGrantDto, SubscriptionReasonDto, SubscriptionRolloutDto, UpdateSubscriptionPlanDto } from "./subscriptions.dto.js";
+import type { CreateSubscriptionPlanDto, CreateSubscriptionPriceDto, SubscriptionActionPreviewDto, SubscriptionGrantDto, SubscriptionReasonDto, SubscriptionRolloutDto, SubscriptionSensitiveReasonDto, UpdateSubscriptionPlanDto } from "./subscriptions.dto.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DURATIONS = new Set([1, 3, 6, 12]);
@@ -18,7 +19,7 @@ function tehranDateKey(date: Date) {
 
 @Injectable()
 export class SubscriptionAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly adminAuth: SystemAdminAuthService) {}
 
   async plans(admin: AuthenticatedSystemAdmin, request: AppRequest) {
     const rows = await this.prisma.subscriptionPlan.findMany({
@@ -200,9 +201,54 @@ export class SubscriptionAdminService {
     })) };
   }
 
+  async previewBranchAction(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionActionPreviewDto) {
+    if (!UUID_PATTERN.test(branchId)) throw new BadRequestException("شناسهٔ شعبه معتبر نیست.");
+    if ((dto.kind === "grant" || dto.kind === "extend") && !DURATIONS.has(dto.durationMonths ?? 0)) throw new BadRequestException("مدت اشتراک معتبر نیست.");
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, isActive: true },
+      select: { id: true, businessId: true, name: true, business: { select: { displayName: true } }, subscription: { select: {
+        id: true,
+        suspendedAt: true,
+        periods: { where: { revokedAt: null }, orderBy: [{ endsAt: "desc" }, { id: "desc" }], select: { id: true, startsAt: true, endsAt: true, planNameFaSnapshot: true, durationMonths: true } },
+      } } },
+    });
+    if (!branch) throw new NotFoundException("شعبهٔ فعال پیدا نشد.");
+    const now = new Date();
+    const subscription = branch.subscription[0] ?? null;
+    const periods = subscription?.periods ?? [];
+    const activePeriods = periods.filter((period) => isSubscriptionPeriodActive(period.startsAt, period.endsAt, now));
+    const latest = periods[0] ?? null;
+    let effect: Record<string, unknown>;
+    if (dto.kind === "grant" || dto.kind === "extend") {
+      const startsAt = latest && latest.endsAt > now ? latest.endsAt : now;
+      const endsAt = addJalaliMonths(startsAt, dto.durationMonths!);
+      effect = { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), durationMonths: dto.durationMonths, appendsAfterExistingEnd: Boolean(latest && latest.endsAt > now) };
+    } else if (dto.kind === "suspend") {
+      effect = { suspended: true, changesAccess: !subscription?.suspendedAt };
+    } else if (dto.kind === "unsuspend") {
+      effect = { suspended: false, changesAccess: Boolean(subscription?.suspendedAt) };
+    } else {
+      const revocablePeriods = periods.filter((period) => period.endsAt > now);
+      if (!revocablePeriods.length) throw new ConflictException("برای این شعبه دورهٔ فعالی جهت لغو وجود ندارد.");
+      effect = { revokedAt: now.toISOString(), affectedPeriodCount: revocablePeriods.length };
+    }
+    await this.audit(admin, request, "subscription.admin_action.previewed", "branch_subscription", subscription?.id ?? null, { branchId, kind: dto.kind });
+    return {
+      observedAt: now.toISOString(),
+      branch: { id: branch.id, businessName: branch.business.displayName, branchName: branch.name },
+      current: {
+        suspended: Boolean(subscription?.suspendedAt),
+        activePeriodCount: activePeriods.length,
+        latestPeriod: latest ? { id: latest.id, startsAt: latest.startsAt.toISOString(), endsAt: latest.endsAt.toISOString(), planNameFa: latest.planNameFaSnapshot, durationMonths: latest.durationMonths } : null,
+      },
+      effect,
+    };
+  }
+
   async grant(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionGrantDto, extension = false) {
     if (!UUID_PATTERN.test(branchId)) throw new BadRequestException("شناسهٔ شعبه معتبر نیست.");
     if (!DURATIONS.has(dto.durationMonths) || dto.reason.trim().length < 3) throw new BadRequestException("مدت اشتراک یا دلیل ثبت معتبر نیست.");
+    await this.adminAuth.verifyCurrentPassword(admin.id, dto.currentPassword, request, extension ? "subscription-extend" : "subscription-grant");
     const period = await this.prisma.$transaction(async (tx) => {
       const branch = await tx.branch.findFirst({ where: { id: branchId, isActive: true }, select: { id: true, businessId: true, name: true } });
       if (!branch) throw new NotFoundException("شعبهٔ فعال پیدا نشد.");
@@ -235,8 +281,9 @@ export class SubscriptionAdminService {
     return { id: period.id, branchId: period.branchId, source: period.source, startsAt: period.startsAt.toISOString(), endsAt: period.endsAt.toISOString(), durationMonths: period.durationMonths };
   }
 
-  async setSuspension(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionReasonDto, suspended: boolean) {
+  async setSuspension(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionSensitiveReasonDto, suspended: boolean) {
     if (!UUID_PATTERN.test(branchId) || dto.reason.trim().length < 3) throw new BadRequestException("شناسهٔ شعبه یا دلیل ثبت معتبر نیست.");
+    await this.adminAuth.verifyCurrentPassword(admin.id, dto.currentPassword, request, suspended ? "subscription-suspend" : "subscription-unsuspend");
     const row = await this.prisma.$transaction(async (tx) => {
       const branch = await tx.branch.findFirst({ where: { id: branchId, isActive: true }, select: { id: true, businessId: true, name: true } });
       if (!branch) throw new NotFoundException("شعبهٔ فعال پیدا نشد.");
@@ -254,8 +301,9 @@ export class SubscriptionAdminService {
     return { branchId: row.branchId, suspendedAt: row.suspendedAt?.toISOString() ?? null, suspensionReason: row.suspensionReason };
   }
 
-  async revoke(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionReasonDto) {
+  async revoke(admin: AuthenticatedSystemAdmin, request: AppRequest, branchId: string, dto: SubscriptionSensitiveReasonDto) {
     if (!UUID_PATTERN.test(branchId) || dto.reason.trim().length < 3) throw new BadRequestException("شناسهٔ شعبه یا دلیل ثبت معتبر نیست.");
+    await this.adminAuth.verifyCurrentPassword(admin.id, dto.currentPassword, request, "subscription-revoke");
     const now = new Date();
     const result = await this.prisma.$transaction(async (tx) => {
       const subscription = await tx.branchSubscription.findFirst({ where: { branchId }, include: { branch: { select: { businessId: true, name: true } } } });

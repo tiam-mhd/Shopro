@@ -48,7 +48,7 @@ export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
     try {
       await adminApi(`/system-admin/subscriptions/manual-payments/${action.row.id}/${action.kind}`, {
         method: "POST",
-        ...(action.kind === "reject" ? { body: JSON.stringify({ reason }) } : {}),
+        body: JSON.stringify({ reason }),
       }, csrf);
       setAction(null); setReason(""); await refresh();
     } catch (cause) { setError(errorText(cause)); }
@@ -82,7 +82,7 @@ export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
         <div className="admin-row-actions">
           <button className="button button-secondary" type="button" disabled={busy} onClick={() => void downloadReceipt(row)}>دریافت رسید</button>
           {row.telegramStatus !== "SENT" && <button className="button button-secondary" type="button" disabled={busy} onClick={() => void retryTelegram(row)}>ارسال دوباره به تلگرام</button>}
-          {row.reviewStatus === "PENDING_REVIEW" && <><button className="button button-primary" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "approve" }); setError(""); }}>تأیید پرداخت</button><button className="button button-text danger-text" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "reject" }); setReason(""); setError(""); }}>رد رسید</button></>}
+          {row.reviewStatus === "PENDING_REVIEW" && <><button className="button button-primary" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "approve" }); setReason(""); setError(""); }}>تأیید پرداخت</button><button className="button button-text danger-text" type="button" disabled={busy} onClick={() => { setAction({ row, kind: "reject" }); setReason(""); setError(""); }}>رد رسید</button></>}
         </div>
       </article>)}
       {!allRows.length && <p className="admin-empty">رسیدی با این وضعیت ثبت نشده است.</p>}
@@ -92,7 +92,7 @@ export function ManualPaymentsAdminTab({ csrf }: { csrf?: string }) {
     <Modal open={Boolean(action)} onClose={() => { setAction(null); setError(""); }} title={action?.kind === "approve" ? "تأیید پرداخت" : "رد رسید"} description={action ? `${action.row.businessName} · ${action.row.branchName} · ${money(action.row.amountRial, "IRT")}` : undefined}>
       {action && <form className="admin-modal-form" onSubmit={(event) => void submitReview(event)}>
         <p>{action.kind === "approve" ? "با تأیید، پرداخت ثبت و اشتراک همین سفارش فعال می‌شود." : "با رد رسید، سفارش برای ارسال رسید اصلاح‌شده باز می‌ماند."}</p>
-        {action.kind === "reject" && <label className="field"><span className="field-label">دلیل رد رسید</span><textarea minLength={3} maxLength={500} required rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
+        <label className="field"><span className="field-label">{action.kind === "approve" ? "دلیل تأیید پرداخت" : "دلیل رد رسید"}</span><textarea minLength={3} maxLength={500} required rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         {error && <p className="notice notice-error">{error}</p>}
         <button className={`button ${action.kind === "approve" ? "button-primary" : "button-danger"} full`} disabled={busy}>{busy ? "در حال ثبت…" : action.kind === "approve" ? "تأیید و فعال‌سازی اشتراک" : "رد رسید"}</button>
       </form>}

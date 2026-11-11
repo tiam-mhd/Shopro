@@ -1,10 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
 import type { Response } from "express";
 import { CurrentSystemAdmin } from "../common/current-system-admin.decorator.js";
 import { SystemAdminOnly } from "../common/system-admin-only.decorator.js";
 import { UuidParamPipe } from "../common/uuid-param.pipe.js";
 import type { AppRequest, AuthenticatedSystemAdmin } from "../common/request-context.js";
-import { CreateSubscriptionPlanDto, CreateSubscriptionPriceDto, SubscriptionGrantDto, SubscriptionReasonDto, SubscriptionRolloutDto, UpdateSubscriptionPlanDto } from "./subscriptions.dto.js";
+import { CreateSubscriptionPlanDto, CreateSubscriptionPriceDto, SubscriptionActionPreviewDto, SubscriptionGrantDto, SubscriptionReasonDto, SubscriptionRolloutDto, SubscriptionSensitiveReasonDto, UpdateSubscriptionPlanDto } from "./subscriptions.dto.js";
 import { UpdateManualPaymentSettingsDto } from "./subscriptions.dto.js";
 import { ManualPaymentsService } from "./manual-payments.service.js";
 import { SubscriptionAdminService } from "./subscription-admin.service.js";
@@ -21,11 +21,12 @@ export class SubscriptionAdminController {
   @Post("plans/:id/prices") addPrice(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string, @Body() dto: CreateSubscriptionPriceDto) { return this.subscriptions.addPrice(admin, request, id, dto); }
 
   @Get("branches") branches(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Query("q") q?: string, @Query("status") status?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.subscriptions.branches(admin, request, { q, status, cursor, limit }); }
+  @Post("branches/:branchId/preview") @HttpCode(HttpStatus.OK) previewBranchAction(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionActionPreviewDto) { return this.subscriptions.previewBranchAction(admin, request, branchId, dto); }
   @Post("branches/:branchId/grant") grant(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionGrantDto) { return this.subscriptions.grant(admin, request, branchId, dto); }
   @Post("branches/:branchId/extend") extend(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionGrantDto) { return this.subscriptions.grant(admin, request, branchId, dto, true); }
-  @Post("branches/:branchId/suspend") suspend(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionReasonDto) { return this.subscriptions.setSuspension(admin, request, branchId, dto, true); }
-  @Post("branches/:branchId/unsuspend") unsuspend(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionReasonDto) { return this.subscriptions.setSuspension(admin, request, branchId, dto, false); }
-  @Post("branches/:branchId/revoke") revoke(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionReasonDto) { return this.subscriptions.revoke(admin, request, branchId, dto); }
+  @Post("branches/:branchId/suspend") suspend(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionSensitiveReasonDto) { return this.subscriptions.setSuspension(admin, request, branchId, dto, true); }
+  @Post("branches/:branchId/unsuspend") unsuspend(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionSensitiveReasonDto) { return this.subscriptions.setSuspension(admin, request, branchId, dto, false); }
+  @Post("branches/:branchId/revoke") revoke(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("branchId", UuidParamPipe) branchId: string, @Body() dto: SubscriptionSensitiveReasonDto) { return this.subscriptions.revoke(admin, request, branchId, dto); }
 
   @Get("orders") orders(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Query("q") q?: string, @Query("status") status?: string, @Query("cursor") cursor?: string, @Query("limit") limit?: string) { return this.subscriptions.orders(admin, request, { q, status, cursor, limit }); }
   @Post("orders/:id/refund") refund(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string, @Body() dto: SubscriptionReasonDto) { return this.subscriptions.refund(admin, request, id, dto); }
@@ -40,7 +41,7 @@ export class SubscriptionAdminController {
     response.set({ "Content-Type": file.mimeType, "Content-Length": String(file.bytes.byteLength), "Content-Disposition": `attachment; filename="receipt"; filename*=UTF-8''${encodedName}`, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
     response.status(200).send(file.bytes);
   }
-  @Post("manual-payments/:id/approve") approveManualPayment(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string) { return this.manualPayments.approve(admin, request, id); }
+  @Post("manual-payments/:id/approve") approveManualPayment(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string, @Body() dto: SubscriptionReasonDto) { return this.manualPayments.approve(admin, request, id, dto.reason); }
   @Post("manual-payments/:id/reject") rejectManualPayment(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string, @Body() dto: SubscriptionReasonDto) { return this.manualPayments.reject(admin, request, id, dto.reason); }
   @Post("manual-payments/:id/telegram/retry") retryManualPaymentTelegram(@CurrentSystemAdmin() admin: AuthenticatedSystemAdmin, @Req() request: AppRequest, @Param("id", UuidParamPipe) id: string) { return this.manualPayments.retryTelegram(admin, request, id); }
 

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import cookieParser from "cookie-parser";
 import express from "express";
+import type { NextFunction, Response } from "express";
 import helmet from "helmet";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
@@ -12,7 +13,8 @@ import { ApiExceptionFilter } from "./common/api-exception.filter.js";
 import { createMarketingHostMiddleware } from "./marketing-host.middleware.js";
 import { validateProductionEnv, webOrigins } from "./common/production-env.js";
 import type { AppRequest } from "./common/request-context.js";
-import type { NextFunction, Response } from "express";
+import { PrismaService } from "./prisma/prisma.service.js";
+import { createSystemAdminPageAuthMiddleware } from "./common/system-admin-page-auth.middleware.js";
 
 async function bootstrap() {
   validateProductionEnv();
@@ -42,6 +44,8 @@ async function bootstrap() {
   if (process.env.NODE_ENV === "production") {
     const webRoot = resolve(process.cwd(), "apps/web/dist");
     app.use(express.static(webRoot, { index: false }));
+    const prisma = app.get(PrismaService);
+    app.use(createSystemAdminPageAuthMiddleware(prisma));
     app.use((request: AppRequest, response: Response, next: NextFunction) => {
       if (request.method !== "GET" || request.path === "/api" || request.path.startsWith("/api/")) {
         next();

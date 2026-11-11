@@ -214,8 +214,10 @@ export class ManualPaymentsService {
     return { ...row, bytes };
   }
 
-  async approve(admin: AuthenticatedSystemAdmin, request: AppRequest, submissionId: string) {
+  async approve(admin: AuthenticatedSystemAdmin, request: AppRequest, submissionId: string, reason: string) {
     if (!UUID_PATTERN.test(submissionId)) throw new BadRequestException("شناسهٔ رسید معتبر نیست.");
+    const reviewReason = reason.trim();
+    if (reviewReason.length < 3 || reviewReason.length > 500) throw new BadRequestException("دلیل تأیید را در ۳ تا ۵۰۰ نویسه وارد کنید.");
     const row = await this.prisma.subscriptionManualPaymentSubmission.findUnique({ where: { id: submissionId }, include: { order: true, paymentAttempt: true } });
     if (!row) throw new NotFoundException("رسید پرداخت پیدا نشد.");
     if (row.reviewStatus !== "PENDING_REVIEW" || row.order.status !== "PENDING" || row.paymentAttempt.provider !== PAYMENT_PROVIDER) throw new ConflictException("رسید دیگر در وضعیت انتظار بررسی نیست.");
@@ -227,7 +229,7 @@ export class ManualPaymentsService {
       amountRial: row.order.amountRial,
       currency: row.order.currency,
       confirmedAt,
-      manualReview: { submissionId: row.id, adminId: admin.id, requestId: request.requestId ?? "unknown" },
+      manualReview: { submissionId: row.id, adminId: admin.id, requestId: request.requestId ?? "unknown", reason: reviewReason },
     });
     return { submissionId: row.id, reviewStatus: "APPROVED", paidAt: confirmedAt.toISOString(), periodId: period?.id ?? null };
   }

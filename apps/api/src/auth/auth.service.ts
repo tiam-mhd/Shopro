@@ -5,9 +5,8 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { ParsgreenService } from "./parsgreen.service.js";
 
-export type OtpAudience = "USER_LOGIN" | "ADMIN_LOGIN" | "STOREFRONT_CHECKOUT" | "STOREFRONT_CUSTOMER";
+export type OtpAudience = "USER_LOGIN" | "STOREFRONT_CHECKOUT" | "STOREFRONT_CUSTOMER";
 export interface SafeUser { id: string; phone: string; displayName: string | null }
-export interface SafeAdmin { id: string; phone: string; displayName: string }
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const normalizePhone = (value: string) => {
@@ -23,16 +22,6 @@ export class AuthService {
 
   async requestOtp(input: string, audience: OtpAudience, ipAddress?: string, requestId?: string): Promise<{ expiresAt: string; resendAt: string }> {
     const phone = normalizePhone(input);
-    if (audience === "ADMIN_LOGIN") {
-      const admin = await this.prisma.systemAdmin.findUnique({ where: { phone }, select: { isActive: true } });
-      if (!admin?.isActive) {
-        const inactiveAt = new Date();
-        return {
-          expiresAt: new Date(inactiveAt.getTime() + Number(process.env.OTP_TTL_SECONDS ?? 180) * 1000).toISOString(),
-          resendAt: new Date(inactiveAt.getTime() + Number(process.env.OTP_RESEND_SECONDS ?? 60) * 1000).toISOString(),
-        };
-      }
-    }
     const purpose = audience;
     const now = new Date();
     const ttl = Number(process.env.OTP_TTL_SECONDS ?? 180);
@@ -87,20 +76,6 @@ export class AuthService {
       if (!user.isActive) throw new BadRequestException("این حساب غیرفعال است.");
       const session = await this.createUserSession(tx, user.id);
       return { user: { id: user.id, phone: user.phone, displayName: user.displayName }, ...session };
-    });
-  }
-
-  async verifyAdminOtp(inputPhone: string, inputCode: string): Promise<{ admin: SafeAdmin; sessionId: string; rawSession: string; rawCsrf: string; expiresAt: Date }> {
-    const phone = normalizePhone(inputPhone);
-    const result = await this.verifyChallenge(phone, inputCode, "ADMIN_LOGIN");
-    if (!result) throw new BadRequestException("کد واردشده درست نیست یا مهلت آن تمام شده است.");
-    return this.prisma.$transaction(async (tx) => {
-      const consumed = await tx.otpChallenge.updateMany({ where: { id: result.id, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: 5 } }, data: { consumedAt: new Date() } });
-      if (consumed.count !== 1) throw new ConflictException("این کد پیش‌تر استفاده شده یا منقضی شده است.");
-      const admin = await tx.systemAdmin.findUnique({ where: { phone }, select: { id: true, phone: true, displayName: true, isActive: true } });
-      if (!admin?.isActive) throw new BadRequestException("این حساب مدیر سامانه فعال نیست.");
-      const session = await this.createAdminSession(tx, admin.id);
-      return { admin: { id: admin.id, phone: admin.phone, displayName: admin.displayName }, ...session };
     });
   }
 
@@ -166,10 +141,6 @@ export class AuthService {
     await this.prisma.userSession.updateMany({ where: { id: sessionId, revokedAt: null }, data: { revokedAt: new Date() } });
   }
 
-  async logoutAdmin(sessionId: string) {
-    await this.prisma.systemAdminSession.updateMany({ where: { id: sessionId, revokedAt: null }, data: { revokedAt: new Date() } });
-  }
-
   private async verifyChallenge(phone: string, inputCode: string, purpose: OtpAudience): Promise<{ id: string } | null> {
     const code = toAsciiDigits(inputCode).trim();
     if (!/^\d{4,8}$/.test(code)) return null;
@@ -191,14 +162,6 @@ export class AuthService {
     const ttl = Math.max(1, Number(process.env.SESSION_TTL_DAYS ?? 30));
     const expiresAt = new Date(Date.now() + ttl * 86400 * 1000);
     const row = await tx.userSession.create({ data: { userId, tokenHash: hash(rawSession), csrfHash: hash(rawCsrf), expiresAt }, select: { id: true } });
-    return { sessionId: row.id, rawSession, rawCsrf, expiresAt };
-  }
-
-  private async createAdminSession(tx: Prisma.TransactionClient, adminId: string) {
-    const rawSession = randomBytes(32).toString("base64url");
-    const rawCsrf = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    const row = await tx.systemAdminSession.create({ data: { adminId, tokenHash: hash(rawSession), csrfHash: hash(rawCsrf), expiresAt }, select: { id: true } });
     return { sessionId: row.id, rawSession, rawCsrf, expiresAt };
   }
 

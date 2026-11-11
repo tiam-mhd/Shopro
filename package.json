@@ -28,8 +28,7 @@
     "db:seed": "node prisma/seed-dispatcher.mjs",
     "db:seed:subscriptions": "node prisma/seed-dispatcher.mjs --subscriptions-only",
     "db:setup:production": "npm run db:deploy && npm run db:seed:subscriptions",
-    "admin:create": "tsx apps/api/src/cli/create-system-admin.ts",
-    "admin:create:prod": "node apps/api/dist/cli/create-system-admin.js"
+    "admin:recover": "node apps/api/dist/cli/recover-system-admin-password.js"
   },
   "dependencies": {
     "prisma": "^7.7.0"

@@ -16,7 +16,7 @@ export interface AuthenticatedUser {
 
 export interface AuthenticatedSystemAdmin {
   id: string;
-  phone: string;
+  username: string;
   displayName: string;
   sessionId: string;
   csrfHash: string;

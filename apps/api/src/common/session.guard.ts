@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, InternalServerErrorException, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -6,6 +6,7 @@ import { IS_PUBLIC } from "./public.decorator.js";
 import { SYSTEM_ADMIN_ONLY } from "./system-admin-only.decorator.js";
 import { assertUuid } from "./uuid-param.pipe.js";
 import type { AppRequest } from "./request-context.js";
+import { ADMIN_SESSION_COOKIE } from "./admin-session-cookie.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -17,16 +18,28 @@ export class SessionGuard implements CanActivate {
     if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [context.getHandler(), context.getClass()])) return true;
     const request = context.switchToHttp().getRequest<AppRequest>();
     if (this.reflector.getAllAndOverride<boolean>(SYSTEM_ADMIN_ONLY, [context.getHandler(), context.getClass()])) {
-      const raw = request.cookies?.shopro_admin_session as string | undefined;
+      const raw = request.cookies?.[ADMIN_SESSION_COOKIE] as string | undefined;
       if (!raw) throw new UnauthorizedException("برای ادامه با حساب مدیر سامانه وارد شوید.");
+      const now = new Date();
       const session = await this.prisma.systemAdminSession.findFirst({
-        where: { tokenHash: hash(raw), revokedAt: null, expiresAt: { gt: new Date() }, admin: { isActive: true } },
+        where: {
+          tokenHash: hash(raw), revokedAt: null, expiresAt: { gt: now }, absoluteExpiresAt: { gt: now },
+          admin: { isActive: true, username: "shopro_super_admin", passwordHash: { not: null } },
+        },
         include: { admin: true },
       });
       if (!session) throw new UnauthorizedException("نشست مدیر سامانه پایان یافته است؛ دوباره وارد شوید.");
+      const idleMinutes = Number(process.env.ADMIN_SESSION_IDLE_MINUTES ?? 30);
+      if (!Number.isInteger(idleMinutes) || idleMinutes < 5 || idleMinutes > 240) throw new InternalServerErrorException("تنظیم مهلت بی‌فعالیتی مدیر معتبر نیست.");
+      const expiresAt = new Date(Math.min(now.getTime() + idleMinutes * 60_000, session.absoluteExpiresAt.getTime()));
+      const refreshed = await this.prisma.systemAdminSession.updateMany({
+        where: { id: session.id, revokedAt: null, expiresAt: { gt: now }, absoluteExpiresAt: { gt: now } },
+        data: { lastSeenAt: now, expiresAt },
+      });
+      if (refreshed.count !== 1) throw new UnauthorizedException("نشست مدیر سامانه پایان یافته است؛ دوباره وارد شوید.");
       request.systemAdmin = {
         id: session.admin.id,
-        phone: session.admin.phone,
+        username: session.admin.username!,
         displayName: session.admin.displayName,
         sessionId: session.id,
         csrfHash: session.csrfHash,
@@ -53,7 +66,7 @@ export class SessionGuard implements CanActivate {
     assertUuid(branchId, "شناسهٔ شعبه معتبر نیست.");
     if (businessId) {
       const member = await this.prisma.businessMember.findFirst({
-        where: { businessId, userId: user.id, status: "ACTIVE" },
+        where: { businessId, userId: user.id, status: "ACTIVE", business: { isActive: true } },
         include: { branches: { where: { branch: { isActive: true } }, select: { branchId: true, branch: { select: { isActive: true } } } } },
       });
       if (!member) throw new ForbiddenException("به این کسب‌وکار دسترسی ندارید.");

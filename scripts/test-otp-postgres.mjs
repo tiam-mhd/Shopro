@@ -60,12 +60,6 @@ try {
   assert.equal(await prisma.otpChallenge.count({ where: { phone: hourlyPhone, purpose: "USER_LOGIN" } }), 2);
   process.env.OTP_MAX_PER_PHONE_HOUR = "5";
 
-  const unknownAdminPhone = phone();
-  const sentBeforeAdminProbe = sentCodes.length;
-  await auth.requestOtp(unknownAdminPhone, "ADMIN_LOGIN", "198.51.100.30");
-  assert.equal(sentCodes.length, sentBeforeAdminProbe, "an unknown system-admin phone must not be sent an OTP");
-  assert.equal(await prisma.otpChallenge.count({ where: { phone: unknownAdminPhone, purpose: "ADMIN_LOGIN" } }), 0);
-
   const loginPhone = phone();
   await auth.requestOtp(loginPhone, "USER_LOGIN", "198.51.100.40");
   const loginCode = sentCodes.findLast((item) => item.phone === loginPhone)?.code;

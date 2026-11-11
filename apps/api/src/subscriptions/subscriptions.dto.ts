@@ -48,9 +48,18 @@ export class SubscriptionReasonDto {
   @IsString() @MinLength(3) @MaxLength(500) reason!: string;
 }
 
-export class SubscriptionGrantDto extends SubscriptionReasonDto {
+export class SubscriptionSensitiveReasonDto extends SubscriptionReasonDto {
+  @IsString() @MaxLength(1024) currentPassword!: string;
+}
+
+export class SubscriptionGrantDto extends SubscriptionSensitiveReasonDto {
   @IsInt() @IsIn(durations) durationMonths!: (typeof durations)[number];
   @IsOptional() @IsString() @Matches(/^[A-Z][A-Z0-9_]{2,23}$/) planCode?: string;
+}
+
+export class SubscriptionActionPreviewDto {
+  @IsIn(["grant", "extend", "suspend", "unsuspend", "revoke"]) kind!: "grant" | "extend" | "suspend" | "unsuspend" | "revoke";
+  @IsOptional() @IsInt() @IsIn(durations) durationMonths?: (typeof durations)[number];
 }
 
 export class SubscriptionRolloutDto {

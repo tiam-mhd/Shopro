@@ -17,12 +17,10 @@ Dockerfile در ریشه مخزن است و پورت `3000` را ارائه می
 4. متغیرهای فایل [`../infra/runflare.env.example`](../infra/runflare.env.example) را در تنظیمات محیطی سرویس Docker، بخش Bulk Edit، وارد کنید. `DATABASE_URL` را از جزئیات اتصال داخلی سرویس PostgreSQL بگیرید. Host باید آدرس داخلی سرویس Postgres در Runflare باشد؛ آدرس remote را فعال نکنید. `TRUST_PROXY_HOPS=1` فرض می‌کند یک reverse proxy جلوی کانتینر است؛ اگر مسیر شبکه تعداد دیگری دارد، مقدار را با همان تعداد hop مورداعتماد هماهنگ کنید. متغیرهای secret را در Runflare به حالت Secret تنظیم کنید.
 5. پورت سرویس Docker را در صورت درخواست Runflare روی `3000` بگذارید. دامنه را به همین سرویس Docker وصل کنید، گواهی رایگان SSL رانفلر را برای دامنه فعال کنید، سپس `WEB_ORIGIN` را با origin نهایی `https://...` مقداردهی کنید. `COOKIE_SECURE=true` فقط وقتی درست است که HTTPS برای آن دامنه فعال باشد.
 6. برای دریافت رسید هزینه و اشتراک، یک volume پایدار و خصوصی به سرویس Docker وصل و `ATTACHMENT_STORAGE_DIR` را برابر مسیر mount مطلق آن تنظیم کنید. مسیر باید برای کاربر برنامه قابل‌نوشتن و بیرون از `apps/web/public` و `apps/web/dist` باشد. اگر این volume تنظیم نشود، API بارگذاری رسید را نمی‌پذیرد؛ فایل مالی روی دیسک موقت کانتینر ذخیره نمی‌شود. برای ارسال رسید به ربات، `TELEGRAM_BOT_TOKEN` را به‌صورت Secret اضافه کنید. مقصد و اطلاعات کارت از پنل `/system-admin` قابل تنظیم‌اند.
-7. پیش از شروع API، هر image جدید `npm run db:deploy` را روی همان `DATABASE_URL` اجرا می‌کند؛ تا اعمال migrationهای عقب‌مانده کامل نشود، API درخواست نمی‌پذیرد. برای راه‌اندازی اولیه و seed مدیر و کاتالوگ اشتراک، این سه متغیر را در محیط سرویس Docker اضافه کنید. شماره و نام مدیر را همان‌طور که در Runflare خواسته‌اید وارد کنید؛ این متغیرها در مخزن نگه‌داری نمی‌شوند:
+7. پیش از شروع API، هر image جدید `npm run db:deploy` را روی همان `DATABASE_URL` اجرا می‌کند؛ تا اعمال migrationهای عقب‌مانده کامل نشود، API درخواست نمی‌پذیرد. حساب تک‌مالک از Secret موقت `SHOPRO_ADMIN_INITIAL_PASSWORD` در startup اول ساخته یا روی تنها رکورد مدیر قدیمی ثبت می‌شود. پس از ورود موفق، Secret اولیه را حذف و سرویس را restart کنید. مسیر کامل bootstrap، recovery و rollback در [Runflare Admin Deployment](RUNFLARE_ADMIN_DEPLOYMENT_FA.md) است.
 
    ```sh
    SHOPRO_SUBSCRIPTION_SEED_CONFIRM=SEED_SUBSCRIPTION_CATALOG
-   ADMIN_BOOTSTRAP_PHONE=09xxxxxxxxx
-   ADMIN_BOOTSTRAP_NAME="نام مدیر سامانه"
    ```
 
    سپس در ترمینال همان سرویس اجرا کنید:
@@ -31,7 +29,7 @@ Dockerfile در ریشه مخزن است و پورت `3000` را ارائه می
    npm run db:setup:production
    ```
 
-   این فرمان مدیر سامانه را فعال می‌کند و پلن `STANDARD` و چهار نسخهٔ قیمت اولیه را idempotent می‌سازد؛ دادهٔ نمونهٔ کسب‌وکار ایجاد نمی‌کند. migrationها نیز در این فرمان بررسی و اعمال می‌شوند. پس از موفقیت، متغیر تأیید را از محیط حذف کنید. مدیر سامانهٔ فعال به پنل `/system-admin` و تمام عملیات مجاز مدیر دسترسی دارد.
+   این فرمان فقط کاتالوگ پلن `STANDARD` و چهار نسخهٔ قیمت اولیه را idempotent می‌سازد؛ حساب مدیر باید پیش‌تر در startup امن ایجاد شده باشد و seed رمز را تغییر نمی‌دهد. پس از موفقیت، متغیر تأیید را از محیط حذف کنید. راهنمای جدید [امنیت و عملیات پنل](ADMIN_PANEL_SECURITY_AND_OPERATIONS_FA.md) مسیرها و کنترل دسترسی را توضیح می‌دهد.
 
 8. مسیرهای `https://<domain>/api/v1/health/live` و `https://<domain>/api/v1/health/ready` را بررسی کنید. مسیر دوم اتصال PostgreSQL را هم می‌سنجد.
 

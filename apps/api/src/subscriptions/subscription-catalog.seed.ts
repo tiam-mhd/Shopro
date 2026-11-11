@@ -13,16 +13,12 @@ type SeedOptions = { allowDevelopmentAdmin?: boolean; adminId?: string };
 export async function seedSubscriptionCatalog(prisma: PrismaClient, options: SeedOptions = {}) {
   let admin = options.adminId
     ? await prisma.systemAdmin.findFirst({ where: { id: options.adminId, isActive: true }, select: { id: true } })
-    : await prisma.systemAdmin.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
+    : await prisma.systemAdmin.findFirst({ where: { isActive: true, username: "shopro_super_admin", passwordHash: { not: null } }, select: { id: true } });
   if (!admin && options.allowDevelopmentAdmin) {
-    admin = await prisma.systemAdmin.upsert({
-      where: { phone: process.env.SHOPRO_SEED_ADMIN_PHONE ?? "09000000000" },
-      update: {},
-      create: { phone: process.env.SHOPRO_SEED_ADMIN_PHONE ?? "09000000000", displayName: "مدیر نمونهٔ توسعه" },
-      select: { id: true },
-    });
+    admin = await prisma.systemAdmin.findFirst({ where: { username: null, phone: null, displayName: "مدیر نمونهٔ توسعه" }, select: { id: true } });
+    admin ??= await prisma.systemAdmin.create({ data: { phone: null, displayName: "مدیر نمونهٔ توسعه", isActive: true }, select: { id: true } });
   }
-  if (!admin) throw new Error("برای ساخت نسخهٔ قیمت، ابتدا یک مدیر سامانهٔ فعال بسازید.");
+  if (!admin) throw new Error("برای seed کاتالوگ production، ابتدا حساب تک‌مالک را با Secret اولیه راه‌اندازی کنید.");
 
   await prisma.$transaction(async (tx) => {
     const plan = await tx.subscriptionPlan.upsert({

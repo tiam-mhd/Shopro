@@ -225,7 +225,7 @@ export class SubscriptionsService {
   /** Call only after a real provider adapter has verified its server signature and settlement fields. */
   async settleVerifiedPayment(input: {
     orderId: string; provider: string; providerExternalId: string; amountRial: bigint; currency: string; confirmedAt: Date;
-    manualReview?: { submissionId: string; adminId: string; requestId: string };
+    manualReview?: { submissionId: string; adminId: string; requestId: string; reason: string };
   }) {
     if (!input.providerExternalId || input.providerExternalId.length > 160 || !Number.isFinite(input.confirmedAt.getTime())) throw new BadRequestException("رسید پرداخت معتبر نیست.");
     for (let retry = 0; retry < 3; retry++) {
@@ -276,7 +276,7 @@ export class SubscriptionsService {
               entityType: "subscription_manual_payment_submission",
               entityId: input.manualReview.submissionId,
               requestId: input.manualReview.requestId,
-              metadata: { orderId: order.id, businessId: order.businessId, branchId: order.branchId, amountRial: order.amountRial.toString(), durationMonths: order.durationMonths },
+              metadata: { orderId: order.id, businessId: order.businessId, branchId: order.branchId, amountRial: order.amountRial.toString(), durationMonths: order.durationMonths, reason: input.manualReview.reason },
             } });
           }
           return period;

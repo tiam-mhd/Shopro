@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import cookieParser from "cookie-parser";
+import express from "express";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import argon2 from "argon2";
 import { AppModule } from "../apps/api/dist/app.module.js";
 import { ApiExceptionFilter } from "../apps/api/dist/common/api-exception.filter.js";
 import { PrismaService } from "../apps/api/dist/prisma/prisma.service.js";
 import { lockAttachmentMutationDuringBackup } from "../apps/api/dist/expenses/attachment-backup-lock.js";
 import { ParsgreenService } from "../apps/api/dist/auth/parsgreen.service.js";
 import { taxRial } from "../apps/api/dist/storefront/storefront-core.js";
+import { createSystemAdminPageAuthMiddleware } from "../apps/api/dist/common/system-admin-page-auth.middleware.js";
+import { SystemAdminAuthService } from "../apps/api/dist/auth/system-admin-auth.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL must target an isolated test database.");
@@ -27,6 +31,10 @@ const previousAttachmentStorageDir = process.env.ATTACHMENT_STORAGE_DIR;
 const previousSessionSecret = process.env.SESSION_SECRET;
 const previousOtpHashSecret = process.env.OTP_HASH_SECRET;
 const previousStorefrontCardKey = process.env.STOREFRONT_CARD_ENCRYPTION_KEY;
+const previousWebOrigin = process.env.WEB_ORIGIN;
+const previousCookieSecure = process.env.COOKIE_SECURE;
+const previousAdminInitialPassword = process.env.SHOPRO_ADMIN_INITIAL_PASSWORD;
+const previousAdminUsername = process.env.SHOPRO_ADMIN_USERNAME;
 let attachmentRoot;
 let auditFailureTriggerInstalled = false;
 let restoreSmsAdapter;
@@ -116,6 +124,41 @@ try {
   process.env.SESSION_SECRET = "shopro-http-attachment-test-session-secret-32-characters";
   process.env.OTP_HASH_SECRET = "shopro-http-storefront-test-otp-secret-32-characters";
   process.env.STOREFRONT_CARD_ENCRYPTION_KEY = Buffer.alloc(32, 0x5a).toString("base64url");
+  process.env.WEB_ORIGIN = "http://localhost:5173";
+  process.env.COOKIE_SECURE = "false";
+  if (await prisma.systemAdmin.count() !== 0) throw new Error("The disposable HTTP integration database must not contain system-admin fixtures.");
+  process.env.SHOPRO_ADMIN_USERNAME = "shopro_super_admin";
+  const bootstrapPassword = randomBytes(32).toString("base64url");
+  process.env.SHOPRO_ADMIN_INITIAL_PASSWORD = bootstrapPassword;
+  const bootstrapAuth = new SystemAdminAuthService(prisma);
+  await bootstrapAuth.onModuleInit();
+  const bootstrappedAdmin = await prisma.systemAdmin.findUnique({ where: { username: "shopro_super_admin" }, select: { id: true, passwordHash: true } });
+  assert.ok(bootstrappedAdmin?.passwordHash && await argon2.verify(bootstrappedAdmin.passwordHash, bootstrapPassword), "first bootstrap must create one Argon2id owner credential");
+  const originalBootstrapHash = bootstrappedAdmin.passwordHash;
+  process.env.SHOPRO_ADMIN_INITIAL_PASSWORD = randomBytes(32).toString("base64url");
+  await bootstrapAuth.onModuleInit();
+  const afterRepeatBootstrap = await prisma.systemAdmin.findUnique({ where: { username: "shopro_super_admin" }, select: { id: true, passwordHash: true } });
+  assert.equal(await prisma.systemAdmin.count(), 1, "repeated bootstrap must not create a second admin");
+  assert.equal(afterRepeatBootstrap?.passwordHash, originalBootstrapHash, "repeated deployment must not reset the existing owner password");
+  await prisma.systemAdmin.delete({ where: { id: bootstrappedAdmin.id } });
+  const legacyOwner = await prisma.systemAdmin.create({ data: { username: "shopro_super_admin", displayName: "Legacy owner fixture", isActive: true } });
+  process.env.SHOPRO_ADMIN_INITIAL_PASSWORD = bootstrapPassword;
+  const legacyBootstrapAuth = new SystemAdminAuthService(prisma);
+  await legacyBootstrapAuth.onModuleInit();
+  const adoptedLegacyOwner = await prisma.systemAdmin.findUnique({ where: { id: legacyOwner.id }, select: { passwordHash: true, passwordChangedAt: true } });
+  assert.ok(adoptedLegacyOwner?.passwordHash && adoptedLegacyOwner.passwordChangedAt && await argon2.verify(adoptedLegacyOwner.passwordHash, bootstrapPassword), "one passwordless legacy owner row must be adopted without creating another account");
+  process.env.SHOPRO_ADMIN_INITIAL_PASSWORD = randomBytes(32).toString("base64url");
+  await legacyBootstrapAuth.onModuleInit();
+  assert.equal((await prisma.systemAdmin.findUnique({ where: { id: legacyOwner.id }, select: { passwordHash: true } }))?.passwordHash, adoptedLegacyOwner.passwordHash, "legacy adoption must not reset an initialized owner password");
+  assert.equal(await prisma.systemAdmin.count(), 1, "legacy adoption must preserve the single-owner invariant");
+  await prisma.systemAdmin.delete({ where: { id: legacyOwner.id } });
+  delete process.env.SHOPRO_ADMIN_INITIAL_PASSWORD;
+  const ownerPassword = randomBytes(32).toString("base64url");
+  const replacementPassword = randomBytes(32).toString("base64url");
+  const ownerAdmin = await prisma.systemAdmin.create({ data: {
+    username: "shopro_super_admin", passwordHash: await argon2.hash(ownerPassword, { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 }),
+    passwordChangedAt: new Date(), displayName: "HTTP owner fixture", isActive: true,
+  }, select: { id: true } });
 
   app = await NestFactory.create(AppModule, { logger: false });
   app.setGlobalPrefix("api/v1");
@@ -137,6 +180,136 @@ try {
     const payload = response.status === 204 ? null : await response.json();
     return { status: response.status, payload };
   };
+
+  const adminSessionCookie = "shopro_admin_session";
+  const captureAdminCookies = (response) => {
+    const headers = response.headers.getSetCookie();
+    const sessionLine = headers.find((line) => line.startsWith(`${adminSessionCookie}=`));
+    const csrfLine = headers.find((line) => line.startsWith("shopro_admin_csrf="));
+    assert.ok(sessionLine && csrfLine, "admin login/password change must issue separate session and CSRF cookies");
+    assert.match(sessionLine, /HttpOnly/i);
+    assert.match(sessionLine, /Path=\//i);
+    assert.match(sessionLine, /SameSite=Strict/i);
+    assert.doesNotMatch(sessionLine, /Domain=/i);
+    assert.doesNotMatch(csrfLine, /HttpOnly/i);
+    return {
+      session: sessionLine.slice(`${adminSessionCookie}=`.length).split(";", 1)[0],
+      csrf: csrfLine.slice("shopro_admin_csrf=".length).split(";", 1)[0],
+    };
+  };
+  const adminRequest = async (path, { cookies, method = "GET", body, includeCsrf = true } = {}) => {
+    const headers = { cookie: `${adminSessionCookie}=${cookies.session}; shopro_admin_csrf=${cookies.csrf}` };
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (includeCsrf && method !== "GET") headers["x-csrf-token"] = cookies.csrf;
+    const response = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const payload = response.status === 204 ? null : await response.json();
+    return { response, status: response.status, payload };
+  };
+  const loginAdmin = async (password) => {
+    const response = await fetch(`${baseUrl}/system-admin/auth/login`, {
+      method: "POST", headers: { origin: process.env.WEB_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ username: "shopro_super_admin", password }),
+    });
+    return { response, payload: await response.json() };
+  };
+
+  const protectedBeforeLogin = await request("/system-admin/dashboard");
+  assert.equal(protectedBeforeLogin.status, 401, "admin dashboard must reject an anonymous request");
+  const ordinaryUserAdminSession = await request("/system-admin/session", { auth: owner });
+  assert.equal(ordinaryUserAdminSession.status, 401, "an ordinary seller session must not authorize the admin API");
+  assert.equal((await request("/system-admin/auth/otp/request", { method: "POST", body: { phone: "09120000000" } })).status, 404, "the former public admin OTP route must not exist");
+  assert.equal((await request("/system-admin/auth/otp/verify", { method: "POST", body: { phone: "09120000000", code: "000000" } })).status, 404, "the former admin OTP verification route must not exist");
+
+  const firstLogin = await loginAdmin(ownerPassword);
+  assert.equal(firstLogin.response.status, 200);
+  assert.equal(firstLogin.payload.admin.username, "shopro_super_admin");
+  assert.equal("rawSession" in firstLogin.payload, false, "raw session material must stay out of JSON responses");
+  const firstCookies = captureAdminCookies(firstLogin.response);
+  const sessionRow = await prisma.systemAdminSession.findUnique({ where: { tokenHash: hash(firstCookies.session) } });
+  assert.ok(sessionRow && sessionRow.adminId === ownerAdmin.id);
+  assert.equal(sessionRow.csrfHash, hash(firstCookies.csrf));
+  const pageApp = express();
+  pageApp.use(cookieParser());
+  pageApp.use(createSystemAdminPageAuthMiddleware(prisma));
+  pageApp.get("/system-admin/login", (_request, response) => response.status(200).send("owner login page"));
+  pageApp.get("/system-admin", (_request, response) => response.status(200).send("owner admin page"));
+  const pageServer = await new Promise((resolve) => { const server = pageApp.listen(0, "127.0.0.1", () => resolve(server)); });
+  try {
+    const pageAddress = pageServer.address();
+    const pageUrl = `http://127.0.0.1:${pageAddress.port}`;
+    assert.equal((await fetch(`${pageUrl}/system-admin/login`)).status, 200, "the standalone admin login page remains directly reachable");
+    const anonymousAdminPage = await fetch(`${pageUrl}/system-admin`);
+    assert.equal(anonymousAdminPage.status, 401, "the admin application page must reject anonymous direct navigation");
+    assert.equal(anonymousAdminPage.headers.get("cache-control"), "private, no-store");
+    assert.equal((await fetch(`${pageUrl}/system-admin`, { headers: { cookie: `shopro_session=${owner.rawSession}` } })).status, 401, "seller cookies must not authorize direct admin page navigation");
+    assert.equal((await fetch(`${pageUrl}/system-admin`, { headers: { cookie: `${adminSessionCookie}=${firstCookies.session}` } })).status, 200, "a current owner session may open the admin application page");
+  } finally {
+    await new Promise((resolve, reject) => pageServer.close((error) => error ? reject(error) : resolve()));
+  }
+  const sessionRead = await adminRequest("/system-admin/session", { cookies: firstCookies });
+  assert.equal(sessionRead.status, 200);
+  assert.equal(sessionRead.payload.admin.username, "shopro_super_admin");
+  const subscriptionPreview = await adminRequest(`/system-admin/subscriptions/branches/${branchA1.id}/preview`, {
+    cookies: firstCookies, method: "POST", body: { kind: "grant", durationMonths: 1 },
+  });
+  assert.equal(subscriptionPreview.status, 200, "owner can request a server-computed Jalali subscription preview");
+  assert.ok(subscriptionPreview.payload.effect.startsAt && subscriptionPreview.payload.effect.endsAt);
+  const subscriptionWithoutReauth = await adminRequest(`/system-admin/subscriptions/branches/${branchA1.id}/grant`, {
+    cookies: firstCookies, method: "POST", body: { durationMonths: 1, reason: "HTTP fixture subscription grant" },
+  });
+  assert.equal(subscriptionWithoutReauth.status, 400, "a direct subscription grant must require the current password field");
+  const subscriptionWithWrongPassword = await adminRequest(`/system-admin/subscriptions/branches/${branchA1.id}/grant`, {
+    cookies: firstCookies, method: "POST", body: { durationMonths: 1, reason: "HTTP fixture subscription grant", currentPassword: "invalid-step-up-password" },
+  });
+  assert.equal(subscriptionWithWrongPassword.status, 401, "a direct subscription grant must verify the current password server-side");
+  assert.equal(await prisma.branchSubscription.count({ where: { businessId: businessA.id, branchId: branchA1.id } }), 0, "failed reauthentication must not change a subscription");
+  const businessStatusWithWrongPassword = await adminRequest(`/system-admin/businesses/${businessA.id}/status`, {
+    cookies: firstCookies, method: "PATCH", body: { isActive: false, reason: "HTTP fixture status change", currentPassword: "invalid-step-up-password" },
+  });
+  assert.equal(businessStatusWithWrongPassword.status, 401, "business status changes must verify the current password server-side");
+  assert.equal((await prisma.business.findUnique({ where: { id: businessA.id }, select: { isActive: true } })).isActive, true, "failed reauthentication must not change business status");
+  const auditRead = await adminRequest("/system-admin/audit/query", { cookies: firstCookies, method: "POST", body: { page: "1", pageSize: "25" } });
+  assert.equal(auditRead.status, 200);
+  assert.ok(auditRead.payload.items.some((row) => row.action === "subscription.admin_action.previewed" && row.summary));
+  assert.ok(auditRead.payload.items.every((row) => !("metadata" in row)), "raw audit metadata must never be returned by the listing API");
+  assert.equal((await adminRequest("/system-admin/auth/logout", { cookies: firstCookies, method: "POST", includeCsrf: false })).status, 403, "admin mutations must require CSRF");
+  assert.equal((await adminRequest("/system-admin/auth/logout", { cookies: firstCookies, method: "POST" })).status, 204);
+  assert.equal((await adminRequest("/system-admin/session", { cookies: firstCookies })).status, 401, "logout must revoke the server-side session");
+
+  const secondLogin = await loginAdmin(ownerPassword);
+  const thirdLogin = await loginAdmin(ownerPassword);
+  assert.equal(secondLogin.response.status, 200);
+  assert.equal(thirdLogin.response.status, 200);
+  const secondCookies = captureAdminCookies(secondLogin.response);
+  const thirdCookies = captureAdminCookies(thirdLogin.response);
+  const passwordChange = await adminRequest("/system-admin/auth/change-password", {
+    cookies: thirdCookies, method: "PATCH",
+    body: { currentPassword: ownerPassword, newPassword: replacementPassword, confirmPassword: replacementPassword },
+  });
+  assert.equal(passwordChange.status, 200);
+  const rotatedCookies = captureAdminCookies(passwordChange.response);
+  assert.equal((await adminRequest("/system-admin/session", { cookies: secondCookies })).status, 401, "password change must revoke other sessions");
+  assert.equal((await adminRequest("/system-admin/session", { cookies: thirdCookies })).status, 401, "password change must rotate the current session");
+  assert.equal((await adminRequest("/system-admin/session", { cookies: rotatedCookies })).status, 200, "password change must return one fresh session");
+  assert.equal((await adminRequest("/system-admin/auth/revoke-sessions", { cookies: rotatedCookies, method: "POST", body: { currentPassword: replacementPassword } })).status, 204);
+  assert.equal((await adminRequest("/system-admin/session", { cookies: rotatedCookies })).status, 401, "revoke-all must invalidate the current session too");
+  const replacementLogin = await loginAdmin(replacementPassword);
+  assert.equal(replacementLogin.response.status, 200, "the new password must authenticate after rotation");
+  const replacementCookies = captureAdminCookies(replacementLogin.response);
+  assert.equal((await adminRequest("/system-admin/auth/logout", { cookies: replacementCookies, method: "POST" })).status, 204);
+
+  const unknownUsername = await fetch(`${baseUrl}/system-admin/auth/login`, { method: "POST", headers: { origin: process.env.WEB_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ username: "unknown_owner", password: ownerPassword }) });
+  const wrongOwnerPassword = await fetch(`${baseUrl}/system-admin/auth/login`, { method: "POST", headers: { origin: process.env.WEB_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ username: "shopro_super_admin", password: ownerPassword }) });
+  assert.equal(unknownUsername.status, 401);
+  assert.equal(wrongOwnerPassword.status, 401);
+  assert.equal((await unknownUsername.json()).message, (await wrongOwnerPassword.json()).message, "login errors must not reveal whether the owner username exists");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const failed = await fetch(`${baseUrl}/system-admin/auth/login`, { method: "POST", headers: { origin: process.env.WEB_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ username: "shopro_super_admin", password: ownerPassword }) });
+    assert.equal(failed.status, 401);
+  }
+  const throttledLogin = await fetch(`${baseUrl}/system-admin/auth/login`, { method: "POST", headers: { origin: process.env.WEB_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ username: "shopro_super_admin", password: ownerPassword }) });
+  assert.equal(throttledLogin.status, 429, "repeated failures must be rate-limited");
+  console.log("Single-owner HTTP auth checks passed: idempotent bootstrap/legacy adoption, direct admin-page gate, anonymous/seller denial, removed OTP routes, CSRF, password rotation, logout/revoke-all, reauthentication previews, audit redaction and rate limits.");
 
   const parsgreen = app.get(ParsgreenService);
   const originalSendOtp = parsgreen.sendOtp.bind(parsgreen);
@@ -272,12 +445,14 @@ try {
   assert.equal(customerLogin.status, 200, `storefront customer should be able to verify a login OTP: ${JSON.stringify(customerLogin.payload)}`);
   const firstCustomerToken = customerLogin.payload.customerToken;
   assert.match(firstCustomerToken ?? "", /^[A-Za-z0-9_-]{43}$/);
-  assert.equal(await prisma.storefrontCustomerSession.count({ where: { storefrontId: savedStorefront.payload.settings.id, tokenHash: hash(firstCustomerToken), revokedAt: null } }), 1, "customer sessions should persist only the token hash and store scope");
+  const firstCustomerProfile = await prisma.storefrontCustomerProfile.findUnique({ where: { phone: storefrontPhone }, select: { id: true } });
+  assert.ok(firstCustomerProfile);
+  assert.equal(await prisma.storefrontCustomerSession.count({ where: { customerId: firstCustomerProfile.id, tokenHash: hash(firstCustomerToken), revokedAt: null } }), 1, "customer sessions should persist only the token hash and global customer identity");
   const unauthenticatedCustomerAccount = await request(`/public/stores/${storefrontSlug}/customer`);
   assert.equal(unauthenticatedCustomerAccount.status, 401, "customer profile must require OTP verification");
-  const firstCustomerProfile = await request(`/public/stores/${storefrontSlug}/customer`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
-  assert.equal(firstCustomerProfile.status, 200);
-  assert.deepEqual(firstCustomerProfile.payload.customer, { name: "HTTP checkout customer", phone: storefrontPhone });
+  const firstCustomerProfileResponse = await request(`/public/stores/${storefrontSlug}/customer`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
+  assert.equal(firstCustomerProfileResponse.status, 200);
+  assert.deepEqual(firstCustomerProfileResponse.payload.customer, { fullName: "HTTP checkout customer", phone: storefrontPhone, address: null });
   const firstCustomerOrders = await request(`/public/stores/${storefrontSlug}/customer/orders?limit=20`, { extraHeaders: { "x-storefront-customer-token": firstCustomerToken } });
   assert.equal(firstCustomerOrders.status, 200);
   assert.deepEqual(firstCustomerOrders.payload.items.map(({ id }) => id), [storefrontOrder.payload.id]);
@@ -684,9 +859,16 @@ try {
     }
     for (const storefrontId of fixtures.storefronts) {
       await prisma.storefrontOtpGrant.deleteMany({ where: { storefrontId } });
-      await prisma.storefrontCustomerSession.deleteMany({ where: { storefrontId } });
       await prisma.storefrontListing.deleteMany({ where: { storefrontId } });
       await prisma.storefront.deleteMany({ where: { id: storefrontId } });
+    }
+    const customerProfiles = fixtures.storefrontOtpPhones.length
+      ? await prisma.storefrontCustomerProfile.findMany({ where: { phone: { in: fixtures.storefrontOtpPhones } }, select: { id: true } })
+      : [];
+    const customerIds = customerProfiles.map(({ id }) => id);
+    if (customerIds.length) {
+      await prisma.storefrontCustomerSession.deleteMany({ where: { customerId: { in: customerIds } } });
+      await prisma.storefrontCustomerProfile.deleteMany({ where: { id: { in: customerIds } } });
     }
     for (const cardId of fixtures.storefrontCards) await prisma.storePaymentCard.deleteMany({ where: { id: cardId } });
     for (const phone of fixtures.storefrontOtpPhones) await prisma.otpChallenge.deleteMany({ where: { phone, purpose: { in: ["STOREFRONT_CHECKOUT", "STOREFRONT_CUSTOMER"] } } });
@@ -712,5 +894,13 @@ try {
     else process.env.OTP_HASH_SECRET = previousOtpHashSecret;
     if (previousStorefrontCardKey === undefined) delete process.env.STOREFRONT_CARD_ENCRYPTION_KEY;
     else process.env.STOREFRONT_CARD_ENCRYPTION_KEY = previousStorefrontCardKey;
+    if (previousWebOrigin === undefined) delete process.env.WEB_ORIGIN;
+    else process.env.WEB_ORIGIN = previousWebOrigin;
+    if (previousCookieSecure === undefined) delete process.env.COOKIE_SECURE;
+    else process.env.COOKIE_SECURE = previousCookieSecure;
+    if (previousAdminInitialPassword === undefined) delete process.env.SHOPRO_ADMIN_INITIAL_PASSWORD;
+    else process.env.SHOPRO_ADMIN_INITIAL_PASSWORD = previousAdminInitialPassword;
+    if (previousAdminUsername === undefined) delete process.env.SHOPRO_ADMIN_USERNAME;
+    else process.env.SHOPRO_ADMIN_USERNAME = previousAdminUsername;
   }
 }
