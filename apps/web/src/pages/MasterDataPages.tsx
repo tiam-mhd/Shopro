@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Archive, Boxes, BriefcaseBusiness, Check, Download, FileSpreadsheet, ImagePlus, PackagePlus, Pencil, Plus, ReceiptText, RotateCcw, ScanBarcode, Search, ShoppingCart, Star, Tags, Trash2, Truck, Upload, UsersRound } from "lucide-react";
+import { Archive, Boxes, BriefcaseBusiness, Check, ChevronDown, Download, FileSpreadsheet, ImagePlus, PackagePlus, Pencil, Plus, ReceiptText, RotateCcw, ScanBarcode, Search, ShoppingCart, Star, Tags, Trash2, Truck, Upload, UsersRound } from "lucide-react";
 import { toAsciiDigits, type CursorPage, type MemberRole } from "@shopro/contracts";
 import { adminApi, del, downloadFile, get, patch, post, uploadFile } from "../lib/api.js";
 import { faNumber, money } from "../lib/format.js";
@@ -274,7 +274,12 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
     finally { setBusy(false); }
   };
 
-  return <PageHeader title="کالاها" subtitle="مدیریت کالاهای انبارشونده، قیمت و موجودی شعبه" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/services"><BriefcaseBusiness size={16} />مدیریت خدمات</Link><Link className="button button-secondary" to="/app/product-categories"><Tags size={16} />دسته‌بندی کالاها</Link><CatalogExcelActions kind="products" onImported={() => invalidate()} /><button className="button button-primary" type="button" onClick={openCreate}><PackagePlus size={17} />کالای جدید</button></div>}>
+  return <PageHeader title="کالاها" subtitle="مدیریت کالاهای انبارشونده، قیمت و موجودی شعبه">
+    <div className="catalog-page-actions" aria-label="عملیات کالاها">
+      <Link className="button button-secondary" to="/app/product-categories" title="دسته‌بندی کالاها" aria-label="دسته‌بندی کالاها"><Tags size={16} /><span className="catalog-action-label">دسته‌بندی کالاها</span></Link>
+      <CatalogExcelActions kind="products" onImported={() => invalidate()} />
+      <button className="button button-primary" type="button" onClick={openCreate} title="کالای جدید" aria-label="کالای جدید"><PackagePlus size={17} /><span className="catalog-action-label">کالای جدید</span></button>
+    </div>
     <div className="toolbar card"><div className="search-box"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="نام، کد کالا یا بارکد" aria-label="جست‌وجوی کالاها" /></div><span className="result-count">{faNumber(productRows.length)} کالا</span></div>
     {products.isError && <InlineError error={products.error} retry={() => void products.refetch()} />}
     {products.isPending ? <div className="card"><span className="muted">در حال بارگیری کالاها…</span></div> : <><div className="card table-card"><div className="table-head product-table-head"><span>کالا</span><span>موجودی</span><span>قیمت فروش</span><span aria-hidden="true" /></div>{productRows.map((product) => <div className="table-row product-table-row" key={product.id}>
@@ -404,7 +409,12 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
     finally { setBusy(false); }
   };
 
-  return <PageHeader title="خدمات" subtitle="مدیریت خدمات، شرح، واحد و قیمت فروش" actions={<div className="catalog-page-actions"><Link className="button button-secondary" to="/app/products"><Boxes size={16} />مدیریت کالاها</Link><Link className="button button-secondary" to="/app/service-categories"><Tags size={16} />دسته‌بندی خدمات</Link><CatalogExcelActions kind="services" onImported={() => invalidate()} /><button className="button button-primary" type="button" onClick={openCreate}><BriefcaseBusiness size={17} />خدمت جدید</button></div>}>
+  return <PageHeader title="خدمات" subtitle="مدیریت خدمات، شرح، واحد و قیمت فروش">
+    <div className="catalog-page-actions" aria-label="عملیات خدمات">
+      <Link className="button button-secondary" to="/app/service-categories" title="دسته‌بندی خدمات" aria-label="دسته‌بندی خدمات"><Tags size={16} /><span className="catalog-action-label">دسته‌بندی خدمات</span></Link>
+      <CatalogExcelActions kind="services" onImported={() => invalidate()} />
+      <button className="button button-primary" type="button" onClick={openCreate} title="خدمت جدید" aria-label="خدمت جدید"><BriefcaseBusiness size={17} /><span className="catalog-action-label">خدمت جدید</span></button>
+    </div>
     <div className="toolbar card"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="جست‌وجوی نام یا شرح خدمت" aria-label="جست‌وجوی خدمات" /></div><span className="result-count">{faNumber(rows.length)} خدمت</span></div>
     {services.isError && <InlineError error={services.error} retry={() => void services.refetch()} />}
     {services.isPending ? <div className="card"><span className="muted">در حال بارگیری خدمات…</span></div> : <><div className="card table-card service-table-card"><div className="table-head service-table-head"><span>خدمت</span><span>دسته‌بندی</span><span>واحد</span><span>قیمت</span><span aria-hidden="true" /></div>{rows.map((service) => <div className="table-row service-table-row" key={service.id}>
@@ -432,6 +442,7 @@ type SpreadsheetImportResult = { total: number; imported: number; failed: number
 function CatalogExcelActions({ kind, onImported }: { kind: "products" | "services"; onImported: () => void | Promise<unknown> }) {
   const noun = kind === "products" ? "کالا" : "خدمت";
   const endpoint = `/${kind}/excel`;
+  const [menuOpen, setMenuOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<SpreadsheetPreview | null>(null);
@@ -439,6 +450,26 @@ function CatalogExcelActions({ kind, onImported }: { kind: "products" | "service
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"template" | "export" | "preview" | "import" | "" >("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
 
   const chooseFile = () => { if (fileInput.current) { fileInput.current.value = ""; fileInput.current.click(); } };
 
@@ -475,9 +506,16 @@ function CatalogExcelActions({ kind, onImported }: { kind: "products" | "service
 
   const close = () => { if (busy === "import") return; setPreviewOpen(false); setFile(null); setPreview(null); setResult(null); setError(""); if (fileInput.current) fileInput.current.value = ""; };
   return <>
-    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => void download(`${endpoint}/template`, `${kind}-template.xlsx`, "template")}><FileSpreadsheet size={16} />{busy === "template" ? "در حال دریافت…" : "قالب اکسل"}</button>
-    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => { setPreviewOpen(true); chooseFile(); }}><Upload size={16} />ورود از اکسل</button>
-    <button className="button button-secondary" type="button" disabled={!!busy} onClick={() => void download(`${endpoint}/export`, `${kind}.xlsx`, "export")}><Download size={16} />{busy === "export" ? "در حال ساخت…" : "خروجی اکسل"}</button>
+    <div className="catalog-excel-actions" ref={actionsRef}>
+      <button ref={triggerRef} className="button button-secondary catalog-excel-trigger" type="button" disabled={!!busy} aria-label="عملیات اکسل" aria-expanded={menuOpen} aria-controls={`catalog-excel-menu-${kind}`} title="عملیات اکسل" onClick={() => setMenuOpen((open) => !open)}>
+        <FileSpreadsheet size={16} /><span className="catalog-action-label">{busy ? "در حال آماده‌سازی…" : "عملیات اکسل"}</span><ChevronDown className="catalog-excel-chevron" size={14} aria-hidden="true" />
+      </button>
+      {menuOpen && <div className="catalog-excel-menu-list" id={`catalog-excel-menu-${kind}`}>
+        <button type="button" disabled={!!busy} onClick={() => { setMenuOpen(false); void download(`${endpoint}/template`, `${kind}-template.xlsx`, "template"); }}><FileSpreadsheet size={16} />قالب اکسل</button>
+        <button type="button" disabled={!!busy} onClick={() => { setMenuOpen(false); setPreviewOpen(true); chooseFile(); }}><Upload size={16} />ورود از اکسل</button>
+        <button type="button" disabled={!!busy} onClick={() => { setMenuOpen(false); void download(`${endpoint}/export`, `${kind}.xlsx`, "export"); }}><Download size={16} />خروجی اکسل</button>
+      </div>}
+    </div>
     <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={(event) => void selectFile(event.currentTarget.files?.[0] ?? null)} />
     <Modal open={previewOpen} onClose={close} title={`ورود گروهی ${noun}`} description="فایل ابتدا بررسی می‌شود. ردیف‌های معتبر پس از تأیید ثبت می‌شوند و ردیف‌های خطادار در گزارش باقی می‌مانند." size="wide">
       {file && <div className="catalog-excel-file"><FileSpreadsheet size={18} /><span><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} کیلوبایت</small></span><button className="button button-secondary" type="button" disabled={!!busy} onClick={chooseFile}>انتخاب فایل دیگر</button></div>}

@@ -1958,8 +1958,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .expense-category-counts > span { justify-items: start; }
 }
 
-.catalog-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.catalog-page-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px; margin: -11px 0 16px; }
 .catalog-page-actions .button { min-height: 38px; }
+.catalog-excel-actions { position: relative; }
+.catalog-excel-menu-list { position: absolute; z-index: 20; inset-block-start: calc(100% + 5px); inset-inline-start: 0; display: grid; min-width: 180px; gap: 3px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.catalog-excel-menu-list button { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 7px 9px; border: 0; border-radius: 9px; color: var(--ink); background: transparent; font: inherit; font-size: 11px; text-align: start; white-space: nowrap; cursor: pointer; }
+.catalog-excel-menu-list button:hover:not(:disabled) { background: var(--surface-soft); }
+.catalog-excel-menu-list button:disabled { opacity: .55; cursor: not-allowed; }
 .catalog-excel-file { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 11px; border: 1px solid var(--line-soft); border-radius: 12px; color: var(--green-dark); background: var(--surface-soft); }
 .catalog-excel-file > span { display: grid; flex: 1; gap: 4px; min-width: 0; color: var(--ink); }
 .catalog-excel-file strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -2030,8 +2035,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .service-detail-hero .product-detail-price small { display: block; margin-top: 3px; }
 .service-detail-hero .product-detail-price strong { font-size: 15px; }
 @media (max-width: 760px) {
-  .catalog-page-actions { width: 100%; }
-  .catalog-page-actions .button { flex: 1 1 auto; justify-content: center; }
+  .catalog-page-actions { width: 100%; margin-top: -8px; margin-bottom: 14px; }
+  .catalog-page-actions > .button, .catalog-page-actions > .catalog-excel-actions > .button { flex: 0 0 44px; width: 44px; height: 44px; min-height: 44px; justify-content: center; gap: 0; padding: 0; }
+  .catalog-page-actions .catalog-action-label, .catalog-excel-chevron { display: none; }
+  .catalog-page-actions > .catalog-excel-actions { flex: 0 0 44px; }
   .service-table-head { display: none; }
   .service-table-row { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 9px; min-height: 0; padding-block: 11px; }
   .service-table-row .table-name { grid-column: 1; grid-row: 1 / span 2; }
@@ -2043,8 +2050,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .service-detail-hero .product-detail-price { grid-column: 1 / -1; justify-items: start; width: 100%; padding: 12px 0 0; border-inline-start: 0; border-top: 1px solid var(--line-soft); }
 }
 @media (max-width: 480px) {
-  .catalog-page-actions .button { flex-basis: calc(50% - 5px); padding-inline: 9px; font-size: 9px; }
-  .catalog-page-actions .button-primary { flex-basis: 100%; }
   .catalog-category-panel { padding: 12px; }
   .catalog-category-row { flex-wrap: wrap; gap: 8px; }
   .catalog-category-main { flex-basis: calc(100% - 54px); }
