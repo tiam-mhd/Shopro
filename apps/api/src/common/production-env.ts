@@ -10,6 +10,10 @@ export function webOrigins(env: NodeJS.ProcessEnv = process.env) {
   return (env.WEB_ORIGIN ?? "http://localhost:5173").split(",").map((origin) => origin.trim()).filter(Boolean);
 }
 
+export function adminAppOrigin(env: NodeJS.ProcessEnv = process.env) {
+  return env.ADMIN_APP_ORIGIN?.trim() || undefined;
+}
+
 export function validateProductionEnv(env: NodeJS.ProcessEnv = process.env) {
   if (env.NODE_ENV !== "production") return;
 
@@ -38,6 +42,16 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv = process.env) {
     if (origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash || !["", "/"].includes(origin.pathname) || ["localhost", "127.0.0.1", "::1"].includes(origin.hostname.toLowerCase())) {
       fail("هر مقدار WEB_ORIGIN باید origin دقیق HTTPS باشد.");
     }
+  }
+
+  const adminOriginValue = adminAppOrigin(env);
+  if (adminOriginValue) {
+    let adminOrigin: URL;
+    try { adminOrigin = new URL(adminOriginValue); } catch { return fail("ADMIN_APP_ORIGIN قالب معتبر ندارد."); }
+    if (adminOrigin.protocol !== "https:" || adminOrigin.username || adminOrigin.password || adminOrigin.search || adminOrigin.hash || !["", "/"].includes(adminOrigin.pathname) || ["localhost", "127.0.0.1", "::1"].includes(adminOrigin.hostname.toLowerCase())) {
+      fail("ADMIN_APP_ORIGIN باید یک origin دقیق HTTPS باشد.");
+    }
+    if (!origins.some((value) => new URL(value).origin === adminOrigin.origin)) fail("ADMIN_APP_ORIGIN باید در فهرست WEB_ORIGIN نیز باشد.");
   }
 
   if (env.TRUST_PROXY_HOPS === undefined || !/^\d+$/.test(env.TRUST_PROXY_HOPS) || Number(env.TRUST_PROXY_HOPS) > 10) fail("TRUST_PROXY_HOPS باید صریحاً عددی بین صفر تا ده باشد.");

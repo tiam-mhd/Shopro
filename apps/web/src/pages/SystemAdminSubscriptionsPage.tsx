@@ -43,6 +43,7 @@ export function SystemAdminSubscriptionsApp() {
     try { return window.localStorage.getItem("shopro_admin_sidebar") !== "collapsed"; } catch { return true; }
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,7 +51,8 @@ export function SystemAdminSubscriptionsApp() {
   const login = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      await adminApi("/system-admin/auth/login", { method: "POST", body: JSON.stringify({ username: "shopro_super_admin", password }) });
+      await adminApi("/system-admin/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+      setUsername("");
       setPassword("");
       await client.invalidateQueries({ queryKey: ["system-admin-session"] });
       window.location.assign("/system-admin");
@@ -84,7 +86,7 @@ export function SystemAdminSubscriptionsApp() {
 
   if (session.isPending) return <AdminState><LoadingBlock /></AdminState>;
   if (session.isError && !(session.error instanceof ApiError && session.error.status === 401)) return <AdminState><InlineError error={session.error} retry={() => void session.refetch()} /></AdminState>;
-  if (session.isError || !session.data) return <AdminLogin password={password} setPassword={setPassword} busy={busy} error={error} onSubmit={(event) => void login(event)} />;
+  if (session.isError || !session.data) return <AdminLogin username={username} setUsername={setUsername} password={password} setPassword={setPassword} busy={busy} error={error} onSubmit={(event) => void login(event)} />;
 
   const csrf = session.data.csrfToken ?? undefined;
   return <div className="system-admin-page" dir="rtl">
@@ -121,8 +123,8 @@ export function SystemAdminSubscriptionsApp() {
   </div>;
 }
 
-function AdminLogin({ password, setPassword, busy, error, onSubmit }: { password: string; setPassword: (value: string) => void; busy: boolean; error: string; onSubmit: (event: FormEvent) => void }) {
-  return <main className="admin-login-page" dir="rtl"><section className="admin-login-card"><BrandLogo className="admin-login-logo" alt="لوگوی شاپرو" /><span className="eyebrow">ورود مالک سامانه</span><h1>مدیریت مرکزی شاپرو</h1><p>این پنل فقط برای مالک شاپرو فعال است.</p><form onSubmit={onSubmit}><label className="field"><span className="field-label">نام کاربری</span><input autoComplete="username" dir="ltr" value="shopro_super_admin" readOnly /></label><label className="field"><span className="field-label">رمز عبور</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required maxLength={256} /></label><button className="button button-primary full" disabled={busy}>{busy ? "در حال بررسی…" : "ورود امن"}</button></form>{error && <p className="notice notice-error" role="alert">{error}</p>}<small><KeyRound size={14} />نشست مدیریتی روی سرور ذخیره و کنترل می‌شود.</small></section></main>;
+function AdminLogin({ username, setUsername, password, setPassword, busy, error, onSubmit }: { username: string; setUsername: (value: string) => void; password: string; setPassword: (value: string) => void; busy: boolean; error: string; onSubmit: (event: FormEvent) => void }) {
+  return <main className="admin-login-page" dir="rtl"><section className="admin-login-card"><BrandLogo className="admin-login-logo" alt="لوگوی شاپرو" /><span className="eyebrow">ورود مالک سامانه</span><h1>مدیریت مرکزی شاپرو</h1><p>این پنل فقط برای مالک شاپرو فعال است.</p><form onSubmit={onSubmit}><label className="field"><span className="field-label">نام کاربری</span><input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} dir="ltr" value={username} onChange={(event) => setUsername(event.target.value)} required maxLength={128} /></label><label className="field"><span className="field-label">رمز عبور</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required maxLength={256} /></label><button className="button button-primary full" disabled={busy}>{busy ? "در حال بررسی…" : "ورود امن"}</button></form>{error && <p className="notice notice-error" role="alert">{error}</p>}<small><KeyRound size={14} />نشست مدیریتی روی سرور ذخیره و کنترل می‌شود.</small></section></main>;
 }
 
 type GlobalSearchResults = {

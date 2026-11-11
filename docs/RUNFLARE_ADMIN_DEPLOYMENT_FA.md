@@ -10,6 +10,7 @@
 | Docker Service موجود برنامه | `[نام Service فعلی را از Runflare وارد کنید]` |
 | PostgreSQL موجود در همان Project | `[نام سرویس و host داخلی از Runflare]` |
 | origin دقیق HTTPS برنامه | `[از تنظیم دامنهٔ متصل به سرویس بخوانید]` |
+| دامنهٔ پنل مالک | `admin.shoproapp.ir`؛ اتصال به Docker Service و فعال‌بودن HTTPS را بررسی کنید. |
 | `TRUST_PROXY_HOPS` | `[تعداد proxyهای مورداعتماد را از مسیر فعلی تأیید کنید]` |
 | volume خصوصی receipt | `[mount path فعلی یا تصمیم مالک]` |
 | backup/restore پایگاه‌داده و volume | `[روش فعال را پیش از deploy تأیید کنید]` |
@@ -30,6 +31,16 @@
 5. فرمان `CMD` در Dockerfile ابتدا `npm run db:deploy` را روی `DATABASE_URL` اجرا می‌کند و پس از موفقیت API را بالا می‌آورد. اگر migration شکست بخورد، API نباید آمادهٔ دریافت ترافیک شود. از `migrate reset` یا حذف دستی داده استفاده نکنید.
 6. پس از deploy از Runflare logs/events علت restart را بررسی کنید و health checkهای موجود را بزنید: `/api/v1/health/live` و `/api/v1/health/ready`. جزئیات داخلی DB یا Secret را در صفحهٔ عمومی health قرار ندهید.
 
+## اتصال دامنهٔ پنل مالک
+
+1. در همان Project، وارد تنظیم دامنه شوید و `admin.shoproapp.ir` را بدون `https://` یا `www` اضافه کنید. سپس در جزئیات دامنه، آن را به **Docker Service فعلی Shopro** وصل کنید؛ سرویس Static یا Docker جدا نسازید.
+2. مقدارهای DNS را فقط از صفحهٔ Runflare بردارید. اگر DNS را نزد Cloudflare یا ابر آروان نگه می‌دارید، IP و رکورد TXT نمایش‌داده‌شده را هر دو ثبت کنید؛ برای هر ارائه‌دهندهٔ دیگر نیز فقط رکوردهای اعلام‌شده توسط Runflare را وارد کنید. مقدار A/CNAME یا TXT را حدس نزنید. اگر صفحهٔ دامنه تنظیم nameserver نشان می‌دهد، طبق همان صفحه پیش بروید و بعد «بررسی مجدد» را اجرا کنید.
+3. برای همین دامنه در تنظیم SSL پروژه گواهی فعال کنید. تا وقتی `https://admin.shoproapp.ir` با گواهی معتبر باز نمی‌شود deploy را برای ورود ادمین نهایی نکنید.
+4. در Environment همان Docker Service، `ADMIN_APP_ORIGIN=https://admin.shoproapp.ir` را اضافه کنید و دامنهٔ ادمین را به فهرست `WEB_ORIGIN` فعلی بیفزایید؛ مقدار فعلی محصول را حذف یا جایگزین نکنید. نمونه: `https://web.shoproapp.ir,https://admin.shoproapp.ir`، فقط اگر origin جاری محصول واقعاً همین است.
+5. `COOKIE_SECURE=true` را حفظ کنید. cookie ادمین بدون `Domain` عمومی و فقط برای همین host صادر می‌شود؛ نشست ادمین با نشست فروشندگان به اشتراک گذاشته نمی‌شود. تغییر Environment سرویس را restart می‌کند؛ پس از آماده‌شدن DNS و TLS، از ریشهٔ repo `runflare deploy` را اجرا و logs/events و health checkها را بررسی کنید.
+
+Runflare روند افزودن دامنه در تنظیم دامنهٔ Project و اتصال آن به سرویس موجود را در [راهنمای افزودن دامنه](https://runflare.com/docs/how-to-add-domain/) و [اتصال دامنه به سرویس](https://runflare.com/docs/add-domain-to-service/) شرح داده است. مسیر SSL را در [راهنمای SSL Runflare](https://runflare.com/docs/how-to-work-with-ssl/) ببینید. نام منوها ممکن است با نسخهٔ فعلی پنل تفاوت داشته باشد؛ رکوردهای DNS نهایی را از پنل خودتان بردارید.
+
 ## متغیرهای محیطی
 
 مقدارهای زندهٔ سرویس را پیش از تغییر یادداشت کنید و تنظیم‌های مستقل آن را بازنویسی نکنید. `infra/runflare.env.example` فقط الگوی نام‌هاست؛ placeholderهایش را bulk-copy نکنید. متغیرها در تنظیمات Environment همان Docker Service تنظیم می‌شوند. Secretها را با گزینهٔ Secret نگه دارید. [راهنمای Environment Variables Runflare](https://runflare.com/docs/setup-environment-variable/) توضیح می‌دهد تنظیم env در سطح سرویس انجام می‌شود و تغییر آن restart سرویس را به‌دنبال دارد.
@@ -38,7 +49,8 @@
 |---|---|---:|---|
 | `NODE_ENV` | `production` | خیر | Docker runtime production است. |
 | `PORT` | `3000` | خیر | پورت image برنامه. |
-| `WEB_ORIGIN` | origin دقیق و نهایی HTTPS که مالک از دامنهٔ موجود تأیید می‌کند | خیر | معادل قرارداد پیشنهادی `APP_ORIGIN` در این repo است. از افزودن متغیر موازی `APP_ORIGIN` خودداری کنید؛ API از `WEB_ORIGIN` استفاده می‌کند. |
+| `WEB_ORIGIN` | origin دقیق فعلی محصول به‌علاوهٔ `https://admin.shoproapp.ir`، جداشده با کاما | خیر | origin موجود را از Environment زنده بخوانید و حفظ کنید. معادل قرارداد پیشنهادی `APP_ORIGIN` در این repo است؛ متغیر موازی نسازید. |
+| `ADMIN_APP_ORIGIN` | `https://admin.shoproapp.ir` | خیر | برای فعال‌کردن host پنل تنظیم کنید؛ باید در `WEB_ORIGIN` هم باشد. درخواست `GET /` روی این host به `/system-admin` می‌رود و صفحهٔ محافظت‌شده کاربر ناشناس را به login هدایت می‌کند. |
 | `SHOPRO_ADMIN_USERNAME` | دقیقاً `shopro_super_admin` | خیر | مقدار دیگری باعث توقف startup می‌شود. |
 | `SHOPRO_ADMIN_INITIAL_PASSWORD` | رمز اولیه‌ای که مالک خودش در Runflare وارد می‌کند | **بله** | فقط bootstrap نخست. در repo، `.env.example`، command، log یا اسکرین‌شات قرار ندهید. پس از ورود موفق، حذف کنید. مقدار موجود در DB فقط Argon2id hash است. |
 | `DATABASE_URL` | connection string خصوصی سرویس PostgreSQL موجود | **بله** | از host داخلی Runflare استفاده کنید. دسترسی remote را فعال نکنید. مقدار یا credential آن را در log چاپ نکنید. |
@@ -53,13 +65,13 @@
 | `ADMIN_SESSION_IDLE_MINUTES` | پیش‌فرض `30` دقیقه | خیر | اختیاری؛ بازهٔ معتبر ۵ تا ۲۴۰. |
 | `ADMIN_SESSION_MAX_HOURS` | پیش‌فرض `12` ساعت | خیر | اختیاری؛ بازهٔ معتبر ۱ تا ۱۶۸. |
 
-`SESSION_TTL_DAYS` فقط نشست کاربر عادی است و timeout مدیر نیست. `WEB_ORIGIN` باید دقیقاً یک origin HTTPS باشد، بدون path/query. host نمونه در فایل env نباید به‌عنوان دامنهٔ فعال تلقی شود.
+`SESSION_TTL_DAYS` فقط نشست کاربر عادی است و timeout مدیر نیست. هر عضو `WEB_ORIGIN` و در صورت فعال‌کردن host پنل، مقدار `ADMIN_APP_ORIGIN` باید origin دقیق HTTPS و بدون path/query باشند. در فایل نمونه فقط دامنهٔ ادمین معلوم است؛ origin جاری محصول و سایر Secretها را از تنظیم زندهٔ سرویس بگیرید.
 
 ## Bootstrap حساب مالک
 
 1. backup مرحلهٔ قبل را تأیید کنید. در تنظیمات Secret همان Docker Service موقتاً `SHOPRO_ADMIN_INITIAL_PASSWORD` را اضافه کنید و `SHOPRO_ADMIN_USERNAME=shopro_super_admin` را نگه دارید.
 2. Deploy کنید. Docker ابتدا migration را اعمال می‌کند. هنگام startup، API با Argon2id حساب را در صورت نبودن مدیر ایجاد می‌کند. اگر دقیقاً یک مدیر قدیمی باشد، migration همان شناسه را به نام کاربری ثابت وصل می‌کند و Secret فقط نخستین رمز hashشده را برایش ثبت می‌کند. اگر چند مدیر قدیمی باشد، startup متوقف می‌شود؛ این حالت را با انتخاب تصادفی مدیر حل نکنید.
-3. از origin واقعی و HTTPS وارد `/system-admin/login` شوید. حساب مالک `shopro_super_admin` است. پس از ورود، تغییر رمز و فعال‌بودن نشست را از بخش «امنیت حساب» بررسی کنید.
+3. به `https://admin.shoproapp.ir` بروید؛ ریشهٔ دامنه به پنل و در صورت نداشتن نشست معتبر به `/system-admin/login` هدایت می‌شود. نام کاربری را دستی وارد کنید؛ فیلد از پیش پر نشده است. حساب مالک `shopro_super_admin` است. پس از ورود، تغییر رمز و فعال‌بودن نشست را از بخش «امنیت حساب» بررسی کنید.
 4. `SHOPRO_ADMIN_INITIAL_PASSWORD` را از Service Environment حذف و سرویس را restart کنید. کد در startup بعدی رمز hashشدهٔ موجود را دست نمی‌زند؛ secret اولیه برای deployهای بعدی لازم نیست.
 
 برای آماده‌سازی کاتالوگ پلن اشتراک در DB موجود، در صورت نیاز `SHOPRO_SUBSCRIPTION_SEED_CONFIRM=SEED_SUBSCRIPTION_CATALOG` را موقتاً تنظیم و در console سرویس اجرا کنید:

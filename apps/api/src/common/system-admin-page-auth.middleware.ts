@@ -4,6 +4,18 @@ import type { PrismaService } from "../prisma/prisma.service.js";
 import { ADMIN_SESSION_COOKIE } from "./admin-session-cookie.js";
 import type { AppRequest } from "./request-context.js";
 
+function requireLogin(request: Request, response: Response, message: string, clearSession = false) {
+  response.setHeader("Cache-Control", "private, no-store");
+  if (clearSession) {
+    response.clearCookie(ADMIN_SESSION_COOKIE, { path: "/", sameSite: "strict", secure: process.env.COOKIE_SECURE === "true" });
+  }
+  if (request.accepts("html")) {
+    response.redirect(302, "/system-admin/login");
+    return;
+  }
+  response.status(401).json({ message });
+}
+
 export function createSystemAdminPageAuthMiddleware(prisma: PrismaService): RequestHandler {
   return async (request: Request, response: Response, next: NextFunction) => {
     const appRequest = request as AppRequest;
@@ -15,7 +27,7 @@ export function createSystemAdminPageAuthMiddleware(prisma: PrismaService): Requ
 
     const raw = appRequest.cookies?.[ADMIN_SESSION_COOKIE] as string | undefined;
     if (!raw) {
-      response.status(401).setHeader("Cache-Control", "private, no-store").json({ message: "برای مشاهدهٔ این صفحه وارد پنل مدیریت شوید." });
+      requireLogin(request, response, "برای مشاهدهٔ این صفحه وارد پنل مدیریت شوید.");
       return;
     }
 
@@ -32,7 +44,7 @@ export function createSystemAdminPageAuthMiddleware(prisma: PrismaService): Requ
       return;
     }
     if (!session) {
-      response.status(401).setHeader("Cache-Control", "private, no-store").json({ message: "نشست مدیر معتبر نیست؛ از مسیر ورود دوباره وارد شوید." });
+      requireLogin(request, response, "نشست مدیر معتبر نیست؛ از مسیر ورود دوباره وارد شوید.", true);
       return;
     }
 
@@ -46,7 +58,7 @@ export function createSystemAdminPageAuthMiddleware(prisma: PrismaService): Requ
       data: { lastSeenAt: now, expiresAt: new Date(Math.min(now.getTime() + idleMinutes * 60_000, session.absoluteExpiresAt.getTime())) },
     });
     if (refreshed.count !== 1) {
-      response.status(401).setHeader("Cache-Control", "private, no-store").json({ message: "نشست مدیر معتبر نیست؛ از مسیر ورود دوباره وارد شوید." });
+      requireLogin(request, response, "نشست مدیر معتبر نیست؛ از مسیر ورود دوباره وارد شوید.", true);
       return;
     }
     response.setHeader("Cache-Control", "private, no-store");

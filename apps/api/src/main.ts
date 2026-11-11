@@ -11,10 +11,11 @@ import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module.js";
 import { ApiExceptionFilter } from "./common/api-exception.filter.js";
 import { createMarketingHostMiddleware } from "./marketing-host.middleware.js";
-import { validateProductionEnv, webOrigins } from "./common/production-env.js";
+import { adminAppOrigin, validateProductionEnv, webOrigins } from "./common/production-env.js";
 import type { AppRequest } from "./common/request-context.js";
 import { PrismaService } from "./prisma/prisma.service.js";
 import { createSystemAdminPageAuthMiddleware } from "./common/system-admin-page-auth.middleware.js";
+import { createSystemAdminHostMiddleware } from "./common/system-admin-host.middleware.js";
 
 async function bootstrap() {
   validateProductionEnv();
@@ -42,6 +43,8 @@ async function bootstrap() {
     }));
   }
   if (process.env.NODE_ENV === "production") {
+    const adminOrigin = adminAppOrigin();
+    if (adminOrigin) app.use(createSystemAdminHostMiddleware(adminOrigin));
     const webRoot = resolve(process.cwd(), "apps/web/dist");
     app.use(express.static(webRoot, { index: false }));
     const prisma = app.get(PrismaService);
