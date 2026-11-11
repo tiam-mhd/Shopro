@@ -11,6 +11,7 @@ import { classifyOfflineFailure, isQueueItemAutomaticallySyncable, isQueueItemMa
 import { OptionPicker } from "./components/OptionPicker.js";
 import type { PickerOptionLoader } from "./components/OptionPicker.js";
 import { BrandLogo } from "./components/BrandLogo.js";
+import { KaashLauncher } from "./components/KaashLauncher.js";
 import { OtpCodeInput, OTP_CODE_LENGTH } from "./components/OtpCodeInput.js";
 import { trackOnboardingEvent } from "./lib/onboarding-events.js";
 import { formatOtpCountdown, otpResendLabel, otpTimingFromError, useOtpCountdown } from "./lib/otp-countdown.js";
@@ -287,6 +288,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
     </section>}
     {unclaimedPendingCount > 0 && <UnclaimedQueueNotice count={unclaimedPendingCount} onClear={() => void discardUnclaimed()} />}
     <BottomNav />
+    {location.pathname.startsWith("/app") && <KaashLauncher online={online} />}
   </div><PwaInstallNudge businessId={activeBusiness?.id} branchId={activeBranch?.id} /></>;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Ban, Building2, CalendarPlus, CircleDollarSign, CreditCard, Download, Eye, KeyRound, LayoutDashboard, LogOut, Menu, PackageCheck, Pause, Pencil, Play, Plus, Power, RefreshCw, Search, Shield, ShieldAlert, Store, UsersRound, X } from "lucide-react";
+import { Activity, Ban, Building2, CalendarPlus, CircleDollarSign, CreditCard, Download, Eye, KeyRound, LayoutDashboard, Lightbulb, LogOut, Menu, PackageCheck, Pause, Pencil, Play, Plus, Power, RefreshCw, Search, Shield, ShieldAlert, Store, UsersRound, X } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { BrandLogo } from "../components/BrandLogo.js";
 import { AdminPagination } from "../components/AdminPagination.js";
 import { ApiError, adminApi, get } from "../lib/api.js";
@@ -9,6 +10,7 @@ import { InlineError, LoadingBlock } from "../App.js";
 import { Modal } from "../components/Modal.js";
 import { JalaliDatePicker } from "../components/JalaliDatePicker.js";
 import { ManualPaymentsAdminTab, PaymentSettingsAdminTab } from "./SystemAdminManualPayments.js";
+import { KaashAdminWorkspace, KaashStoryPage, kaashStoryIdFromPath } from "./KaashAdminPages.js";
 
 type AdminSession = { admin: { id: string; username: string; displayName: string }; csrfToken: string | null };
 type BranchRow = { id: string; businessId: string; businessName: string; branchName: string; branchCode: string; branchSubscriptionId: string | null; status: string; suspendedAt: string | null; suspensionReason: string | null; currentPeriod: { startsAt: string; endsAt: string; planNameFa: string | null; durationMonths: number | null; remainingDays: number } | null };
@@ -17,7 +19,7 @@ type BranchActionPreview = { observedAt: string; current: { suspended: boolean; 
 type PlanRow = { id: string; code: string; nameFa: string; displayOrder: number; isActive: boolean; badge: string | null; features: string[]; prices: Array<{ id: string; durationMonths: number; priceRial: string; currency: string; effectiveFrom: string; effectiveTo: string | null; consumedOrderCount: number; immutable: boolean }> };
 type AdminOrder = { id: string; businessName: string; branchName: string; planNameFa: string; durationMonths: number; amountRial: string; currency: string; status: string; providerReference: string | null; createdAt: string; paidAt: string | null; attempts: Array<{ provider: string; providerExternalId: string | null; amountRial: string; status: string; safeErrorCode: string | null; createdAt: string }> };
 type Rollout = { mode: "OBSERVE" | "ENFORCE"; legacyGraceEndsAt: string | null; providerFeeBasisPoints: number | null; taxRateBasisPoints: number | null; variableCostRial: string | null; minimumContributionRial: string | null; report: { totalActiveBranches: number; activeSubscriptions: number; branchesWithoutActiveSubscription: number; suspendedBranches: number }; note: string };
-type Tab = "overview" | "businesses" | "branches" | "orders" | "storefront-orders" | "manual-payments" | "payment-settings" | "plans" | "rollout" | "economics" | "audit" | "account";
+type Tab = "overview" | "businesses" | "branches" | "orders" | "storefront-orders" | "manual-payments" | "payment-settings" | "plans" | "rollout" | "economics" | "audit" | "kaash" | "account";
 
 const ADMIN_SECTIONS: Array<{ key: Tab; label: string; Icon: typeof LayoutDashboard }> = [
   { key: "overview", label: "نمای کلی", Icon: LayoutDashboard },
@@ -31,14 +33,18 @@ const ADMIN_SECTIONS: Array<{ key: Tab; label: string; Icon: typeof LayoutDashbo
   { key: "rollout", label: "راه‌اندازی", Icon: ShieldAlert },
   { key: "economics", label: "اقتصاد اشتراک", Icon: CircleDollarSign },
   { key: "audit", label: "رخدادها", Icon: Activity },
+  { key: "kaash", label: "کاش‌ها", Icon: Lightbulb },
   { key: "account", label: "امنیت حساب", Icon: KeyRound },
 ];
 
 export function SystemAdminSubscriptionsApp() {
   const client = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const session = useQuery({ queryKey: ["system-admin-session"], queryFn: () => adminApi<AdminSession>("/system-admin/session"), retry: false, staleTime: 30_000 });
-  const [tab, setTab] = useState<Tab>("overview");
-  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set(["overview"]));
+  const kaashCounts = useQuery({ queryKey: ["system-admin", "kaash-counts"], queryFn: () => adminApi<{ total: number; newCount: number }>("/system-admin/kaash/counts"), enabled: Boolean(session.data), retry: false, staleTime: 30_000, gcTime: 0 });
+  const [tab, setTab] = useState<Tab>(() => location.pathname.startsWith("/system-admin/kaash") ? "kaash" : "overview");
+  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set(location.pathname.startsWith("/system-admin/kaash") ? ["overview", "kaash"] : ["overview"]));
   const [sidebarExpanded, setSidebarExpanded] = useState(() => {
     try { return window.localStorage.getItem("shopro_admin_sidebar") !== "collapsed"; } catch { return true; }
   });
@@ -48,6 +54,11 @@ export function SystemAdminSubscriptionsApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [globalTarget, setGlobalTarget] = useState<{ kind: "businesses" | "branches" | "orders" | "storefront-orders"; q: string } | null>(null);
+  useEffect(() => {
+    if (!location.pathname.startsWith("/system-admin/kaash")) return;
+    setTab("kaash");
+    setVisitedTabs((current) => current.has("kaash") ? current : new Set(current).add("kaash"));
+  }, [location.pathname]);
   const login = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
@@ -70,6 +81,8 @@ export function SystemAdminSubscriptionsApp() {
   const selectTab = (next: Tab) => {
     setTab(next);
     setVisitedTabs((current) => current.has(next) ? current : new Set(current).add(next));
+    if (next === "kaash") navigate("/system-admin/kaash");
+    else if (location.pathname.startsWith("/system-admin/kaash")) navigate("/system-admin");
     if (window.matchMedia("(max-width: 900px)").matches) setMobileSidebarOpen(false);
   };
   const toggleNavigation = () => {
@@ -87,6 +100,8 @@ export function SystemAdminSubscriptionsApp() {
   if (session.isPending) return <AdminState><LoadingBlock /></AdminState>;
   if (session.isError && !(session.error instanceof ApiError && session.error.status === 401)) return <AdminState><InlineError error={session.error} retry={() => void session.refetch()} /></AdminState>;
   if (session.isError || !session.data) return <AdminLogin username={username} setUsername={setUsername} password={password} setPassword={setPassword} busy={busy} error={error} onSubmit={(event) => void login(event)} />;
+  const storyId = kaashStoryIdFromPath(location.pathname);
+  if (storyId) return <KaashStoryPage id={storyId} />;
 
   const csrf = session.data.csrfToken ?? undefined;
   return <div className="system-admin-page" dir="rtl">
@@ -98,7 +113,7 @@ export function SystemAdminSubscriptionsApp() {
     <div className={`system-admin-shell ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"} ${mobileSidebarOpen ? "mobile-nav-open" : ""}`}>
       <aside className="system-admin-sidebar" id="system-admin-navigation" aria-label="ناوبری مدیریت">
         <div className="system-admin-sidebar-heading"><strong>بخش‌های مدیریت</strong><button className="admin-icon-action system-admin-sidebar-collapse" type="button" onClick={toggleNavigation} aria-label={sidebarExpanded ? "جمع‌کردن نوار کناری" : "بازکردن نوار کناری"} title={sidebarExpanded ? "جمع‌کردن نوار کناری" : "بازکردن نوار کناری"}>{sidebarExpanded ? <X size={17} /> : <Menu size={17} />}</button></div>
-        <nav className="system-admin-nav">{ADMIN_SECTIONS.map(({ key, label, Icon }) => <button type="button" key={key} className={`system-admin-nav-item ${tab === key ? "active" : ""}`} onClick={() => selectTab(key)} aria-current={tab === key ? "page" : undefined} aria-label={label} title={label}><Icon size={18} /><span>{label}</span></button>)}</nav>
+        <nav className="system-admin-nav">{ADMIN_SECTIONS.map(({ key, label, Icon }) => <button type="button" key={key} className={`system-admin-nav-item ${tab === key ? "active" : ""}`} onClick={() => selectTab(key)} aria-current={tab === key ? "page" : undefined} aria-label={key === "kaash" && kaashCounts.isError ? `${label}؛ دریافت تعداد با خطا روبه‌رو شد` : label} title={key === "kaash" && kaashCounts.isError ? `${label} · تعداد نامشخص` : label}><Icon size={18} /><span>{label}</span>{key === "kaash" && <small className={`admin-nav-count ${kaashCounts.isError ? "is-unknown" : ""}`} aria-label={kaashCounts.isError ? "تعداد دریافت نشد" : `تعداد جدید: ${kaashCounts.data?.newCount ?? "در حال دریافت"}`}>{kaashCounts.isPending ? "…" : kaashCounts.isError ? "—" : faNumber(kaashCounts.data.newCount)}</small>}</button>)}</nav>
       </aside>
       {mobileSidebarOpen && <button className="system-admin-nav-backdrop" type="button" aria-label="بستن منوی مدیریت" onClick={() => setMobileSidebarOpen(false)} />}
       <div className="system-admin-workspace"><main className="system-admin-main">
@@ -116,6 +131,7 @@ export function SystemAdminSubscriptionsApp() {
         {visitedTabs.has("rollout") && <div hidden={tab !== "rollout"}><RolloutAdminTab csrf={csrf} /></div>}
         {visitedTabs.has("economics") && <div hidden={tab !== "economics"}><EconomicsAdminTab /></div>}
         {visitedTabs.has("audit") && <div hidden={tab !== "audit"}><AdminAuditTab csrf={csrf} /></div>}
+        {visitedTabs.has("kaash") && <div hidden={tab !== "kaash"}><KaashAdminWorkspace csrf={csrf} active={tab === "kaash"} /></div>}
         {visitedTabs.has("account") && <div hidden={tab !== "account"}><AdminSecurityTab active={tab === "account"} csrf={csrf} onSignedOut={() => window.location.assign("/system-admin/login")} /></div>}
       </div>
       </main></div>

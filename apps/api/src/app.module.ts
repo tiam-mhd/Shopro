@@ -20,9 +20,10 @@ import { SubscriptionEntitlementGuard } from "./subscriptions/subscription-entit
 import { SyncModule } from "./sync/sync.module.js";
 import { OnboardingModule } from "./onboarding/onboarding.module.js";
 import { StorefrontModule } from "./storefront/storefront.module.js";
+import { KaashModule } from "./kaash/kaash.module.js";
 
 @Module({
-  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule, SubscriptionsModule, SyncModule, OnboardingModule, StorefrontModule],
+  imports: [PrismaModule, AuthModule, BusinessesModule, PartiesModule, ProductsModule, SalesModule, PurchasesModule, ExpensesModule, FinanceModule, ReportsModule, InventoryModule, SystemAdminModule, SubscriptionsModule, SyncModule, OnboardingModule, StorefrontModule, KaashModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: SessionGuard },

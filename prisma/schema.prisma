@@ -195,6 +195,43 @@ enum SubscriptionPeriodSource {
   COMPENSATION
 }
 
+enum KaashStatus {
+  NEW
+  REVIEWING
+  PLANNED
+  IN_PROGRESS
+  RELEASED
+  ARCHIVED
+}
+
+enum KaashModule {
+  DASHBOARD
+  ONBOARDING
+  SUBSCRIPTIONS
+  STOREFRONT
+  SALES
+  INVOICES
+  CUSTOMERS
+  SUPPLIERS
+  PRODUCTS
+  SERVICES
+  INVENTORY
+  PURCHASES
+  EXPENSES
+  FINANCE
+  LEDGER
+  REPORTS
+  SETTINGS
+  OTHER
+}
+
+enum KaashEventKind {
+  SUBMITTED
+  STATUS_CHANGED
+  NOTE_CHANGED
+  ADMIN_UPDATED
+}
+
 model User {
   id                       String                                @id @default(uuid()) @db.Uuid
   phone                    String                                @unique @db.VarChar(20)
@@ -212,6 +249,7 @@ model User {
   businessCreationRequests BusinessCreationRequest[]
   onboardingEvents         OnboardingEvent[]
   onboardingResultViews    OnboardingResultView[]
+  kaashSubmissions         KaashSubmission[]
 
   @@map("users")
 }
@@ -233,6 +271,8 @@ model SystemAdmin {
   subscriptionRolloutUpdates   SubscriptionRolloutSetting[]          @relation("SubscriptionRolloutUpdater")
   manualPaymentSettingsUpdates SubscriptionManualPaymentSettings[]   @relation("ManualPaymentSettingsUpdater")
   reviewedManualPayments       SubscriptionManualPaymentSubmission[] @relation("ManualPaymentReviewer")
+  updatedKaashSubmissions      KaashSubmission[]                    @relation("KaashLastUpdater")
+  kaashSubmissionEvents        KaashSubmissionEvent[]               @relation("KaashAdminActor")
 
   @@map("system_admins")
 }
@@ -389,6 +429,7 @@ model Business {
   storefrontOrderItems       StorefrontOrderItem[]
   storefrontPaymentAttempts  StorefrontPaymentAttempt[]
   storefrontOrderEvents      StorefrontOrderEvent[]
+  kaashSubmissions           KaashSubmission[]
 
   @@map("businesses")
 }
@@ -451,6 +492,7 @@ model Branch {
   products                   Product[]
   services                   Service[]
   storefrontReservations     StorefrontReservation[]
+  kaashSubmissions           KaashSubmission[]
 
   @@unique([businessId, code])
   @@unique([id, businessId])
@@ -1511,6 +1553,52 @@ model AuditEvent {
   @@index([businessId, occurredAt])
   @@index([businessId, entityType, entityId])
   @@map("audit_events")
+}
+
+model KaashSubmission {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  userId               String                 @map("user_id") @db.Uuid
+  businessId           String?                @map("business_id") @db.Uuid
+  branchId             String?                @map("branch_id") @db.Uuid
+  clientSubmissionId   String                 @map("client_submission_id") @db.Uuid
+  content              String                 @db.Text
+  sourceModule         KaashModule            @map("source_module")
+  screenKey            String                 @map("screen_key") @db.VarChar(64)
+  status               KaashStatus            @default(NEW)
+  internalNote         String?                @map("internal_note") @db.Text
+  lastUpdatedByAdminId String?                @map("last_updated_by_admin_id") @db.Uuid
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business             Business?              @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  branch               Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  lastUpdatedByAdmin   SystemAdmin?           @relation("KaashLastUpdater", fields: [lastUpdatedByAdminId], references: [id], onDelete: SetNull)
+  events               KaashSubmissionEvent[]
+
+  @@unique([userId, clientSubmissionId])
+  @@index([userId, createdAt])
+  @@index([businessId, createdAt])
+  @@index([status, createdAt])
+  @@index([sourceModule, createdAt])
+  @@map("kaash_submissions")
+}
+
+model KaashSubmissionEvent {
+  id             String          @id @default(uuid()) @db.Uuid
+  submissionId   String          @map("submission_id") @db.Uuid
+  adminId        String?         @map("admin_id") @db.Uuid
+  kind           KaashEventKind
+  previousStatus KaashStatus?    @map("previous_status")
+  newStatus      KaashStatus?    @map("new_status")
+  previousNote   String?         @map("previous_note") @db.Text
+  newNote        String?         @map("new_note") @db.Text
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  submission     KaashSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  admin          SystemAdmin?    @relation("KaashAdminActor", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId, createdAt])
+  @@index([adminId, createdAt])
+  @@map("kaash_submission_events")
 }
 
 model IdempotencyRecord {

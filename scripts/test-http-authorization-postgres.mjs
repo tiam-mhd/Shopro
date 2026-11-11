@@ -238,10 +238,13 @@ try {
     const pageAddress = pageServer.address();
     const pageUrl = `http://127.0.0.1:${pageAddress.port}`;
     assert.equal((await fetch(`${pageUrl}/system-admin/login`)).status, 200, "the standalone admin login page remains directly reachable");
-    const anonymousAdminPage = await fetch(`${pageUrl}/system-admin`);
-    assert.equal(anonymousAdminPage.status, 401, "the admin application page must reject anonymous direct navigation");
+    const anonymousAdminPage = await fetch(`${pageUrl}/system-admin`, { redirect: "manual" });
+    assert.equal(anonymousAdminPage.status, 302, "the admin application page must redirect anonymous direct navigation to owner login");
+    assert.equal(anonymousAdminPage.headers.get("location"), "/system-admin/login");
     assert.equal(anonymousAdminPage.headers.get("cache-control"), "private, no-store");
-    assert.equal((await fetch(`${pageUrl}/system-admin`, { headers: { cookie: `shopro_session=${owner.rawSession}` } })).status, 401, "seller cookies must not authorize direct admin page navigation");
+    const sellerAdminPage = await fetch(`${pageUrl}/system-admin`, { headers: { cookie: `shopro_session=${owner.rawSession}` }, redirect: "manual" });
+    assert.equal(sellerAdminPage.status, 302, "seller cookies must not authorize direct admin page navigation");
+    assert.equal(sellerAdminPage.headers.get("location"), "/system-admin/login");
     assert.equal((await fetch(`${pageUrl}/system-admin`, { headers: { cookie: `${adminSessionCookie}=${firstCookies.session}` } })).status, 200, "a current owner session may open the admin application page");
   } finally {
     await new Promise((resolve, reject) => pageServer.close((error) => error ? reject(error) : resolve()));
@@ -249,6 +252,67 @@ try {
   const sessionRead = await adminRequest("/system-admin/session", { cookies: firstCookies });
   assert.equal(sessionRead.status, 200);
   assert.equal(sessionRead.payload.admin.username, "shopro_super_admin");
+
+  const kaashClientSubmissionId = randomUUID();
+  const kaashText = "کاش گزارش روزانهٔ فروش را بهتر کنیم. ".repeat(7);
+  const kaashBody = { clientSubmissionId: kaashClientSubmissionId, content: kaashText, screenKey: "sales.register" };
+  assert.equal((await request("/kaash", { auth: owner, method: "POST", body: kaashBody })).status, 403, "a signed-in account without a selected active business scope cannot submit a suggestion");
+  assert.equal((await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchB1.id, method: "POST", body: kaashBody })).status, 403, "a branch from another business must be rejected");
+  assert.equal((await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", csrf: false, body: kaashBody })).status, 403, "suggestion submission must require user CSRF validation");
+  assert.equal((await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { ...kaashBody, userId: outsider.user.id, businessId: businessB.id, branchId: branchB1.id } })).status, 400, "client-supplied owner and scope ids must be rejected");
+  const invalidScreen = await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { ...kaashBody, screenKey: "/app/invoices?private=1" } });
+  assert.equal(invalidScreen.status, 400, "raw paths and query strings are not accepted as source labels");
+  assert.equal((await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { ...kaashBody, clientSubmissionId: randomUUID(), content: "  \n " } })).status, 400, "blank suggestions must be rejected");
+  assert.equal((await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { ...kaashBody, clientSubmissionId: randomUUID(), content: "🙂".repeat(1001) } })).status, 400, "suggestions over 1000 Unicode characters must be rejected");
+  const [kaashCreate, kaashDoubleClick] = await Promise.all([
+    request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: kaashBody }),
+    request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: kaashBody }),
+  ]);
+  assert.equal(kaashCreate.status, 201);
+  assert.equal(kaashDoubleClick.status, 201);
+  assert.equal(kaashCreate.payload.id, kaashDoubleClick.payload.id, "concurrent retries with one idempotency key must return one committed row");
+  assert.equal("content" in kaashCreate.payload, false, "the create response must not echo sensitive suggestion text");
+  const kaashRow = await prisma.kaashSubmission.findUnique({ where: { id: kaashCreate.payload.id }, include: { events: true } });
+  assert.equal(kaashRow.userId, owner.user.id, "the server must bind the authenticated user, ignoring submitted identity fields");
+  assert.equal(kaashRow.businessId, businessA.id);
+  assert.equal(kaashRow.branchId, branchA1.id);
+  assert.equal(kaashRow.content, kaashText.trim());
+  assert.equal(kaashRow.events.length, 1);
+  const secondTabId = randomUUID();
+  const kaashSecondTab = await request("/kaash", { auth: owner, businessId: businessA.id, branchId: branchA1.id, method: "POST", body: { ...kaashBody, clientSubmissionId: secondTabId } });
+  assert.equal(kaashSecondTab.status, 201);
+  assert.equal(kaashSecondTab.payload.id, kaashCreate.payload.id, "same-user/same-scope identical submissions from separate tabs must collapse to one row");
+  assert.equal(await prisma.kaashSubmission.count({ where: { userId: owner.user.id } }), 1);
+
+  assert.equal((await request("/system-admin/kaash/counts", { auth: owner })).status, 401, "an ordinary account session cannot read the owner-only suggestion count");
+  assert.equal((await adminRequest("/system-admin/kaash/counts", { cookies: firstCookies })).status, 200);
+  assert.equal((await adminRequest("/system-admin/kaash/query", { cookies: firstCookies, method: "POST", body: { q: "گزارش روزانه", status: "NEW", module: "SALES", page: 1, pageSize: 10 } })).payload.total, 1, "owner search and filters must use persisted rows");
+  const kaashList = await adminRequest("/system-admin/kaash/query", { cookies: firstCookies, method: "POST", body: { page: 1, pageSize: 10 } });
+  assert.equal(kaashList.status, 200);
+  assert.equal(kaashList.payload.items[0].truncated, true, "the list returns a bounded preview rather than the full suggestion");
+  assert.match(kaashList.payload.items[0].user.phoneMasked, /\d{4}$/);
+  assert.doesNotMatch(JSON.stringify(kaashList.payload.items[0]), new RegExp(owner.user.phone));
+  const kaashDetail = await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}`, { cookies: firstCookies });
+  assert.equal(kaashDetail.status, 200);
+  assert.equal(kaashDetail.payload.content, kaashText.trim());
+  assert.equal((await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}/story`, { cookies: firstCookies })).status, 200);
+  const kaashStory = await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}/story`, { cookies: firstCookies });
+  assert.deepEqual(Object.keys(kaashStory.payload).sort(), ["content", "createdAt"]);
+  assert.equal((await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}`, { cookies: firstCookies, method: "PATCH", includeCsrf: false, body: { status: "REVIEWING" } })).status, 403, "owner status changes must require admin CSRF");
+  assert.equal((await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}`, { cookies: firstCookies, method: "PATCH", body: { status: "RELEASED" } })).status, 409, "the server must reject invalid workflow jumps");
+  const kaashUpdate = await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}`, { cookies: firstCookies, method: "PATCH", body: { status: "REVIEWING", internalNote: "پیگیری داخلی مالک" } });
+  assert.equal(kaashUpdate.status, 200);
+  assert.equal(kaashUpdate.payload.status, "REVIEWING");
+  assert.equal(kaashUpdate.payload.internalNote, "پیگیری داخلی مالک");
+  assert.equal(kaashUpdate.payload.events.at(-1).kind, "ADMIN_UPDATED");
+  const redactedStory = await adminRequest(`/system-admin/kaash/${kaashCreate.payload.id}/story`, { cookies: firstCookies });
+  assert.equal(redactedStory.payload.content, kaashText.trim());
+  assert.equal("internalNote" in redactedStory.payload, false);
+  assert.equal("user" in redactedStory.payload, false);
+  assert.equal("businessName" in redactedStory.payload, false);
+  assert.equal((await adminRequest("/system-admin/kaash/counts", { cookies: firstCookies })).payload.newCount, 0);
+  assert.equal((await request(`/system-admin/kaash/${kaashCreate.payload.id}`, { auth: owner })).status, 401, "a user session cannot read suggestion details through an admin route");
+
   const subscriptionPreview = await adminRequest(`/system-admin/subscriptions/branches/${branchA1.id}/preview`, {
     cookies: firstCookies, method: "POST", body: { kind: "grant", durationMonths: 1 },
   });

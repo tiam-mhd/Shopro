@@ -19,16 +19,20 @@ const contextFor = (request) => ({
 test("system-admin-only routes authenticate the isolated admin session and reject missing sessions", async () => {
   const rawSession = "private-admin-session";
   let receivedQuery;
-  const prisma = { systemAdminSession: { findFirst: async (query) => { receivedQuery = query; return {
-    id: "session-id", csrfHash: sha256("csrf-value"), admin: { id: "admin-id", phone: "09120000000", displayName: "مدیر", isActive: true },
-  }; } } };
+  const prisma = { systemAdminSession: {
+    findFirst: async (query) => { receivedQuery = query; return {
+      id: "session-id", csrfHash: sha256("csrf-value"), expiresAt: new Date(Date.now() + 60_000), absoluteExpiresAt: new Date(Date.now() + 60 * 60_000),
+      admin: { id: "admin-id", username: "shopro_super_admin", passwordHash: "initialized", displayName: "مدیر", isActive: true },
+    }; },
+    updateMany: async () => ({ count: 1 }),
+  } };
   const reflector = { getAllAndOverride: (key) => key === SYSTEM_ADMIN_ONLY };
   const guard = new SessionGuard(reflector, prisma);
   const request = { cookies: { shopro_admin_session: rawSession }, headers: {} };
   assert.equal(await guard.canActivate(contextFor(request)), true);
-  assert.deepEqual(request.systemAdmin, { id: "admin-id", phone: "09120000000", displayName: "مدیر", sessionId: "session-id", csrfHash: sha256("csrf-value") });
+  assert.deepEqual(request.systemAdmin, { id: "admin-id", username: "shopro_super_admin", displayName: "مدیر", sessionId: "session-id", csrfHash: sha256("csrf-value") });
   assert.equal(receivedQuery.where.tokenHash, sha256(rawSession));
-  assert.equal(receivedQuery.where.admin.isActive, true);
+  assert.deepEqual(receivedQuery.where.admin, { isActive: true, username: "shopro_super_admin", passwordHash: { not: null } });
   assert.equal(receivedQuery.where.revokedAt, null);
 
   const missingGuard = new SessionGuard(reflector, { systemAdminSession: { findFirst: async () => assert.fail("no cookie should not query sessions") } });

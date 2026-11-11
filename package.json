@@ -19,7 +19,7 @@
     "test:integration:otp:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-postgres-integration.ps1 -OtpOnly",
     "test:perf:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-postgres-integration.ps1 -Perf",
     "test:perf:subscriptions:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-postgres-integration.ps1 -SubscriptionPerf",
-    "test:e2e:browser-smoke": "node scripts/test-browser-smoke.mjs && node scripts/test-onboarding-browser-smoke.mjs",
+    "test:e2e:browser-smoke": "node scripts/test-browser-smoke.mjs && node scripts/test-onboarding-browser-smoke.mjs && node scripts/test-kaash-browser-smoke.mjs",
     "backup:create": "node scripts/backup/backup.mjs",
     "backup:restore": "node scripts/backup/restore.mjs",
     "db:generate": "prisma generate",
