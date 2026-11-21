@@ -298,7 +298,7 @@ export class SubscriptionsService {
   }
 
   private async currentForScope(scope: Scope, now: Date) {
-    const [business, branch, subscription, rollout] = await Promise.all([
+    const [business, branch, subscription, rollout, trialRecipient] = await Promise.all([
       this.prisma.business.findUnique({ where: { id: scope.businessId }, select: { displayName: true, timezone: true } }),
       this.prisma.branch.findFirst({ where: { id: scope.branchId, businessId: scope.businessId, isActive: true }, select: { name: true, code: true } }),
       this.prisma.branchSubscription.findUnique({
@@ -306,14 +306,22 @@ export class SubscriptionsService {
         include: { periods: { where: { revokedAt: null }, orderBy: [{ endsAt: "desc" }, { id: "desc" }], take: 10, include: { plan: true, order: true } } },
       }),
       this.prisma.subscriptionRolloutSetting.findUnique({ where: { id: "global" } }),
+      this.prisma.user.findUnique({ where: { trialBusinessId: scope.businessId }, select: { trialStartedAt: true, trialEndsAt: true } }),
     ]);
     if (!branch) throw new NotFoundException("شعبهٔ جاری پیدا نشد.");
     const activePeriod = subscription?.periods.find((period) => isSubscriptionPeriodActive(period.startsAt, period.endsAt, now));
     const latestPeriod = subscription?.periods[0];
     const graceEndsAt = rollout?.legacyGraceEndsAt ?? null;
+    const trialActive = Boolean(trialRecipient?.trialEndsAt && trialRecipient.trialEndsAt > now);
+    const trialExpired = Boolean(trialRecipient?.trialEndsAt && trialRecipient.trialEndsAt <= now);
+    const trialRemainingDays = trialRecipient?.trialEndsAt && trialActive
+      ? Math.max(0, Math.ceil((trialRecipient.trialEndsAt.getTime() - now.getTime()) / 86_400_000))
+      : 0;
     let status = "REQUIRED";
     if (subscription?.suspendedAt) status = "SUSPENDED";
     else if (activePeriod) status = "ACTIVE";
+    else if (trialActive) status = "TRIAL";
+    else if (trialExpired) status = latestPeriod ? "EXPIRED" : "REQUIRED";
     else if (rollout?.mode !== "ENFORCE") status = "OBSERVE";
     else if (graceEndsAt && graceEndsAt > now) status = "GRACE";
     else if (latestPeriod) status = "EXPIRED";
@@ -327,6 +335,12 @@ export class SubscriptionsService {
       rolloutMode: rollout?.mode ?? "OBSERVE",
       graceEndsAt: graceEndsAt?.toISOString() ?? null,
       serverTime: now.toISOString(),
+      trial: trialRecipient?.trialStartedAt && trialRecipient.trialEndsAt ? {
+        startsAt: trialRecipient.trialStartedAt.toISOString(),
+        endsAt: trialRecipient.trialEndsAt.toISOString(),
+        status: trialActive ? "ACTIVE" : "EXPIRED",
+        remainingDays: trialRemainingDays,
+      } : null,
       plan: displayPeriod ? {
         code: displayPeriod.planCodeSnapshot ?? displayPeriod.plan?.code ?? null,
         nameFa: displayPeriod.planNameFaSnapshot ?? displayPeriod.plan?.nameFa ?? null,

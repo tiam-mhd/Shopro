@@ -45,7 +45,7 @@ export async function seedSubscriptionCatalog(prisma: PrismaClient, options: See
       skipDuplicates: true,
     });
     await tx.subscriptionRolloutSetting.upsert({
-      where: { id: "global" }, update: {}, create: { id: "global", mode: "OBSERVE" },
+      where: { id: "global" }, update: {}, create: { id: "global", mode: "ENFORCE" },
     });
   }, { isolationLevel: "Serializable" });
   return { planCode: "STANDARD", prices: PRICES.map((price) => ({ durationMonths: price.durationMonths, priceRial: price.priceRial.toString() })) };

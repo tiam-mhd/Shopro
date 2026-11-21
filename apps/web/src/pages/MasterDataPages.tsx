@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Archive, Boxes, BriefcaseBusiness, Check, ChevronDown, Download, FileSpreadsheet, ImagePlus, PackagePlus, Pencil, Plus, ReceiptText, RotateCcw, ScanBarcode, Search, ShoppingCart, Star, Tags, Trash2, Truck, Upload, UsersRound } from "lucide-react";
 import { toAsciiDigits, type CursorPage, type MemberRole } from "@shopro/contracts";
-import { adminApi, del, downloadFile, get, patch, post, uploadFile } from "../lib/api.js";
+import { api, del, downloadFile, get, patch, post, uploadFile } from "../lib/api.js";
 import { faNumber, money } from "../lib/format.js";
 import { EmptyState, Field, InlineError, LoadMoreButton, PageHeader, SelectField, SubmitButton, messageOf, useInvalidate } from "../App.js";
 import { Modal } from "../components/Modal.js";
@@ -180,6 +180,7 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
   const [primaryFile, setPrimaryFile] = useState<QueuedProductImage | null>(null);
   const [galleryFiles, setGalleryFiles] = useState<QueuedProductImage[]>([]);
   const [mediaImages, setMediaImages] = useState<ProductImage[]>([]);
+  const [imageUploadProgress, setImageUploadProgress] = useState<{ completed: number; total: number } | null>(null);
   const [removedImageIds, setRemovedImageIds] = useState<string[]>([]);
   const [primaryImageId, setPrimaryImageId] = useState("");
   const [error, setError] = useState("");
@@ -244,21 +245,24 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
         await patch(`/products/${productId}/images/${primaryImageId}/primary`, {});
         setMediaImages((current) => [current.find((image) => image.id === primaryImageId)!, ...current.filter((image) => image.id !== primaryImageId)].map((image, index) => ({ ...image, position: index })));
       }
-      if (primaryFile) {
-        const file = primaryFile;
-        const uploaded = await uploadCatalogImage("/products", productId, file, "PRIMARY");
-        setMediaImages((current) => [...current.filter((image) => image.position !== 0), { ...uploaded, position: 0 }]);
-        setPrimaryFile((current) => current?.id === file.id ? null : current);
-        setPrimaryImageId(uploaded.id);
-      }
-      for (const queued of galleryFiles) {
-        const uploaded = await uploadCatalogImage("/products", productId, queued, "GALLERY");
-        setMediaImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded].sort((a, b) => a.position - b.position));
-        setGalleryFiles((current) => current.filter((image) => image.id !== queued.id));
+      if (primaryFile || galleryFiles.length) {
+        setImageUploadProgress({ completed: 0, total: (primaryFile ? 1 : 0) + galleryFiles.length });
+        try {
+          await uploadCatalogImages("/products", productId, primaryFile, galleryFiles, (queued, placement, uploaded) => {
+            if (placement === "PRIMARY") {
+              setMediaImages((current) => [...current.filter((image) => image.position !== 0 && image.id !== uploaded.id), { ...uploaded, position: 0 }]);
+              setPrimaryFile((current) => current?.id === queued.id ? null : current);
+              setPrimaryImageId(uploaded.id);
+            } else {
+              setMediaImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded].sort((a, b) => a.position - b.position));
+              setGalleryFiles((current) => current.filter((image) => image.id !== queued.id));
+            }
+          }, (completed, total) => setImageUploadProgress({ completed, total }));
+        } catch (cause) { await invalidate(); throw cause; }
       }
       setFormOpen(false); await invalidate();
     } catch (cause) { setError(messageOf(cause)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setImageUploadProgress(null); }
   };
   const createCategory = async (event: FormEvent) => {
     event.preventDefault(); setCategoryBusy(true); setCategoryError("");
@@ -292,6 +296,7 @@ export function ProductsPage({ currency }: { currency: MoneyCurrency }) {
         <section className="product-form-section"><div className="product-form-section-heading"><span>۳</span><div><h3>قیمت‌گذاری</h3><p>قیمت‌ها هنگام تایپ جدا می‌شوند و مبلغ نهایی همین‌جا دیده می‌شود.</p></div></div><div className="product-editor-grid"><MoneyInput label={`قیمت فروش (${currency === "IRT" ? "تومان" : "ریال"})`} value={price} onChange={setPrice} currency={currency} required /><MoneyInput label={`بهای خرید پیش‌فرض (${currency === "IRT" ? "تومان" : "ریال"})`} value={cost} onChange={setCost} currency={currency} hint="برای ارزش‌گذاری موجودی اولیه استفاده می‌شود." /><Field label="نرخ مالیات (درصد)" value={taxPercent} onChange={setTaxPercent} inputMode="decimal" placeholder="۰" /></div></section>
         {kind === "STOCK" && <section className="product-form-section"><div className="product-form-section-heading"><span>۴</span><div><h3>موجودی شعبه</h3><p>مقدار فعلی را وارد کنید؛ ثبت آن در گردش موجودی شعبه هم ثبت می‌شود.</p></div></div><div className="product-editor-grid"><Field label={editing || createdProductId ? "مقدار فعلی در انبار" : "مقدار فعلی اولیه در انبار"} value={editing || createdProductId ? currentQuantity : initialQuantity} onChange={editing || createdProductId ? setCurrentQuantity : setInitialQuantity} inputMode="decimal" required placeholder="۰" /><Field label="حد هشدار موجودی" value={reorder} onChange={setReorder} inputMode="decimal" placeholder="اختیاری" /><p className="product-stock-note">{editing || createdProductId ? "تغییر موجودی با سند شمارش و گردش حسابداری ثبت می‌شود." : cost ? "ارزش اولیه از مقدار × بهای خرید پیش‌فرض محاسبه می‌شود." : "اگر مقدار اولیه دارید، بهای خرید پیش‌فرض را هم برای ثبت ارزش موجودی وارد کنید."}</p></div></section>}
         <ProductMediaEditor entityId={editing?.id ?? createdProductId ?? undefined} entityLabel="کالا" images={mediaImages} primaryImageId={primaryImageId} onPrimaryImageIdChange={setPrimaryImageId} primaryFile={primaryFile} onPrimaryFileChange={setPrimaryFile} galleryFiles={galleryFiles} onGalleryFilesChange={setGalleryFiles} removedImageIds={removedImageIds} onRemovedImageIdsChange={setRemovedImageIds} />
+        {imageUploadProgress && <CatalogImageUploadProgress {...imageUploadProgress} />}
         {error && <InlineError error={error} />}{units.isError && <InlineError error={units.error} retry={() => void units.refetch()} />}{categories.isError && <InlineError error={categories.error} retry={() => void categories.refetch()} />}<div className="modal-form-actions"><SubmitButton busy={busy}>{busy ? "در حال ذخیره…" : editing || createdProductId ? "ذخیرهٔ تغییرات" : "ثبت کالا"}</SubmitButton></div>
       </form>
     </Modal>
@@ -331,6 +336,7 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
   const [primaryFile, setPrimaryFile] = useState<QueuedProductImage | null>(null);
   const [galleryFiles, setGalleryFiles] = useState<QueuedProductImage[]>([]);
   const [mediaImages, setMediaImages] = useState<ProductImage[]>([]);
+  const [imageUploadProgress, setImageUploadProgress] = useState<{ completed: number; total: number } | null>(null);
   const [removedImageIds, setRemovedImageIds] = useState<string[]>([]);
   const [primaryImageId, setPrimaryImageId] = useState("");
   const services = useInfiniteQuery({ queryKey: ["services", query], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam }) => get<CursorPage<ManagedService>>("/services?limit=50&q=" + encodeURIComponent(query) + (pageParam ? "&cursor=" + encodeURIComponent(pageParam) : "")), getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined });
@@ -379,21 +385,24 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
         await patch("/services/" + serviceId + "/images/" + primaryImageId + "/primary", {});
         setMediaImages((current) => [current.find((image) => image.id === primaryImageId)!, ...current.filter((image) => image.id !== primaryImageId)].map((image, index) => ({ ...image, position: index })));
       }
-      if (primaryFile) {
-        const file = primaryFile;
-        const uploaded = await uploadCatalogImage("/services", serviceId, file, "PRIMARY");
-        setMediaImages((current) => [...current.filter((image) => image.position !== 0), { ...uploaded, position: 0 }]);
-        setPrimaryFile((current) => current?.id === file.id ? null : current);
-        setPrimaryImageId(uploaded.id);
-      }
-      for (const queued of galleryFiles) {
-        const uploaded = await uploadCatalogImage("/services", serviceId, queued, "GALLERY");
-        setMediaImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded].sort((a, b) => a.position - b.position));
-        setGalleryFiles((current) => current.filter((image) => image.id !== queued.id));
+      if (primaryFile || galleryFiles.length) {
+        setImageUploadProgress({ completed: 0, total: (primaryFile ? 1 : 0) + galleryFiles.length });
+        try {
+          await uploadCatalogImages("/services", serviceId, primaryFile, galleryFiles, (queued, placement, uploaded) => {
+            if (placement === "PRIMARY") {
+              setMediaImages((current) => [...current.filter((image) => image.position !== 0 && image.id !== uploaded.id), { ...uploaded, position: 0 }]);
+              setPrimaryFile((current) => current?.id === queued.id ? null : current);
+              setPrimaryImageId(uploaded.id);
+            } else {
+              setMediaImages((current) => [...current.filter((image) => image.id !== uploaded.id), uploaded].sort((a, b) => a.position - b.position));
+              setGalleryFiles((current) => current.filter((image) => image.id !== queued.id));
+            }
+          }, (completed, total) => setImageUploadProgress({ completed, total }));
+        } catch (cause) { await invalidate(); throw cause; }
       }
       setFormOpen(false); setCreatedServiceId(null); await invalidate();
     } catch (cause) { setError(messageOf(cause)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setImageUploadProgress(null); }
   };
   const createCategory = async (event: FormEvent) => {
     event.preventDefault(); setCategoryBusy(true); setCategoryError("");
@@ -426,6 +435,7 @@ export function ServicesPage({ currency }: { currency: MoneyCurrency }) {
         <div className="product-editor-grid"><Field label="نام خدمت" value={name} onChange={setName} required placeholder="مثلاً: نصب و راه‌اندازی" /><SelectField label="واحد ارائه" value={unitId} onChange={setUnitId} options={unitOptions} placeholder="انتخاب واحد" onBrowseAll={() => setUnitCatalogOpen(true)} browseAllLabel="فهرست کامل واحدها" /><SelectField label="دسته‌بندی خدمت" value={categoryId} onChange={setCategoryId} options={(categories.data ?? []).map((category) => ({ value: category.id, label: category.name }))} placeholder="بدون دسته‌بندی" onAdd={() => { setCategoryName(""); setCategoryError(""); setCategoryModalOpen(true); }} addLabel="ساخت دسته‌بندی" /><MoneyInput label={"قیمت فروش (" + (currency === "IRT" ? "تومان" : "ریال") + ")"} value={price} onChange={setPrice} currency={currency} required /><Field label="نرخ مالیات (درصد)" value={taxPercent} onChange={setTaxPercent} inputMode="decimal" placeholder="۰" /></div>
         <label className="field service-description-field"><span className="field-label">شرح خدمت <small>اختیاری</small></span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} rows={4} placeholder="توضیح کوتاه برای استفاده در مدیریت و نمایش خدمت" /></label>
         <ProductMediaEditor entityId={editing?.id ?? createdServiceId ?? undefined} entityLabel="خدمت" images={mediaImages} primaryImageId={primaryImageId} onPrimaryImageIdChange={setPrimaryImageId} primaryFile={primaryFile} onPrimaryFileChange={setPrimaryFile} galleryFiles={galleryFiles} onGalleryFilesChange={setGalleryFiles} removedImageIds={removedImageIds} onRemovedImageIdsChange={setRemovedImageIds} />
+        {imageUploadProgress && <CatalogImageUploadProgress {...imageUploadProgress} />}
         {error && <InlineError error={error} />}{units.isError && <InlineError error={units.error} retry={() => void units.refetch()} />}{categories.isError && <InlineError error={categories.error} retry={() => void categories.refetch()} />}
         <div className="modal-form-actions"><SubmitButton busy={busy}>{busy ? "در حال ذخیره…" : editing ? "ذخیرهٔ تغییرات" : "ثبت خدمت"}</SubmitButton></div>
       </form>
@@ -776,7 +786,48 @@ async function uploadCatalogImage(endpoint: "/products" | "/services", itemId: s
   const body = new FormData();
   body.append("file", image.file);
   body.append("placement", placement);
-  return adminApi<ProductImage>(endpoint + "/" + itemId + "/images", { method: "POST", body });
+  return api<ProductImage>(endpoint + "/" + itemId + "/images", { method: "POST", body });
+}
+
+async function uploadCatalogImages(
+  endpoint: "/products" | "/services",
+  itemId: string,
+  primaryFile: QueuedProductImage | null,
+  galleryFiles: QueuedProductImage[],
+  onUploaded: (queued: QueuedProductImage, placement: "PRIMARY" | "GALLERY", uploaded: ProductImage) => void,
+  onProgress: (completed: number, total: number) => void,
+) {
+  const tasks = [
+    ...(primaryFile ? [{ image: primaryFile, placement: "PRIMARY" as const }] : []),
+    ...galleryFiles.map((image) => ({ image, placement: "GALLERY" as const })),
+  ];
+  const pending = [...tasks];
+  const failures: string[] = [];
+  let completed = 0;
+  const uploadNext = async () => {
+    for (;;) {
+      const task = pending.shift();
+      if (!task) return;
+      try {
+        const uploaded = await uploadCatalogImage(endpoint, itemId, task.image, task.placement);
+        onUploaded(task.image, task.placement, uploaded);
+      } catch (cause) {
+        failures.push(`${task.image.file.name}: ${messageOf(cause)}`);
+      } finally {
+        completed += 1;
+        onProgress(completed, tasks.length);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, tasks.length) }, () => uploadNext()));
+  if (failures.length) throw new Error(`بارگذاری ${faNumber(failures.length)} تصویر کامل نشد. فایل‌های ناموفق نگه داشته شده‌اند؛ دوباره ذخیره کنید. ${failures.join("؛ ")}`);
+}
+
+function CatalogImageUploadProgress({ completed, total }: { completed: number; total: number }) {
+  return <div className="product-image-upload-progress" role="status" aria-live="polite">
+    <span>بارگذاری تصاویر: {faNumber(completed)} از {faNumber(total)}</span>
+    <progress value={completed} max={total} aria-label="پیشرفت بارگذاری تصاویر" />
+  </div>;
 }
 
 function normalizeMoneyDraft(value: string, currency: MoneyCurrency) {

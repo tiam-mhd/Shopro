@@ -21,7 +21,8 @@ export async function prepareProductImage(file: { originalname?: string; buffer?
 
     const bytes = await sharp(input, { limitInputPixels: MAX_PRODUCT_IMAGE_PIXELS })
       .rotate()
-      .webp({ lossless: true, exact: true, effort: 6 })
+      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 84, effort: 4 })
       .toBuffer();
     if (bytes.byteLength > MAX_PRODUCT_IMAGE_STORAGE_BYTES) throw new BadRequestException("حجم تصویر تبدیل‌شده بیشتر از ۲۰ مگابایت است.");
     return { bytes, checksum: createHash("sha256").update(bytes).digest("hex") };

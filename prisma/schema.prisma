@@ -239,6 +239,10 @@ model User {
   isActive                 Boolean                               @default(true) @map("is_active")
   createdAt                DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  trialStartedAt           DateTime?                             @map("trial_started_at") @db.Timestamptz(6)
+  trialEndsAt              DateTime?                             @map("trial_ends_at") @db.Timestamptz(6)
+  trialBusinessId          String?                               @unique @map("trial_business_id") @db.Uuid
+  trialBusiness            Business?                             @relation("UserFreeTrialBusiness", fields: [trialBusinessId], references: [id], onDelete: Restrict)
   sessions                 UserSession[]
   memberships              BusinessMember[]
   auditEvents              AuditEvent[]                          @relation("AuditActor")
@@ -382,6 +386,7 @@ model Business {
   createdAt                  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
   members                    BusinessMember[]
+  trialRecipient             User?                       @relation("UserFreeTrialBusiness")
   branches                   Branch[]
   units                      Unit[]
   categories                 ProductCategory[]

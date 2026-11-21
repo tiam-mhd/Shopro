@@ -9,7 +9,7 @@ import { Modal } from "../components/Modal.js";
 
 type MoneyCurrency = "IRR" | "IRT";
 type Plan = { code: string; nameFa: string; badge: string | null; features: string[]; durations: Array<{ priceVersionId: string; durationMonths: number; priceRial: string; monthlyEquivalentRial: string; savingRial: string; savingBasisPoints: number }> };
-type Current = { branch: { name: string; code: string; branchId: string }; status: string; rolloutMode: string; graceEndsAt: string | null; serverTime: string; plan: { code: string | null; nameFa: string | null; durationMonths: number | null } | null; period: { startsAt: string; endsAt: string; endsAtExclusive: boolean; remainingDays: number } | null; suspendedAt: string | null; suspensionReason: string | null };
+type Current = { branch: { name: string; code: string; branchId: string }; status: string; rolloutMode: string; graceEndsAt: string | null; serverTime: string; trial: { startsAt: string; endsAt: string; status: "ACTIVE" | "EXPIRED"; remainingDays: number } | null; plan: { code: string | null; nameFa: string | null; durationMonths: number | null } | null; period: { startsAt: string; endsAt: string; endsAtExclusive: boolean; remainingDays: number } | null; suspendedAt: string | null; suspensionReason: string | null };
 type PaymentInstructions = { method: "CARD_TO_CARD"; cardNumber: string; cardHolder: string; bankName: string | null; instructions: string | null; telegramContactHandle: string | null };
 type ManualPayment = { status: string; trackingCode: string | null; receiptFileName: string; rejectionReason: string | null; telegramStatus: string; submittedAt: string };
 type Order = { id: string; plan: { code: string; nameFa: string; durationMonths: number }; amountRial: string; currency: string; status: string; receiptReference: string | null; createdAt: string; paidAt: string | null; paymentInstructions: PaymentInstructions | null; manualPayment: ManualPayment | null; attempts: Array<{ provider: string; status: string; safeErrorCode: string | null }> };
@@ -169,13 +169,15 @@ export function SubscriptionsPage({ currency, role }: { currency: MoneyCurrency;
 }
 
 function SubscriptionStatus({ current }: { current: Current }) {
-  const statusLabel: Record<string, string> = { ACTIVE: "فعال", EXPIRED: "پایان‌یافته", REQUIRED: "نیازمند اشتراک", SUSPENDED: "متوقف", GRACE: "مهلت فعال‌سازی", OBSERVE: "در حال پایش" };
+  const statusLabel: Record<string, string> = { ACTIVE: "فعال", TRIAL: "دورهٔ رایگان", EXPIRED: "پایان‌یافته", REQUIRED: "نیازمند اشتراک", SUSPENDED: "متوقف", GRACE: "مهلت فعال‌سازی", OBSERVE: "در حال پایش" };
   const state = current.status;
   return <section className={`subscription-status-card card ${state.toLowerCase()}`} aria-live="polite">
-    <div className="subscription-status-icon">{state === "ACTIVE" ? <BadgeCheck /> : state === "OBSERVE" || state === "GRACE" ? <CalendarClock /> : <ShieldAlert />}</div>
+    <div className="subscription-status-icon">{state === "ACTIVE" ? <BadgeCheck /> : state === "TRIAL" || state === "OBSERVE" || state === "GRACE" ? <CalendarClock /> : <ShieldAlert />}</div>
     <div className="subscription-status-copy"><span className="eyebrow">وضعیت شعبه</span><strong>{statusLabel[state] ?? state}</strong><span>{current.plan?.nameFa ?? "بدون اشتراک ثبت‌شده"}{current.plan?.durationMonths ? ` · ${durationNames[current.plan.durationMonths]}` : ""}</span></div>
-    {current.period && <div className="subscription-status-period"><span>{state === "ACTIVE" ? "پایان اشتراک" : "آخرین پایان"}</span><strong>{jalaliDate(current.period.endsAt)}</strong><small>{state === "ACTIVE" ? `${faNumber(current.period.remainingDays)} روز باقی‌مانده` : "تمدید کنید تا عملیات این شعبه ادامه یابد."}</small></div>}
+    {current.period && state !== "TRIAL" && <div className="subscription-status-period"><span>{state === "ACTIVE" ? "پایان اشتراک" : "آخرین پایان"}</span><strong>{jalaliDate(current.period.endsAt)}</strong><small>{state === "ACTIVE" ? `${faNumber(current.period.remainingDays)} روز باقی‌مانده` : "تمدید کنید تا عملیات این شعبه ادامه یابد."}</small></div>}
     {state === "SUSPENDED" && current.suspensionReason && <p className="notice notice-warning subscription-status-note">{current.suspensionReason}</p>}
+    {state === "TRIAL" && current.trial && <p className="subscription-status-note">دورهٔ رایگان ۱۴ روزهٔ کسب‌وکار شما تا {jalaliDate(current.trial.endsAt)} فعال است؛ {faNumber(current.trial.remainingDays)} روز باقی مانده.</p>}
+    {current.trial?.status === "EXPIRED" && state !== "ACTIVE" && state !== "SUSPENDED" && <p className="notice notice-warning subscription-status-note">دورهٔ رایگان به پایان رسیده است. اطلاعات شما محفوظ و برای مشاهده در دسترس است؛ برای ادامهٔ ثبت و ویرایش، اشتراک تهیه کنید.</p>}
     {state === "EXPIRED" && <p className="notice notice-warning subscription-status-note">خواندن و دریافت گزارش مجاز است؛ تغییر داده‌های شعبه تا تمدید اشتراک متوقف می‌شود.</p>}
     {state === "OBSERVE" && <p className="subscription-status-note muted">در مرحلهٔ پایش، خرید اشتراک هنوز برای عملیات شعبه اجباری نشده است.</p>}
     {state === "GRACE" && current.graceEndsAt && <p className="subscription-status-note muted">مهلت شعبه تا {jalaliDate(current.graceEndsAt)} ادامه دارد.</p>}

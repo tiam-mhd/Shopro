@@ -949,11 +949,13 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
 
   private async newOrdersAllowed(businessId: string, branchId: string) {
     const now = new Date();
-    const rows = await this.prisma.$queryRaw<Array<{ rollout_mode: string | null; grace_ends_at: Date | null; suspended_at: Date | null; active_period: boolean; has_history: boolean; latest_end: Date | null }>>`
+    const rows = await this.prisma.$queryRaw<Array<{ rollout_mode: string | null; grace_ends_at: Date | null; trial_ends_at: Date | null; suspended_at: Date | null; active_period: boolean; has_history: boolean; latest_end: Date | null }>>`
       SELECT rollout."mode"::text AS rollout_mode, rollout."legacy_grace_ends_at" AS grace_ends_at,
+        trial."trial_ends_at",
         s."suspended_at", entitlement."active_period", entitlement."has_history", entitlement."latest_end"
       FROM "branches" b
       LEFT JOIN "branch_subscriptions" s ON s."business_id" = b."business_id" AND s."branch_id" = b."id"
+      LEFT JOIN "users" trial ON trial."trial_business_id" = b."business_id"
       LEFT JOIN "subscription_rollout_settings" rollout ON rollout."id" = 'global'
       LEFT JOIN LATERAL (
         SELECT COALESCE(BOOL_OR(p."starts_at" <= ${now} AND p."ends_at" > ${now}), false) AS active_period,
@@ -965,7 +967,7 @@ export class StorefrontService implements OnModuleInit, OnModuleDestroy {
     `;
     const row = rows[0];
     if (!row) return false;
-    return !entitlementDenial({ rolloutMode: row.rollout_mode === "ENFORCE" ? "ENFORCE" : "OBSERVE", graceEndsAt: row.grace_ends_at, suspended: Boolean(row.suspended_at), active: row.active_period, hasHistory: row.has_history, latestEnd: row.latest_end }, now);
+    return !entitlementDenial({ rolloutMode: row.rollout_mode === "ENFORCE" ? "ENFORCE" : "OBSERVE", graceEndsAt: row.grace_ends_at, trialEndsAt: row.trial_ends_at, suspended: Boolean(row.suspended_at), active: row.active_period, hasHistory: row.has_history, latestEnd: row.latest_end }, now);
   }
 
   private async requireStore(scope: Scope) {

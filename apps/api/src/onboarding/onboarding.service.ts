@@ -66,7 +66,7 @@ export class OnboardingService {
     } : null;
     const skipped = new Set(progress?.skippedSteps ?? []);
     const status = (complete: boolean, step: OnboardingStepId, available = true): string => complete ? "DONE" : skipped.has(step) ? "SKIPPED" : available ? "NEEDS_ACTION" : "UNAVAILABLE";
-    const subscriptionEnforced = subscription.rolloutMode === "ENFORCE";
+    const subscriptionEnforced = subscription.rolloutMode === "ENFORCE" || subscription.trial?.status === "EXPIRED";
     const subscriptionNeedsAction = subscription.status === "SUSPENDED" || subscriptionEnforced && ["REQUIRED", "EXPIRED"].includes(subscription.status);
     const firstOperationDone = firstDocument !== null;
     const canChooseFinancialStart = ["OWNER", "ACCOUNTANT"].includes(role);
@@ -74,7 +74,7 @@ export class OnboardingService {
     const steps = [
       { id: "business_created", title: "کسب‌وکار ساخته شد", status: "DONE", optional: false, href: null },
       { id: "branch_ready", title: "شعبه آماده شد", status: "DONE", optional: false, href: null },
-      { id: "subscription", title: "وضعیت اشتراک شعبه", status: subscription.status === "ACTIVE" || subscription.status === "GRACE" ? "DONE" : subscriptionNeedsAction ? "NEEDS_ACTION" : "OPTIONAL", optional: !subscriptionNeedsAction, href: "/app/subscription" },
+      { id: "subscription", title: "وضعیت اشتراک شعبه", status: subscription.status === "ACTIVE" || subscription.status === "TRIAL" || subscription.status === "GRACE" ? "DONE" : subscriptionNeedsAction ? "NEEDS_ACTION" : "OPTIONAL", optional: !subscriptionNeedsAction, href: "/app/subscription" },
       { id: "financial_start_mode", title: "روش شروع مالی انتخاب شد", status: progress?.financialStartMode ? "DONE" : status(false, "financial_start_mode", canChooseFinancialStart), optional: true, href: null },
       { id: "product", title: "کالا یا خدمت اضافه شد", status: catalogCount > 0 ? "DONE" : status(false, "product", canManageProducts(role)), optional: true, href: canManageProducts(role) ? "/app/products" : null },
       { id: "first_operation", title: "اولین عملیات واقعی ثبت شد", status: firstOperationDone ? "DONE" : status(false, "first_operation", canPostOperations(role)), optional: true, href: nextAction.href },

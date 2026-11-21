@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 type EntitlementSnapshot = {
   rolloutMode: "OBSERVE" | "ENFORCE";
   graceEndsAt: Date | null;
+  trialEndsAt: Date | null;
   suspended: boolean;
   active: boolean;
   hasHistory: boolean;
@@ -28,7 +29,12 @@ export function isTenantOperationalWrite(method: string, path: string) {
 
 export function entitlementDenial(snapshot: EntitlementSnapshot, now: Date) {
   if (snapshot.suspended) return { code: "SUBSCRIPTION_REQUIRED", message: "اشتراک این شعبه متوقف شده است؛ برای پیگیری با مالک کسب‌وکار تماس بگیرید." };
-  if (snapshot.active || snapshot.rolloutMode !== "ENFORCE" || (snapshot.graceEndsAt && snapshot.graceEndsAt > now)) return null;
+  if (snapshot.active || (snapshot.trialEndsAt && snapshot.trialEndsAt > now)) return null;
+  if (snapshot.trialEndsAt && snapshot.trialEndsAt <= now) {
+    if (snapshot.hasHistory && snapshot.latestEnd && snapshot.latestEnd <= now) return { code: "SUBSCRIPTION_EXPIRED", message: "دورهٔ رایگان این کسب‌وکار به پایان رسیده است. اطلاعات شما محفوظ است و همچنان می‌توانید آن‌ها را ببینید؛ برای ادامهٔ ثبت و ویرایش، اشتراک تهیه کنید." };
+    return { code: "SUBSCRIPTION_REQUIRED", message: "دورهٔ رایگان ۱۴ روزه به پایان رسیده است. اطلاعات شما محفوظ است و همچنان می‌توانید آن‌ها را ببینید؛ برای ادامهٔ ثبت و ویرایش، اشتراک تهیه کنید." };
+  }
+  if (snapshot.rolloutMode !== "ENFORCE" || (snapshot.graceEndsAt && snapshot.graceEndsAt > now)) return null;
   if (snapshot.hasHistory && snapshot.latestEnd && snapshot.latestEnd <= now) return { code: "SUBSCRIPTION_EXPIRED", message: "اشتراک این شعبه پایان یافته است. اطلاعات همچنان در دسترس است؛ برای ادامهٔ عملیات اشتراک را تمدید کنید." };
   return { code: "SUBSCRIPTION_REQUIRED", message: "برای انجام عملیات این شعبه، ابتدا اشتراک فعال تهیه کنید." };
 }
@@ -48,6 +54,7 @@ export class SubscriptionEntitlementGuard implements CanActivate {
     const rows = await this.prisma.$queryRaw<Array<{
       rollout_mode: string | null;
       grace_ends_at: Date | null;
+      trial_ends_at: Date | null;
       suspended_at: Date | null;
       active_period: boolean;
       has_history: boolean;
@@ -56,12 +63,14 @@ export class SubscriptionEntitlementGuard implements CanActivate {
       SELECT
         rollout."mode"::text AS rollout_mode,
         rollout."legacy_grace_ends_at" AS grace_ends_at,
+        trial."trial_ends_at",
         s."suspended_at",
         entitlement."active_period",
         entitlement."has_history",
         entitlement."latest_end"
       FROM "branches" b
       LEFT JOIN "branch_subscriptions" s ON s."business_id" = b."business_id" AND s."branch_id" = b."id"
+      LEFT JOIN "users" trial ON trial."trial_business_id" = b."business_id"
       LEFT JOIN "subscription_rollout_settings" rollout ON rollout."id" = 'global'
       LEFT JOIN LATERAL (
         SELECT
@@ -79,6 +88,7 @@ export class SubscriptionEntitlementGuard implements CanActivate {
     const denial = entitlementDenial({
       rolloutMode: row.rollout_mode === "ENFORCE" ? "ENFORCE" : "OBSERVE",
       graceEndsAt: row.grace_ends_at,
+      trialEndsAt: row.trial_ends_at,
       suspended: Boolean(row.suspended_at),
       active: row.active_period,
       hasHistory: row.has_history,

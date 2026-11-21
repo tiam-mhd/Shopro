@@ -67,6 +67,10 @@ export class BusinessesService {
         const branch = await tx.branch.create({ data: { businessId: business.id, name: input.initialBranchName, code: "MAIN" } });
         const membership = await tx.businessMember.create({ data: { businessId: business.id, userId: user.id, role: "OWNER" } });
         await tx.memberBranch.create({ data: { businessId: business.id, memberId: membership.id, branchId: branch.id } });
+        await tx.user.updateMany({
+          where: { id: user.id, trialBusinessId: null, trialStartedAt: { not: null }, trialEndsAt: { not: null } },
+          data: { trialBusinessId: business.id },
+        });
         const createdAccounts = new Map<string, string>();
         for (const [code, name, type, systemKey] of chart) {
           const account = await tx.ledgerAccount.create({ data: { businessId: business.id, code, name, type, systemKey } });

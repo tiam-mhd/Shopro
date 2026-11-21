@@ -398,12 +398,19 @@ export class SubscriptionAdminService {
   async updateRollout(admin: AuthenticatedSystemAdmin, request: AppRequest, dto: SubscriptionRolloutDto) {
     const current = await this.prisma.subscriptionRolloutSetting.findUnique({ where: { id: "global" } });
     const grace = dto.legacyGraceEndsAt === undefined ? current?.legacyGraceEndsAt ?? null : dto.legacyGraceEndsAt ? new Date(dto.legacyGraceEndsAt) : null;
-    if (dto.mode === "ENFORCE" && !grace) {
-      const [branches, activePeriods] = await Promise.all([
-        this.prisma.branch.count({ where: { isActive: true } }),
-        this.prisma.subscriptionPeriod.groupBy({ by: ["branchId"], where: { revokedAt: null, startsAt: { lte: new Date() }, endsAt: { gt: new Date() }, branch: { isActive: true } } }),
+    if (dto.mode === "ENFORCE" && !grace && current?.mode !== "ENFORCE") {
+      const now = new Date();
+      const [branches, activePeriods, trialRecipients] = await Promise.all([
+        this.prisma.branch.findMany({ where: { isActive: true }, select: { id: true } }),
+        this.prisma.subscriptionPeriod.groupBy({ by: ["branchId"], where: { revokedAt: null, startsAt: { lte: now }, endsAt: { gt: now }, branch: { isActive: true } } }),
+        this.prisma.user.findMany({ where: { trialBusinessId: { not: null }, trialEndsAt: { gt: now } }, select: { trialBusinessId: true } }),
       ]);
-      if (branches > activePeriods.length) throw new ConflictException("پیش از enforce، تاریخ پایان grace برای شعبه‌های فعلی را مشخص کنید.");
+      const trialBusinessIds = trialRecipients.flatMap((recipient) => recipient.trialBusinessId ? [recipient.trialBusinessId] : []);
+      const trialBranches = trialBusinessIds.length
+        ? await this.prisma.branch.findMany({ where: { isActive: true, businessId: { in: trialBusinessIds } }, select: { id: true } })
+        : [];
+      const entitledBranchIds = new Set([...activePeriods.map((period) => period.branchId), ...trialBranches.map((branch) => branch.id)]);
+      if (branches.some((branch) => !entitledBranchIds.has(branch.id))) throw new ConflictException("پیش از enforce، برای شعبه‌های فعلی اشتراک یا دورهٔ آزمایشی فعال در دسترس باشد یا تاریخ پایان grace را مشخص کنید.");
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.subscriptionRolloutSetting.upsert({

@@ -119,6 +119,7 @@ export class ServicesService {
     let previousPrimaryStorageProductId: string | null = null;
     try {
       const image = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`service-image:${businessId}:${branchId}:${serviceId}`}, 0))`;
         const existing = await tx.serviceImage.findMany({ where: { businessId, branchId, serviceId }, orderBy: { position: "asc" }, select: { id: true, position: true, storageProductId: true } });
         let position: number;
         if (placement === "PRIMARY") {
@@ -135,7 +136,7 @@ export class ServicesService {
         const created = await tx.serviceImage.create({ data: { id: imageId, businessId, branchId, serviceId, storageProductId: serviceId, position, bytes: BigInt(prepared.bytes.byteLength), checksum: prepared.checksum } });
         await tx.auditEvent.create({ data: { businessId, actorId: user.id, action: placement === "PRIMARY" ? "service.image.primary.updated" : "service.image.gallery.added", entityType: "service_image", entityId: imageId, requestId: request.requestId ?? "unknown", afterJson: { serviceId, position, bytes: prepared.bytes.byteLength, checksum: prepared.checksum } } });
         return created;
-      }, { isolationLevel: "Serializable" });
+      }, { isolationLevel: "ReadCommitted" });
       if (previousPrimaryId) await this.storage.removeProductImage({ businessId, branchId, productId: previousPrimaryStorageProductId ?? serviceId, imageId: previousPrimaryId }).catch(() => undefined);
       return { id: image.id, position: image.position, path: imagePath(serviceId, image.id) };
     } catch (error) {

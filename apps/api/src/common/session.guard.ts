@@ -53,6 +53,13 @@ export class SessionGuard implements CanActivate {
       include: { user: true },
     });
     if (!session) throw new UnauthorizedException("نشست شما پایان یافته است؛ دوباره وارد شوید.");
+    if (!session.user.trialStartedAt || !session.user.trialEndsAt) {
+      const startedAt = new Date();
+      await this.prisma.user.updateMany({
+        where: { id: session.user.id, trialStartedAt: null, trialEndsAt: null },
+        data: { trialStartedAt: startedAt, trialEndsAt: new Date(startedAt.getTime() + 14 * 24 * 60 * 60 * 1000) },
+      });
+    }
     const user = {
       id: session.user.id,
       phone: session.user.phone,
@@ -74,6 +81,20 @@ export class SessionGuard implements CanActivate {
       if (branchIds.length === 0) throw new ForbiddenException("هیچ شعبهٔ فعالی برای این عضویت در دسترس نیست.");
       if (branchId && !branchIds.includes(branchId)) throw new ForbiddenException("به این شعبه دسترسی ندارید.");
       Object.assign(user, { businessId, branchId: branchId ?? branchIds[0], memberId: member.id, role: member.role, branchIds });
+      if (member.role === "OWNER" && !session.user.trialBusinessId) {
+        const ownedBusinesses = await this.prisma.businessMember.findMany({
+          where: { userId: user.id, role: "OWNER", status: "ACTIVE", business: { isActive: true } },
+          select: { businessId: true, business: { select: { createdAt: true } } },
+        });
+        ownedBusinesses.sort((left, right) => left.business.createdAt.getTime() - right.business.createdAt.getTime() || left.businessId.localeCompare(right.businessId));
+        const firstBusiness = ownedBusinesses[0];
+        if (firstBusiness) {
+          await this.prisma.user.updateMany({
+            where: { id: user.id, trialBusinessId: null, trialStartedAt: { not: null }, trialEndsAt: { not: null } },
+            data: { trialBusinessId: firstBusiness.businessId },
+          });
+        }
+      }
     } else if (branchId) {
       throw new ForbiddenException("ابتدا کسب‌وکار جاری را انتخاب کنید.");
     }

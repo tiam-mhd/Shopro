@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import type { FormEvent, ReactNode } from "react";
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowDownLeft, ArrowUpRight, BadgeCheck, BookOpen, BriefcaseBusiness, Boxes, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard, FileText, House, LogOut, Menu, PackagePlus, Plus, ReceiptText, Settings, ShoppingBag, ShoppingCart, Store, Truck, UsersRound, Wallet, Wifi, WifiOff, X } from "lucide-react";
+import { Activity, ArrowDownLeft, ArrowUpRight, BadgeCheck, BookOpen, BriefcaseBusiness, Boxes, ChartNoAxesCombined, ChevronDown, CircleHelp, CreditCard, FileText, House, LogOut, Menu, PackagePlus, Plus, ReceiptText, Settings, ShoppingBag, ShoppingCart, Sparkles, Store, Truck, UsersRound, Wallet, Wifi, WifiOff, X } from "lucide-react";
 import type { BusinessSummary, MemberRole, SessionUser } from "@shopro/contracts";
 import { ApiError, get, patch, post } from "./lib/api.js";
 import { faNumber, jalaliDate, money, todayISO } from "./lib/format.js";
@@ -51,6 +51,7 @@ type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoic
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 
 type SessionResponse = { user: SessionUser & { businessId?: string; branchId?: string; role?: MemberRole } };
+type FreeTrialSummary = { startsAt: string; endsAt: string; status: "ACTIVE" | "EXPIRED"; remainingDays: number };
 type Dashboard = { displayCurrency: "IRR" | "IRT"; salesRial: string; netSalesRial: string; receiptsRial: string; expensesRial: string; grossProfitRial: string | null; grossProfitAvailable: boolean; salesCount: number; expenseCount: number; accountBalances: Array<{ id: string; name: string; balanceRial: string }>; cashPositionRial: string; lowStock: Array<{ id: string; name: string; quantity: string; reorderPoint: string; unit: string }>; openInvoices: number; salesTrend: Array<{ date: string; totalRial: string }> };
 
 export function App() {
@@ -209,8 +210,14 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
   const activeBranch = activeBusiness?.branches.find((branch) => branch.id === branchId) ?? activeBusiness?.branches[0];
   const scopeKey = activeBusiness && activeBranch ? `${user.id}:${activeBusiness.id}:${activeBranch.id}` : "";
   const scopeReady = Boolean(scopeKey && businessId === activeBusiness?.id && branchId === activeBranch?.id && synchronizedScope === scopeKey);
-  const subscription = useQuery({ queryKey: ["subscription-current", activeBusiness?.id, activeBranch?.id], queryFn: () => get<{ status: string; period: { remainingDays: number } | null }>("/subscriptions/current"), enabled: scopeReady, staleTime: 60_000 });
-  const subscriptionNotice = subscription.data?.status === "EXPIRED" ? "اشتراک پایان یافته؛ تمدید" : subscription.data?.status === "REQUIRED" ? "اشتراک لازم است" : subscription.data?.status === "SUSPENDED" ? "اشتراک متوقف شده" : subscription.data?.status === "ACTIVE" && (subscription.data.period?.remainingDays ?? 99) <= 7 ? `${faNumber(subscription.data.period?.remainingDays ?? 0)} روز تا پایان اشتراک` : "";
+  const subscription = useQuery({ queryKey: ["subscription-current", activeBusiness?.id, activeBranch?.id], queryFn: () => get<{ status: string; period: { remainingDays: number } | null; trial: FreeTrialSummary | null }>("/subscriptions/current"), enabled: scopeReady, staleTime: 60_000, refetchInterval: 60_000 });
+  const subscriptionNotice = subscription.data?.status === "SUSPENDED" ? "اشتراک متوقف شده"
+    : subscription.data?.status === "TRIAL" ? `دورهٔ رایگان · ${faNumber(subscription.data.trial?.remainingDays ?? 0)} روز`
+    : subscription.data?.trial?.status === "EXPIRED" && subscription.data.status !== "ACTIVE" ? "دورهٔ رایگان پایان یافت · اشتراک"
+    : subscription.data?.status === "EXPIRED" ? "اشتراک پایان یافته؛ تمدید"
+    : subscription.data?.status === "REQUIRED" ? "اشتراک لازم است"
+    : subscription.data?.status === "ACTIVE" && (subscription.data.period?.remainingDays ?? 99) <= 7 ? `${faNumber(subscription.data.period?.remainingDays ?? 0)} روز تا پایان اشتراک` : "";
+  const workspaceTrial = subscription.data?.status === "ACTIVE" || subscription.data?.status === "SUSPENDED" ? null : subscription.data?.trial ?? null;
   useLayoutEffect(() => {
     if (!activeBusiness || !activeBranch) return;
     if (businessId !== activeBusiness.id || branchId !== activeBranch.id) {
@@ -248,7 +255,7 @@ function BusinessGate({ user, online, pendingCount, pendingItems, unclaimedPendi
       <div className="workspace-body"><aside className={`side-nav ${menuOpen ? "open" : ""}`} aria-label="ناوبری"><div className="side-business"><span className="avatar">{activeBusiness?.displayName.slice(0, 1)}</span><div><strong>{activeBusiness?.displayName}</strong><span>{activeBranch?.name} · {roleLabel(activeBusiness?.role)}</span></div></div><nav>{navItems.map((item) => <NavLink to={item.to} key={item.to} className={({ isActive }) => `nav-item ${item.feature ? "nav-item-storefront" : ""} ${isActive ? "active" : ""}`}><span className="nav-item-icon"><item.icon size={19} /></span><span className="nav-item-copy"><span>{item.label}</span>{item.feature && <small>ویترین آنلاین شعبه</small>}</span>{item.feature && <ArrowUpRight className="nav-item-action" size={15} />}</NavLink>)}</nav><div className="side-bottom"><button className="nav-item nav-plain" onClick={() => void onLogout()}><LogOut size={19} /><span>خروج از حساب</span></button><small>نسخهٔ آزمایشی · {user.displayName ?? user.phone}</small></div></aside>
       {menuOpen && <button className="nav-overlay" onClick={() => setMenuOpen(false)} aria-label="بستن فهرست" />}
       <main className="page-content"><Suspense fallback={<div className="card page-content-loading" role="status">در حال بارگذاری صفحه…</div>}>{location.pathname === "/app/onboarding" ? <OnboardingWorkspacePage business={activeBusiness!} branchId={activeBranch?.id ?? ""} online={online} /> : <Routes>
-        <Route path="/app" element={<DashboardPage business={activeBusiness!} branchId={activeBranch?.id ?? ""} pendingCount={pendingCount} />} />
+        <Route path="/app" element={<DashboardPage business={activeBusiness!} branchId={activeBranch?.id ?? ""} pendingCount={pendingCount} trial={workspaceTrial} />} />
         <Route path="/app/subscription" element={<SubscriptionsPage currency={activeBusiness!.displayCurrency} role={activeBusiness!.role} />} />
         <Route path="/app/storefront" element={<StorefrontManagementPage role={activeBusiness!.role} />} />
         <Route path="/app/sales" element={<SalesPage currency={activeBusiness!.displayCurrency} userId={user.id} role={activeBusiness!.role} setPendingCount={setPendingCount} />} />
@@ -320,7 +327,7 @@ function PendingSaleQueueItem({ item, online, businessId, branchId, onRetry, onR
 
 type DashboardOnboarding = { branch: { id: string; name: string }; steps: Array<{ title: string; status: string }>; firstDocument: { id: string } | null; resultViewedAt: string | null; resultViewedByCurrentUser: boolean; activationComplete: boolean };
 
-export function DashboardPage({ business, branchId, pendingCount }: { business: BusinessSummary; branchId: string; pendingCount: number }) {
+export function DashboardPage({ business, branchId, pendingCount, trial }: { business: BusinessSummary; branchId: string; pendingCount: number; trial: FreeTrialSummary | null }) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["dashboard"], queryFn: () => get<Dashboard>("/reports/dashboard") });
   const onboarding = useQuery({ queryKey: ["onboarding", business.id, branchId], queryFn: () => get<DashboardOnboarding>("/onboarding"), enabled: Boolean(branchId) });
@@ -345,7 +352,27 @@ export function DashboardPage({ business, branchId, pendingCount }: { business: 
     { label: "هزینه", value: data ? money(data.expensesRial, data.displayCurrency) : "—", detail: `${faNumber(data?.expenseCount ?? 0)} سند`, icon: ArrowUpRight, tone: "amber" },
     { label: "سود ناخالص", value: data?.grossProfitAvailable ? money(data.grossProfitRial, data.displayCurrency) : "در دسترس نیست", detail: "فروش منهای بهای تمام‌شده", icon: ChartNoAxesCombined, tone: "violet" },
   ];
-  return <PageHeader title="خانه" subtitle={`نمای امروز · ${jalaliDate(todayISO())}`}><div className="dashboard-page">{onboarding.data && <OnboardingResumeCard status={onboarding.data} />} {onboarding.isError && <div className="notice notice-warning">چک‌لیست راه‌اندازی فعلاً بارگیری نشد. <Link to="/app/onboarding">باز کردن راهنمای شروع</Link></div>}{query.isError && <InlineError error={query.error} retry={() => void query.refetch()} />}{pendingCount > 0 && <div className="notice notice-warning"><Activity size={18} /><span>{faNumber(pendingCount)} عملیات فروش روی این دستگاه ذخیره شده و هنوز به سرور نرسیده است.</span></div>}{data && <><div className="metric-grid">{stats.map((stat) => <MetricCard key={stat.label} {...stat} />)}</div><section className="card cash-card"><div><div className="icon-tile emerald"><Wallet size={21} /></div><span><strong>موجودی صندوق و بانک</strong><small>ماندهٔ ثبت‌شده در این شعبه</small></span></div><strong className="cash-value">{money(data.cashPositionRial, data.displayCurrency)}</strong></section><div className="dashboard-columns"><section className="card"><SectionTitle title="اقدام سریع" action={<span className="eyebrow">برای شروع روز</span>} /><div className="quick-grid"><QuickAction to="/app/sales" icon={ShoppingCart} label="ثبت فروش" tone="emerald" /><QuickAction to="/app/expenses" icon={ReceiptText} label="ثبت هزینه" tone="amber" /><QuickAction to="/app/customers" icon={UsersRound} label="مشتریان" tone="blue" /><QuickAction to="/app/products" icon={PackagePlus} label="افزودن کالا" tone="violet" /></div></section><section className="card low-stock-card"><SectionTitle title="موجودی رو به اتمام" action={<Link to="/app/inventory">مشاهدهٔ همه</Link>} />{data.lowStock.length ? <div className="compact-list">{data.lowStock.slice(0, 4).map((product) => <div className="compact-row" key={product.id}><span className="product-avatar"><Boxes size={18} /></span><span className="row-grow"><strong>{product.name}</strong><small>حد سفارش {faNumber(product.reorderPoint)}</small></span><span className="stock-warning">{faNumber(product.quantity)} <small>{product.unit}</small></span></div>)}</div> : <EmptyState icon={Boxes} title="موجودی کم پیدا نشد" text="هشدار کمبود کالا اینجا نمایش داده می‌شود." />}</section></div><section className="card trend-card"><SectionTitle title="فروش در بازهٔ جاری" action={<Link to="/app/reports">گزارش‌ها</Link>} />{data.salesTrend.length ? <div className="trend-list">{data.salesTrend.map((item) => <div className="trend-row" key={item.date}><span>{jalaliDate(item.date)}</span><div className="trend-track"><i style={{ width: `${trendPercent(item.totalRial, data.salesTrend)}%` }} /></div><strong>{money(item.totalRial, data.displayCurrency)}</strong></div>)}</div> : <EmptyState icon={ChartNoAxesCombined} title="فروشی در این بازه ثبت نشده" text="پس از ثبت فروش، نمودار روزانه اینجا تکمیل می‌شود." />}</section></>}{query.isPending && <LoadingBlock />}<p className="page-footnote">{business.displayName} · همهٔ مبالغ بر اساس اسناد ثبت‌شدهٔ این شعبه است.</p></div></PageHeader>;
+  return <PageHeader title="خانه" subtitle={`نمای امروز · ${jalaliDate(todayISO())}`}><div className="dashboard-page">{trial && <TrialWelcomeBanner trial={trial} />} {onboarding.data && <OnboardingResumeCard status={onboarding.data} />} {onboarding.isError && <div className="notice notice-warning">چک‌لیست راه‌اندازی فعلاً بارگیری نشد. <Link to="/app/onboarding">باز کردن راهنمای شروع</Link></div>}{query.isError && <InlineError error={query.error} retry={() => void query.refetch()} />}{pendingCount > 0 && <div className="notice notice-warning"><Activity size={18} /><span>{faNumber(pendingCount)} عملیات فروش روی این دستگاه ذخیره شده و هنوز به سرور نرسیده است.</span></div>}{data && <><div className="metric-grid">{stats.map((stat) => <MetricCard key={stat.label} {...stat} />)}</div><section className="card cash-card"><div><div className="icon-tile emerald"><Wallet size={21} /></div><span><strong>موجودی صندوق و بانک</strong><small>ماندهٔ ثبت‌شده در این شعبه</small></span></div><strong className="cash-value">{money(data.cashPositionRial, data.displayCurrency)}</strong></section><div className="dashboard-columns"><section className="card"><SectionTitle title="اقدام سریع" action={<span className="eyebrow">برای شروع روز</span>} /><div className="quick-grid"><QuickAction to="/app/sales" icon={ShoppingCart} label="ثبت فروش" tone="emerald" /><QuickAction to="/app/expenses" icon={ReceiptText} label="ثبت هزینه" tone="amber" /><QuickAction to="/app/customers" icon={UsersRound} label="مشتریان" tone="blue" /><QuickAction to="/app/products" icon={PackagePlus} label="افزودن کالا" tone="violet" /></div></section><section className="card low-stock-card"><SectionTitle title="موجودی رو به اتمام" action={<Link to="/app/inventory">مشاهدهٔ همه</Link>} />{data.lowStock.length ? <div className="compact-list">{data.lowStock.slice(0, 4).map((product) => <div className="compact-row" key={product.id}><span className="product-avatar"><Boxes size={18} /></span><span className="row-grow"><strong>{product.name}</strong><small>حد سفارش {faNumber(product.reorderPoint)}</small></span><span className="stock-warning">{faNumber(product.quantity)} <small>{product.unit}</small></span></div>)}</div> : <EmptyState icon={Boxes} title="موجودی کم پیدا نشد" text="هشدار کمبود کالا اینجا نمایش داده می‌شود." />}</section></div><section className="card trend-card"><SectionTitle title="فروش در بازهٔ جاری" action={<Link to="/app/reports">گزارش‌ها</Link>} />{data.salesTrend.length ? <div className="trend-list">{data.salesTrend.map((item) => <div className="trend-row" key={item.date}><span>{jalaliDate(item.date)}</span><div className="trend-track"><i style={{ width: `${trendPercent(item.totalRial, data.salesTrend)}%` }} /></div><strong>{money(item.totalRial, data.displayCurrency)}</strong></div>)}</div> : <EmptyState icon={ChartNoAxesCombined} title="فروشی در این بازه ثبت نشده" text="پس از ثبت فروش، نمودار روزانه اینجا تکمیل می‌شود." />}</section></>}{query.isPending && <LoadingBlock />}<p className="page-footnote">{business.displayName} · همهٔ مبالغ بر اساس اسناد ثبت‌شدهٔ این شعبه است.</p></div></PageHeader>;
+}
+
+function TrialWelcomeBanner({ trial }: { trial: FreeTrialSummary }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const remainingDays = Math.max(0, Math.ceil((Date.parse(trial.endsAt) - now) / 86_400_000));
+  const active = trial.status === "ACTIVE" && remainingDays > 0;
+  return <section className={`trial-welcome-banner ${active ? "active" : "expired"}`}>
+    <span className="trial-welcome-icon"><Sparkles size={23} /></span>
+    <div className="trial-welcome-copy">
+      <span className="eyebrow">{active ? "به شاپرو خوش اومدی!" : "اطلاعاتت محفوظ است"}</span>
+      <strong>{active ? "۱۴ روز اول، مهمون مایی ✨" : "دورهٔ رایگان شما به پایان رسیده"}</strong>
+      <p>{active ? "با خیال راحت کسب‌وکارت رو راه بنداز و همهٔ امکانات ثبت و ویرایش رو امتحان کن." : "همهٔ اطلاعات کسب‌وکارت برای دیدن در دسترسه؛ برای ادامهٔ ثبت و ویرایش، اشتراک تهیه کن."}</p>
+    </div>
+    <div className="trial-welcome-countdown"><strong>{active ? faNumber(remainingDays) : "—"}</strong><span>{active ? "روز باقی‌مانده" : "روز رایگان"}</span></div>
+    <Link className="button button-secondary" to="/app/subscription">{active ? "دیدن پلن‌ها" : "خرید اشتراک"}</Link>
+  </section>;
 }
 
 function OnboardingResumeCard({ status }: { status: DashboardOnboarding }) {

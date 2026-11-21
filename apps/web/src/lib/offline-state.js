@@ -1,4 +1,4 @@
-const RETRYABLE_STATUS_CODES = new Set([408, 425, 429]);
+const RETRYABLE_STATUS_CODES = new Set([402, 408, 425, 429]);
 
 export function classifyOfflineFailure(error) {
   const status = Number.isInteger(error?.status) ? error.status : null;
